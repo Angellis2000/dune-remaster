@@ -1,0 +1,28 @@
+// Окно здания с геймпада: A, A по двору → окно из ROM; вниз-вправо — ветряк; A — заказ и назад на карту.
+import { createRequire } from "module";
+const require = createRequire("/opt/node-tools/node_modules/");
+const { chromium } = require("playwright");
+const OUT = process.env.OUT ?? "/tmp";
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+const errors = [];
+page.on("pageerror", (e) => errors.push(String(e)));
+await page.goto("http://localhost:4173/?debug");
+await page.setInputFiles("#rom-file", process.argv[2]);
+await page.waitForSelector("canvas.view", { timeout: 20000 });
+await page.waitForTimeout(500);
+const key = async (k, n = 1) => { for (let i = 0; i < n; i++) { await page.keyboard.press(k); await page.waitForTimeout(80); } };
+const shot = async (n) => { const el = await page.$(".factory canvas"); await el.screenshot({ path: `${OUT}/${n}.png` }); };
+await key("Digit1"); await key("Digit1");
+await page.waitForTimeout(200);
+console.log("window open:", await page.isVisible(".factory"));
+await shot("f1_open");
+await key("ArrowDown"); await shot("f2_slab");
+await key("ArrowRight"); await shot("f3_windtrap");
+await key("Digit1");
+console.log("after A on windtrap: open", await page.isVisible(".factory"), JSON.stringify(await page.evaluate(() => { const { world } = window.dune; const s = world.structures.find((s) => s.type === 8); return world.game.production(s.ref); })));
+await page.evaluate(() => { for (let k = 0; k < 400; k++) window.dune.world.step(); });
+await page.waitForTimeout(300);
+console.log("auto placement:", await page.evaluate(() => !!window.dune.view.placement));
+console.log("errors:", errors);
+await browser.close();

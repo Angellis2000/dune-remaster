@@ -15,6 +15,7 @@ import { AssetViewer } from "./ui/assets.ts";
 import { CommandPanel } from "./ui/command.ts";
 import { Minimap } from "./ui/minimap.ts";
 import { forgetRom, loadStoredRom, storeRom } from "./ui/romstore.ts";
+import { FactoryWindow } from "./ui/factory.ts";
 import { passwordFor, SettingsMenu, type HouseCode } from "./ui/settings.ts";
 import { MapView } from "./view/mapview.ts";
 
@@ -198,7 +199,8 @@ async function startGame(rom: DuneRom): Promise<void> {
       /* без сохранения */
     }
   };
-  const settings = new SettingsMenu(new ScreenGfx(rom), {
+  const screens = new ScreenGfx(rom);
+  const settings = new SettingsMenu(screens, {
     music: () => prefs.music,
     setMusic: (on) => ((prefs.music = on), savePrefs()),
     sound: () => prefs.sound,
@@ -225,6 +227,23 @@ async function startGame(rom: DuneRom): Promise<void> {
     },
   });
   stage.append(settings.root);
+  // окно здания с геймпада — как в оригинале; в режиме мыши остаётся правое меню
+  const factory = new FactoryWindow(rom, screens, {
+    game: () => world.game,
+    credits: () => world.houses.get(world.player)?.credits ?? 0,
+    toggled: (open) => {
+      paused = open;
+      pausedBanner.hidden = true;
+      updateHud();
+    },
+    placing: () => updateHud(),
+  });
+  stage.append(factory.root);
+  /** Окно своего здания: с геймпада — оригинальное окно, мышью — правое меню. */
+  const openStructure = (st: WorldStructure) => {
+    if (view.mouseMode) panel.open();
+    else factory.open(st.ref);
+  };
   minimap.canvas.hidden = !prefs.radar;
 
   // ---------------------------------------------------------------- выбор и приказы
@@ -302,7 +321,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       // в оригинале A по своему зданию при постановке открывает его окно
       world.game.cancelPlace();
       selectStructure(s);
-      panel.open();
+      openStructure(s);
       return;
     }
     if (G.selectionType === SELECTION.PLACE || G.selectionType === SELECTION.TARGET) {
@@ -330,7 +349,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     } else if (unit && unit.house === world.player && !unit.air) {
       selectUnits([unit]);
     } else if (s && world.map.unveiled[packed]) {
-      if (view.selectedStructure === s && s.house === world.player) panel.open();
+      if (view.selectedStructure === s && s.house === world.player) openStructure(s);
       else selectStructure(s);
     } else if (unit) {
       selectUnits([unit]);
@@ -461,7 +480,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   pad.onPress((b) => {
     if (!assets.root.hidden) return;
     lastButton = BUTTON_LABEL[b];
-    if (settings.handlePad(b)) {
+    if (settings.handlePad(b) || factory.handlePad(b)) {
       updateHud();
       return;
     }

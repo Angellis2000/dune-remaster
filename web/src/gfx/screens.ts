@@ -16,6 +16,25 @@ export const MENU_ROM = {
   palette: 0x088214,
   settings: { map: 0x0c6792, tiles: [0x0b64ee, 0x0b6cca, 0x0b75e8, 0x0b7e94, 0x0b85fc, 0x0b8e22] },
   password: { map: 0x0c6e60, tiles: [0x0b9580, 0x0b9ac2, 0x0ba492] },
+  /**
+   * Окно здания (A по выбранному своему зданию): рамка — карта Window из LCW, тайлы из 4 потоков,
+   * палитры строк 1–3; иконки и кнопки 4×3 тайла (сырые, 384 байта); значки 2×2.
+   */
+  factory: {
+    map: 0x0c35c0,
+    tiles: [0x0a6f32, 0x0a771c, 0x0a7f8c, 0x0a8744],
+    palettes: [0x013816, 0x0391b6, 0x013856],
+    /** иконки зданий по типу (перед ними 5 кнопок: СТОП, РЕМОНТ тёмные, СТОП, РЕМОНТ светлые, ВЫХОД) */
+    structureIcons: 0x06e840,
+    /** иконки юнитов по типу (кнопки — перед таблицей, так же) */
+    unitIcons: 0x070ca4,
+    /** рамка-курсор 4×3, строка 2 */
+    cursor: 0x049fc4,
+    /** значки цены, энергии и прочности 2×2, строка 1 */
+    statIcons: [0x04a31c, 0x04a39c, 0x04a49c],
+    /** значки размера здания 2×2: 1×1, 2×2, 3×2, 3×3 */
+    sizeIcons: 0x008638,
+  },
   /** шрифт: 128 тайлов, номер тайла = код символа; 9 — буква, 12 — фон */
   font: 0x04f6c8,
   /** стрелка-курсор меню, 2×2 тайла по столбцам; переливается цветами 8–13 строки 1 */
@@ -68,21 +87,23 @@ export class ScreenGfx {
 
   /** Фон экрана целиком (320×224) из тайлов и карты Window. */
   background(which: "settings" | "password"): HTMLCanvasElement {
-    return this.memo(`bg:${which}`, () => {
-      const def = MENU_ROM[which];
-      const vram = new Uint8Array(0x10000);
-      let dst = 0;
-      for (const src of def.tiles) {
-        const data = lcwDecompress(this.rom.bytes, src).data;
-        vram.set(data.subarray(0, Math.min(data.length, vram.length - dst)), dst);
-        dst += data.length;
-      }
-      const map = lcwDecompress(this.rom.bytes, def.map).data;
-      const px = new Uint32Array(SCREEN_W * SCREEN_H).fill(this.palette[0]);
-      for (let cy = 0; cy < 28; cy++)
-        for (let cx = 0; cx < 40; cx++) blitTile(vram, readU16(map, (cy * 64 + cx) * 2), this.palette, px, SCREEN_W, cx * 8, cy * 8);
-      return toCanvas(px, SCREEN_W, SCREEN_H);
-    });
+    return this.memo(`bg:${which}`, () => this.tilemapScreen(MENU_ROM[which].tiles, MENU_ROM[which].map, this.palette));
+  }
+
+  /** Экран 40×28 тайлов: тайлы из LCW-потоков подряд с VRAM 0, карта — LCW, 64 слова в строке. */
+  private tilemapScreen(tiles: readonly number[], mapAddr: number, palette: Uint32Array): HTMLCanvasElement {
+    const vram = new Uint8Array(0x10000);
+    let dst = 0;
+    for (const src of tiles) {
+      const data = lcwDecompress(this.rom.bytes, src).data;
+      vram.set(data.subarray(0, Math.min(data.length, vram.length - dst)), dst);
+      dst += data.length;
+    }
+    const map = lcwDecompress(this.rom.bytes, mapAddr).data;
+    const px = new Uint32Array(SCREEN_W * SCREEN_H).fill(palette[0]);
+    for (let cy = 0; cy < 28; cy++)
+      for (let cx = 0; cx < 40; cx++) blitTile(vram, readU16(map, (cy * 64 + cx) * 2), palette, px, SCREEN_W, cx * 8, cy * 8);
+    return toCanvas(px, SCREEN_W, SCREEN_H);
   }
 
   /**
@@ -166,6 +187,70 @@ export class ScreenGfx {
     };
   }
 
+  /** Палитра окна здания: строка 0 — чёрная (там картинка со своей палитрой), 1–3 из ROM. */
+  factoryPalette(): Uint32Array {
+    return this.memoPal("factory", () => {
+      const pal = new Uint32Array(64).fill(cramToRGBA(0));
+      MENU_ROM.factory.palettes.forEach((addr, i) => pal.set(this.rom.readPalette(addr, 1), (i + 1) * 16));
+      return pal;
+    });
+  }
+
+  /** Рамка окна здания целиком (320×224). */
+  factoryBackground(): HTMLCanvasElement {
+    return this.memo("bg:factory", () => this.tilemapScreen(MENU_ROM.factory.tiles, MENU_ROM.factory.map, this.factoryPalette()));
+  }
+
+  /**
+   * Иконка 4×3 из таблицы окна: index ≥ 0 — тип здания или юнита, −5…−1 — кнопки
+   * (−5 СТОП и −4 РЕМОНТ тёмные, −3 СТОП и −2 РЕМОНТ светлые, −1 ВЫХОД). Палитра — как в коде $00827A:
+   * здания строка 1, юниты строка 3 (кроме типа 12).
+   */
+  factoryIcon(units: boolean, index: number): HTMLCanvasElement | null {
+    return this.memoNull(`fi:${units}:${index}`, () => {
+      const table = units ? MENU_ROM.factory.unitIcons : MENU_ROM.factory.structureIcons;
+      const ptr = (readU16(this.rom.bytes, table + index * 4) << 16) | readU16(this.rom.bytes, table + index * 4 + 2);
+      if (!ptr || ptr >= this.rom.bytes.length) return null;
+      const line = units && index !== 12 ? 3 : 1;
+      return this.sprite(ptr, 4, 3, line, this.factoryPalette(), false);
+    });
+  }
+
+  factoryCursor(): HTMLCanvasElement {
+    return this.memo("fcur", () => this.sprite(MENU_ROM.factory.cursor, 4, 3, 2, this.factoryPalette(), false));
+  }
+
+  /** Значок 2×2: цена (0), энергия (1), прочность (2). */
+  statIcon(i: number): HTMLCanvasElement {
+    return this.memo(`stat:${i}`, () => this.sprite(MENU_ROM.factory.statIcons[i], 2, 2, 1, this.factoryPalette(), false));
+  }
+
+  /** Значок размера здания: 0 — 1×1, 1 — 2×2, 2 — 3×2, 3 — 3×3. */
+  sizeIcon(i: number): HTMLCanvasElement {
+    return this.memo(`size:${i}`, () => this.sprite(MENU_ROM.factory.sizeIcons + i * 128, 2, 2, 1, this.factoryPalette(), false));
+  }
+
+  /** Строка шрифтом целыми тайлами (буква на чёрном), как надписи в окне здания; строка палитры 1. */
+  plainText(text: string): HTMLCanvasElement {
+    return this.memo(`pt:${text}`, () => {
+      const codes = encodeText(text);
+      const px = new Uint32Array(Math.max(1, codes.length) * 64);
+      const w = Math.max(1, codes.length) * 8;
+      codes.forEach((code, i) => blitTile(this.rom.bytes.subarray(MENU_ROM.font), (1 << 13) | code, this.factoryPalette(), px, w, i * 8, 0));
+      return toCanvas(px, w, 8);
+    });
+  }
+
+  /** Имя здания или юнита из таблиц описаний ROM (указатель на +2), как в окне оригинала. */
+  objectName(units: boolean, type: number): string {
+    const b = this.rom.bytes;
+    const rec = units ? (readU16(b, 0x06c5bc + type * 4) << 16) | readU16(b, 0x06c5bc + type * 4 + 2) : 0x06afae + type * 0x66;
+    const ptr = (readU16(b, rec + 2) << 16) | readU16(b, rec + 4);
+    let s = "";
+    for (let i = 0; i < 12 && b[ptr + i]; i++) s += decodeText(b, ptr + i, 1) || " ";
+    return s;
+  }
+
   /** Имена из таблицы [указатель, номер] (фонотека, спецэффекты). */
   names(table: number): { name: string; id: number }[] {
     const out: { name: string; id: number }[] = [];
@@ -188,6 +273,25 @@ export class ScreenGfx {
         blitTile(vram, (line << 13) | (hflip ? 0x800 : 0) | (c * th + r), pal, px, w, col * 8, r * 8);
       }
     return toCanvas(px, w, th * 8);
+  }
+
+  private pals = new Map<string, Uint32Array>();
+  private memoPal(key: string, make: () => Uint32Array): Uint32Array {
+    let p = this.pals.get(key);
+    if (!p) {
+      p = make();
+      this.pals.set(key, p);
+    }
+    return p;
+  }
+
+  private nulls = new Set<string>();
+  private memoNull(key: string, make: () => HTMLCanvasElement | null): HTMLCanvasElement | null {
+    if (this.nulls.has(key)) return null;
+    const c = this.cache.get(key) ?? make();
+    if (c) this.cache.set(key, c);
+    else this.nulls.add(key);
+    return c;
   }
 
   private memo(key: string, make: () => HTMLCanvasElement): HTMLCanvasElement {
