@@ -71,8 +71,8 @@ Playwright стоит в `/opt/node-tools/node_modules/playwright`, а Chromium 
   курсор на дворе), `out/abtest/*.bin`, `out/screens/st_factory.bin`, `st_password.bin`.
 - `trace_dma.py ROM STATE "сценарий" OUT.json` — все DMA и вызовы LCW за сценарий. Так находятся
   источники графики любого экрана.
-- `m68kdis.py` — дизассемблер. Полный листинг ROM: `python3 tools/m68kdis.py rom/dune_usa.gen > dis.txt`,
-  затем искать нужное через `awk '$1>="00FE60" && $1<="010000"' dis.txt`.
+- `m68kdis.py ROM START [LEN]` — дизассемблер 68000 (адреса в hex). Готовый полный листинг ROM
+  лежит в `out/dis_full.txt` (вне git). Искать в нём так: `awk '$1>="00FE60" && $1<="010000"' out/dis_full.txt`.
 - `render_plane.py ИМЯ БАЗА` — рисует плоскость VDP из дампа `out/screens/ИМЯ.vram/.json`.
 - `lcw.py`, `vram2rom.py`, `vram2lcw.py` — распаковка LCW и поиск, откуда в ROM пришли тайлы VRAM.
 
