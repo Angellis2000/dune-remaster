@@ -7,6 +7,7 @@ import { buildCursors } from "./gfx/cursors.ts";
 import { IconSet } from "./gfx/icons.ts";
 import { buildPackZip, importPack, packCanvases } from "./gfx/pack.ts";
 import { Skins } from "./gfx/skins.ts";
+import { ScreenGfx } from "./gfx/screens.ts";
 import { SpriteSet } from "./gfx/sprites.ts";
 import { BUTTON_LABEL, Pad } from "./input/pad.ts";
 import { CELL_PX, DuneRom, RomError } from "./rom/dune.ts";
@@ -197,7 +198,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       /* без сохранения */
     }
   };
-  const settings = new SettingsMenu({
+  const settings = new SettingsMenu(new ScreenGfx(rom), {
     music: () => prefs.music,
     setMusic: (on) => ((prefs.music = on), savePrefs()),
     sound: () => prefs.sound,
