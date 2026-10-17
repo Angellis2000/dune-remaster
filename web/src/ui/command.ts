@@ -178,29 +178,40 @@ export class CommandPanel {
     this.head.replaceChildren(img, text("strong", title), bar, text("span", sub, "command-sub"));
 
     if (this.index >= this.items.length) this.index = Math.max(0, this.items.length - 1);
-    this.list.replaceChildren(
-      ...this.items.map((it, i) => {
+    // кнопки не пересоздаём, а обновляем на месте: иначе щелчок, начатый на старой кнопке,
+    // теряется или попадает в новую, которая встала на её место
+    const lis = this.list.children;
+    while (lis.length > this.items.length) lis[lis.length - 1].remove();
+    this.items.forEach((it, i) => {
+      let b = lis[i]?.firstElementChild as HTMLButtonElement | undefined;
+      if (!b) {
         const li = document.createElement("li");
-        const b = document.createElement("button");
+        b = document.createElement("button");
         b.type = "button";
-        b.disabled = !!it.disabled;
-        b.className = [it.active ? "active" : "", this.focused && i === this.index ? "cursor" : ""].join(" ").trim();
-        if (it.picture) {
-          const pi = document.createElement("img");
-          pi.src = it.picture;
-          pi.alt = "";
-          b.append(pi);
-        }
-        b.append(text("span", it.label));
-        if (it.note) b.append(text("small", it.note));
         b.addEventListener("click", () => {
+          const cur = this.items[i];
           this.index = i;
-          if (!it.disabled) it.run();
+          if (cur && !cur.disabled) cur.run();
         });
         li.append(b);
-        return li;
-      }),
-    );
+        this.list.append(li);
+      }
+      b.disabled = !!it.disabled;
+      b.className = [it.active ? "active" : "", this.focused && i === this.index ? "cursor" : ""].join(" ").trim();
+      const key = `${it.picture ?? ""}|${it.label}|${it.note ?? ""}`;
+      if (b.dataset.key === key) return;
+      b.dataset.key = key;
+      const parts: Node[] = [];
+      if (it.picture) {
+        const pi = document.createElement("img");
+        pi.src = it.picture;
+        pi.alt = "";
+        parts.push(pi);
+      }
+      parts.push(text("span", it.label));
+      if (it.note) parts.push(text("small", it.note));
+      b.replaceChildren(...parts);
+    });
   }
 
   private done(): void {
@@ -262,44 +273,42 @@ export class CommandPanel {
       const prod = game.production(s);
       const isYard = s.o.type === STRUCTURE.CONSTRUCTION_YARD;
       const nameOf = (t: number) => (isYard ? STRUCTURE_NAMES[t] : UNIT_NAMES[t]) ?? `${t}`;
-      if (prod) {
-        if (isYard && prod.ready) {
-          this.items.push({
-            label: `Поставить: ${nameOf(prod.type)}`,
-            picture: this.picture("structure", prod.type),
-            run: () => {
-              if (game.placeIt(s)) this.focused = false;
-              this.done();
-            },
-          });
-        } else {
-          this.items.push({
-            label: prod.onHold ? `Продолжить: ${nameOf(prod.type)}` : `Пауза: ${nameOf(prod.type)}`,
-            note: `${Math.floor(prod.progress * 100)}%`,
-            run: () => {
-              game.holdOrResume(s);
-              this.done();
-            },
-          });
-        }
+      // список заказов стоит на месте (как сетка иконок в окне оригинала): то, что строится,
+      // показывает ход стройки; пауза и отмена — ниже, чтобы повторный щелчок не попадал в них
+      for (const opt of game.buildOptions(s)) {
+        const building = !!prod && prod.type === opt.type;
         this.items.push({
-          label: "Отменить заказ",
+          label: nameOf(opt.type),
+          note: opt.available < 0 ? "после улучшения" : building ? (prod.ready ? "готово" : prod.onHold ? `пауза ${Math.floor(prod.progress * 100)}%` : `${Math.floor(prod.progress * 100)}%`) : `${opt.cost}`,
+          picture: this.picture(isYard ? "structure" : "unit", opt.type),
+          disabled: opt.available < 0,
+          active: building,
           run: () => {
-            game.cancelBuild(s);
+            if (building) {
+              // уже строится: готовое здание — сразу на постановку, иначе ничего
+              if (isYard && prod.ready && game.placeIt(s)) this.focused = false;
+            } else {
+              game.build(s, opt.type);
+              this.focused = false; // как в оригинале: заказ принят — назад на карту
+            }
             this.done();
           },
         });
       }
-      for (const opt of game.buildOptions(s)) {
+      if (prod && !prod.ready) {
         this.items.push({
-          label: nameOf(opt.type),
-          note: opt.available < 0 ? "после улучшения" : `${opt.cost}`,
-          picture: this.picture(isYard ? "structure" : "unit", opt.type),
-          disabled: opt.available < 0,
-          active: !!prod && prod.type === opt.type,
+          label: prod.onHold ? "Продолжить" : "Пауза",
           run: () => {
-            game.build(s, opt.type);
-            this.focused = false; // как в оригинале: заказ принят — назад на карту
+            game.holdOrResume(s);
+            this.done();
+          },
+        });
+      }
+      if (prod) {
+        this.items.push({
+          label: "Отменить заказ",
+          run: () => {
+            game.cancelBuild(s);
             this.done();
           },
         });
