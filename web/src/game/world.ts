@@ -11,6 +11,7 @@ import { mapGetLandscapeType } from "../engine/map.ts";
 import { Game } from "../engine/game.ts";
 import { layoutSize, structureInfo, tableTileDiff, unitInfo } from "../engine/tables.ts";
 import { MAP_SIZE } from "../rom/dune.ts";
+import type { UnitDrawState } from "../gfx/sprites.ts";
 
 export interface Structure {
   id: number;
@@ -41,7 +42,7 @@ export interface Unit {
   air: boolean;
   highlighted: boolean;
   /** состояние для выбора кадра (см. SpriteSet.unitFrames) */
-  state: { flip?: boolean; carrying?: boolean; big?: boolean; wing?: number };
+  state: UnitDrawState;
   /** подбит и дымит: кадр дыма 0..2 или −1 */
   smoke: number;
   /** пыль из-под харвестера: кадр 0..2 или −1 */
@@ -159,6 +160,7 @@ export class World {
         carrying: u.o.type === 0 && u.o.flags.inTransport,
         big: ui.displayMode === 0 && u.o.flags.bulletIsBig,
         wing: u.spriteOffset & 3,
+        recoil: u.recoilShown,
       };
       v.smoke = u.o.flags.isSmoking ? [0, 1, 2, 1][u.spriteOffset & 3] : -1;
       v.dust = u.o.type === 16 && u.actionID === 5 && u.spriteOffset >= 0 && this.onSpice(u) ? u.spriteOffset % 3 : -1;

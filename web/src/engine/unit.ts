@@ -60,7 +60,13 @@ function unitRotate(unit: Unit, level: number): void {
   }
   o.current = newCurrent;
   if (orientation16(newCurrent) === orientation16(current) && orientation8(newCurrent) === orientation8(current)) return;
+  unitSpriteUpdate(unit);
   unitUpdateMap(2, unit);
+}
+
+/** Обновление спрайта юнита MD ($012210): пока стоит recoil, кадр башни танка не меняется — держится отдача. */
+export function unitSpriteUpdate(unit: Unit): void {
+  if (!unit.recoil) unit.recoilShown = false;
 }
 
 function unitMovementTick(unit: Unit): void {
@@ -89,7 +95,8 @@ export function gameLoopUnit(): void {
   }
   if (ticks.rotation <= now) {
     tickRotation = true;
-    ticks.rotation = now + adjustToGameSpeed(4, 2, 8, true);
+    // MD ($0437C8): каждые 2 кадра, у PC — adjustToGameSpeed(4, 2, 8)
+    ticks.rotation = now + 2;
   }
   if (ticks.blinking <= now) {
     tickBlinking = true;
@@ -125,6 +132,9 @@ export function gameLoopUnit(): void {
 
     if (tickUnknown4 && u.targetAttack !== 0 && ui.o.flags.hasTurret) {
       unitSetOrientation(u, tileGetDirection(u.o.position, indexGetTile(u.targetAttack)), false, 1);
+      // $0439BA: перерисовка (отдача ещё держится), затем сброс бита отдачи
+      unitSpriteUpdate(u);
+      u.recoil = false;
     }
     if (tickMovement) {
       unitMovementTick(u);
@@ -141,6 +151,9 @@ export function gameLoopUnit(): void {
     if (tickRotation) {
       unitRotate(u, 0);
       if (ui.o.flags.hasTurret) unitRotate(u, 1);
+      // $043A9C: так же, как выше
+      unitSpriteUpdate(u);
+      u.recoil = false;
     }
     if (tickBlinking && u.blinkCounter !== 0) {
       u.blinkCounter--;
@@ -789,6 +802,7 @@ export function unitMove(unit: Unit | null, distance: number): boolean {
   }
   unit.distanceToDestination = distance;
   unit.o.position = newPosition;
+  unitSpriteUpdate(unit);
   unitUpdateMap(1, unit);
   if (isSpiceBloom) mapBloomExplodeSpice(packed, unitGetHouseID(unit));
   return ret;

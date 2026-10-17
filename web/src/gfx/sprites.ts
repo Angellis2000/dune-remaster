@@ -6,7 +6,7 @@
  */
 import type { DuneRom, SpriteFrame } from "../rom/dune.ts";
 import { ROM } from "../rom/dune.ts";
-import { readU16 } from "../rom/md.ts";
+import { readU16, readU32 } from "../rom/md.ts";
 import { unitBox, unitStem } from "./pack.ts";
 import type { Skins } from "./skins.ts";
 
@@ -36,6 +36,8 @@ export interface UnitDrawState {
   big?: boolean;
   /** кадр крыльев орнитоптера (spriteOffset) */
   wing?: number;
+  /** танк только что выстрелил: кадры отдачи башни (Unit.recoilShown) */
+  recoil?: boolean;
 }
 
 /** Кадры эффектов, которых нет в MD-версии, — ближайшие похожие. */
@@ -58,9 +60,11 @@ export class SpriteSet {
   }
 
   /** Своя картинка для этого вида юнита: ключ и сторона квадрата (мировые пиксели) с центром юнита посередине. */
-  unitSkin(type: number, orientation: number, anim: number, turret: number): { key: string; box: number } | null {
+  unitSkin(type: number, orientation: number, anim: number, turret: number, recoil = false): { key: string; box: number } | null {
     if (!this.skins) return null;
-    const key = `unit:${type}:${unitStem(this.rom, type, orientation, anim, turret)}`;
+    let key = `unit:${type}:${unitStem(this.rom, type, orientation, anim, turret, recoil)}`;
+    // своей картинки отдачи нет — берём обычную своей же графики, а не кадр из ROM
+    if (recoil && !this.skins.has(key)) key = `unit:${type}:${unitStem(this.rom, type, orientation, anim, turret)}`;
     if (!this.skins.has(key)) return null;
     let box = this.boxes.get(type);
     if (box === undefined) {
@@ -80,9 +84,9 @@ export class SpriteSet {
   }
 
   private unitFramesBase(type: number, orientation: number, anim: number, turret: number, state: UnitDrawState): FrameRef[] {
-    const turretTable = ROM.turretFrames[type];
+    const turretTable = state.recoil ? ROM.recoilFrames[type] : ROM.turretFrames[type];
     if (turretTable !== undefined) {
-      // $02EBFC: 8 направлений корпуса по 208 байт, внутри 8 направлений башни по 26 байт
+      // $02EC06: 8 направлений корпуса по 208 байт, внутри 8 направлений башни по 26 байт
       const body = ((orientation + 16) & 0xe0) >> 5;
       const top = ((turret + 16) & 0xe0) >> 5;
       return [{ frame: -1, def: turretTable + body * 208 + top * 26, flip: 0 }];
@@ -129,6 +133,11 @@ export class SpriteSet {
     if (!this.hasFrame(id)) id = EFFECT_FALLBACK[id] ?? -1;
     if (id < 0 || !this.hasFrame(id)) return null;
     return this.get({ frame: id, flip: 0 }, -1);
+  }
+
+  /** Значок над зданием из таблицы ROM.statusIcons; ox/oy — от левого верхнего угла здания. */
+  statusIcon(table: number, index: number): SpriteImage {
+    return this.get({ frame: -1, def: readU32(this.rom.bytes, table + index * 4), flip: 0 }, -1);
   }
 
   get(ref: FrameRef, house: number): SpriteImage {

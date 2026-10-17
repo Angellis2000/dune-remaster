@@ -6,7 +6,7 @@
  *   structures/TT_name.png        здание целиком (готовое), 32 px на клетку
  *   structures/TT_name_build.png  то же во время постройки (для справки)
  *   structures/TT_name_rubble.png развалины (для справки)
- *   units/TT_name/dD[_fF|_tT].png юнит по направлениям (0 — север, по часовой), центр юнита в центре картинки
+ *   units/TT_name/dD[_fF|_tT[_r]].png юнит по направлениям (0 — север, по часовой), центр юнита в центре картинки
  *   pictures/units|structures/TT_name.png  картинки меню строительства 96×56
  *   cursors/*.png, palette.png
  */
@@ -52,13 +52,18 @@ export interface UnitView {
   orientation: number;
   anim: number;
   turret: number;
+  /** кадр отдачи башни после выстрела */
+  recoil?: boolean;
 }
 
 /** Все различимые виды юнита: имя файла и параметры для SpriteSet.unitFrames. */
 export function unitViews(rom: DuneRom, type: number): UnitView[] {
   const out: UnitView[] = [];
   if (ROM.turretFrames[type] !== undefined) {
-    for (let b = 0; b < 8; b++) for (let t = 0; t < 8; t++) out.push({ stem: `d${b}_t${t}`, orientation: b * 32, anim: 0, turret: t * 32 });
+    for (const recoil of [false, true])
+      for (let b = 0; b < 8; b++)
+        for (let t = 0; t < 8; t++)
+          out.push({ stem: `d${b}_t${t}${recoil ? "_r" : ""}`, orientation: b * 32, anim: 0, turret: t * 32, recoil });
     return out;
   }
   const { mode } = rom.unitDisplay(type);
@@ -71,10 +76,11 @@ export function unitViews(rom: DuneRom, type: number): UnitView[] {
 }
 
 /** Имя кадра юнита для текущего положения — по нему ищется своя картинка. */
-export function unitStem(rom: DuneRom, type: number, orientation: number, anim: number, turret: number): string {
+export function unitStem(rom: DuneRom, type: number, orientation: number, anim: number, turret: number, recoil = false): string {
   orientation &= 0xff;
   turret &= 0xff;
-  if (ROM.turretFrames[type] !== undefined) return `d${((orientation + 16) & 0xe0) >> 5}_t${((turret + 16) & 0xe0) >> 5}`;
+  if (ROM.turretFrames[type] !== undefined)
+    return `d${((orientation + 16) & 0xe0) >> 5}_t${((turret + 16) & 0xe0) >> 5}${recoil ? "_r" : ""}`;
   const { mode } = rom.unitDisplay(type);
   if (mode === 1 || mode === 5) return `d${((orientation + 16) & 0xff) >> 5}`;
   if (mode === 2) return `d${pad(((orientation + 8) & 0xff) >> 4, 2)}`;
@@ -86,7 +92,7 @@ export function unitStem(rom: DuneRom, type: number, orientation: number, anim: 
 export function unitBox(rom: DuneRom, sprites: SpriteSet, type: number, house = 1): number {
   let half = 8;
   for (const v of unitViews(rom, type)) {
-    for (const f of sprites.unitFrames(type, v.orientation, v.anim, v.turret)) {
+    for (const f of sprites.unitFrames(type, v.orientation, v.anim, v.turret, { recoil: v.recoil })) {
       const img = sprites.get(f, house);
       half = Math.max(half, -img.ox, -img.oy, img.ox + img.canvas.width, img.oy + img.canvas.height);
     }
@@ -135,7 +141,7 @@ export function packCanvases(rom: DuneRom, icons: IconSet, sprites: SpriteSet, c
     const box = unitBox(rom, sprites, t);
     for (const v of unitViews(rom, t)) {
       const [c, g] = canvas(box, box);
-      for (const f of sprites.unitFrames(t, v.orientation, v.anim, v.turret)) {
+      for (const f of sprites.unitFrames(t, v.orientation, v.anim, v.turret, { recoil: v.recoil })) {
         const img = sprites.get(f, 1);
         g.drawImage(img.canvas, box / 2 + img.ox, box / 2 + img.oy);
       }
@@ -185,7 +191,8 @@ const README = `Графика Dune (Mega Drive), выгружена из ваш
                            бетон — icon_126, стены — icon_034…icon_045.
   units/TT_name/*.png      юнит: квадрат, центр юнита — центр картинки. dN — направление
                            (0 — север, дальше по часовой; 8 или 16 направлений), _fN — кадр
-                           шага пехоты, _tN — направление башни танка. Фон прозрачный.
+                           шага пехоты, _tN — направление башни танка, _tN_r — то же
+                           в момент выстрела (отдача). Фон прозрачный.
                            Юниты выгружены в цветах Атрейдесов.
   pictures/...             картинки меню строительства 96×56 (замена — в следующих версиях).
   cursors/, palette.png    курсоры и палитра игры (для справки).
@@ -211,7 +218,7 @@ export function skinKeyFor(path: string): string | null {
   if (m) return `icon:${Number(m[1])}`;
   m = /(?:^|\/)structures\/(\d+)_[a-z0-9_]+?(_build|_rubble)?\.png$/.exec(p);
   if (m) return m[2] ? null : `structure:${Number(m[1])}`;
-  m = /(?:^|\/)units\/(\d+)_[a-z0-9_]+\/(d\d+(?:_[ft]\d+)?)\.png$/.exec(p);
+  m = /(?:^|\/)units\/(\d+)_[a-z0-9_]+\/(d\d+(?:_f\d+|_t\d+(?:_r)?)?)\.png$/.exec(p);
   if (m) return `unit:${Number(m[1])}:${m[2]}`;
   return null;
 }

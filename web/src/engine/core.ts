@@ -178,6 +178,10 @@ export interface Unit {
   wobbleIndex: number;
   spriteOffset: number; // int8
   blinkCounter: number;
+  /** бит 6 байта $7 юнита MD: танк только что выстрелил, кадр башни не обновлять ($044B7C, проверка в $012210) */
+  recoil: boolean;
+  /** спрайту поставлены кадры отдачи ($2F97A/$2FFFA); обычные вернутся при перерисовке после сброса recoil */
+  recoilShown: boolean;
   team: number;
   timer: number;
   route: number[]; // 14 × uint8
@@ -259,7 +263,7 @@ export function newUnit(): Unit {
     targetLast: { x: 0, y: 0 }, targetPreLast: { x: 0, y: 0 },
     orientation: [{ speed: 0, target: 0, current: 0 }, { speed: 0, target: 0, current: 0 }],
     speedPerTick: 0, speedRemainder: 0, speed: 0, movingSpeed: 0, wobbleIndex: 0, spriteOffset: 0, blinkCounter: 0,
-    team: 0, timer: 0, route: new Array(14).fill(0),
+    recoil: false, recoilShown: false, team: 0, timer: 0, route: new Array(14).fill(0),
   };
 }
 

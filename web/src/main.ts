@@ -10,7 +10,7 @@ import { Skins } from "./gfx/skins.ts";
 import { ScreenGfx } from "./gfx/screens.ts";
 import { SpriteSet } from "./gfx/sprites.ts";
 import { BUTTON_LABEL, Pad } from "./input/pad.ts";
-import { CELL_PX, DuneRom, RomError } from "./rom/dune.ts";
+import { CELL_PX, DuneRom, ROM, RomError } from "./rom/dune.ts";
 import { AssetViewer } from "./ui/assets.ts";
 import { CommandPanel } from "./ui/command.ts";
 import { Minimap } from "./ui/minimap.ts";
@@ -400,21 +400,30 @@ async function startGame(rom: DuneRom): Promise<void> {
       view.invalidate();
     }
     if (messageTimer > 0 && --messageTimer === 0) message.hidden = true;
-    // MD: готовое здание сразу «прилипает» к курсору; после отмены (B) над двором горит «OK»
-    view.readyStructures = [];
+    // значки над своими зданиями, как $00DC9C: у двора и дворца «OK», иначе при ремонте — молоток
+    view.structureIcons = [];
     for (const s of world.structures) {
-      if (s.house !== world.player || s.type !== STRUCTURE.CONSTRUCTION_YARD) continue;
-      const prod = world.game.production(s.ref);
-      if (prod && !prod.ready) offered.delete(s.ref);
-      if (!prod?.ready) continue;
-      if (!offered.has(s.ref) && !paused && G.selectionType !== SELECTION.PLACE && G.selectionType !== SELECTION.TARGET && !panel.focused) {
-        offered.add(s.ref);
-        if (world.game.placeIt(s.ref)) {
-          selectStructure(s);
-          continue;
+      if (s.house !== world.player || s.ref.o.hitpoints === 0) continue;
+      if (s.type === STRUCTURE.CONSTRUCTION_YARD) {
+        // MD: готовое здание сразу «прилипает» к курсору; после отмены (B) над двором горит «OK»
+        const prod = world.game.production(s.ref);
+        if (prod && !prod.ready) offered.delete(s.ref);
+        let ok = false;
+        if (prod?.ready) {
+          if (!offered.has(s.ref) && !paused && G.selectionType !== SELECTION.PLACE && G.selectionType !== SELECTION.TARGET && !panel.focused) {
+            offered.add(s.ref);
+            if (world.game.placeIt(s.ref)) selectStructure(s);
+          }
+          // бит 15 слова $6: пока двор выбран для постановки своего заказа, «OK» нет
+          ok = !(G.selectionType === SELECTION.PLACE && world.game.selectedStructure === s.ref);
         }
+        if (ok) view.structureIcons.push({ s, table: ROM.statusIcons.ok, index: 3 });
+        else if (s.ref.o.flags.repairing) view.structureIcons.push({ s, table: ROM.statusIcons.repair, index: 3 });
+      } else if (s.type === STRUCTURE.PALACE) {
+        // $00DCFE: ракета готова ($56 = 0) и не ждёт цели ($FFDC4C); бит 8 слова $6 пока не опознан
+        if (s.ref.countDown === 0 && !G.unitHouseMissile) view.structureIcons.push({ s, table: ROM.statusIcons.ok, index: 6 });
+        else if (s.ref.o.flags.repairing) view.structureIcons.push({ s, table: ROM.statusIcons.repair, index: 6 });
       }
-      view.readyStructures.push(s);
     }
     if (G.selectionType === SELECTION.PLACE && G.structureActiveType !== 0xffff) {
       const si = structureInfo[G.structureActiveType];

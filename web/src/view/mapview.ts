@@ -95,8 +95,8 @@ export class MapView {
   veiledIcon = 0;
   /** постановка здания: размер и годность места (1 — да, <0 — без бетона, 0 — нельзя) */
   placement: { w: number; h: number; valid: number } | null = null;
-  /** здания с готовым к постановке заказом — над ними «OK», как в оригинале */
-  readyStructures: Structure[] = [];
+  /** значки над зданиями («OK», молоток): таблица ROM.statusIcons и индекс в ней */
+  structureIcons: { s: Structure; table: number; index: number }[] = [];
   private stripes = new Map<string, CanvasPattern>();
 
   private drawIcon(id: number, x: number, y: number, size: number): void {
@@ -434,7 +434,7 @@ export class MapView {
         drawBlasts();
         blastsDrawn = true;
       }
-      const skin = this.sprites.unitSkin(u.type, u.orientation, u.anim >> 3, u.turret);
+      const skin = this.sprites.unitSkin(u.type, u.orientation, u.anim >> 3, u.turret, u.state.recoil);
       if (skin) {
         const c = this.skins.scaled(skin.key, skin.box * z, skin.box * z)!;
         if (u.shadow) {
@@ -490,7 +490,10 @@ export class MapView {
       ctx.fillRect(0, 0, pl.w * size, pl.h * size);
       ctx.restore();
     }
-    for (const r of this.readyStructures) this.drawOk((r.x + r.w / 2) * CELL_PX, (r.y + r.h / 2) * CELL_PX, ox, oy);
+    for (const { s, table, index } of this.structureIcons) {
+      const img = this.sprites.statusIcon(table, index);
+      ctx.drawImage(img.canvas, Math.round((s.x * CELL_PX + img.ox) * z) - ox, Math.round((s.y * CELL_PX + img.oy) * z) - oy, img.canvas.width * z, img.canvas.height * z);
+    }
 
     // выделение — уголки рамки, как у курсора оригинала
     const s = this.selectedStructure;
@@ -532,29 +535,6 @@ export class MapView {
       this.stripes.set(key, p);
     }
     return p;
-  }
-
-  /** Значок «OK» над зданием, чей заказ готов к постановке. */
-  private drawOk(wx: number, wy: number, ox: number, oy: number): void {
-    const ctx = this.ctx;
-    const z = this.zoom;
-    const x = Math.round(wx * z) - ox;
-    const y = Math.round(wy * z) - oy;
-    const r = 9 * z;
-    ctx.save();
-    ctx.fillStyle = "#e8f6ff";
-    ctx.strokeStyle = "#1c5fd0";
-    ctx.lineWidth = 2 * z;
-    ctx.beginPath();
-    ctx.ellipse(x, y, r * 1.25, r, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "#1c5fd0";
-    ctx.font = `800 ${10 * z}px "Exo 2", sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("OK", x, y + z / 2);
-    ctx.restore();
   }
 
   /** Четыре уголка (из оригинального курсора-рамки) по углам прямоугольника. */

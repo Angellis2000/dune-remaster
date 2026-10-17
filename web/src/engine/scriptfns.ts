@@ -468,6 +468,11 @@ const unitFire: ScriptFunction = (script) => {
       const bullet = unitCreateBullet(u.o.position, typeID, unitGetHouseID(u), damage, target);
       if (!bullet) return 0;
       bullet.originEncoded = indexEncode(u.o.index, IT.UNIT);
+      // $044B38: выстрел пулей у танка и осадного танка ставит кадры отдачи башни
+      if (typeID === UNIT.BULLET && (u.o.type === UNIT.TANK || u.o.type === UNIT.SIEGE_TANK)) {
+        u.recoil = true;
+        u.recoilShown = true;
+      }
       G.onSound(ui.bulletSound, u.o.position);
       unitDeviationDecrease(u, 20);
       break;
