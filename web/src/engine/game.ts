@@ -584,6 +584,18 @@ export class Game {
   buildable(s: Structure): number {
     return structureGetBuildable(s);
   }
+
+  /** Коды оригинала, вводимые как пароль. */
+  cheat(code: "LOOKAROUND" | "SPLURGEOLA" | "PLAYTESTER"): void {
+    if (code === "LOOKAROUND") {
+      for (let packed = 0; packed < 4096; packed++) if (mapIsValidPosition(packed)) mapUnveilTile(packed, G.playerHouseID);
+    } else if (code === "SPLURGEOLA") {
+      if (!this.player) return;
+      this.player.credits = Math.min(0xffff, this.player.credits + 25000);
+      // без хранилищ лишнее сгорело бы на следующем такте — как со стартовыми кредитами
+      G.playerCreditsNoSilo = Math.max(G.playerCreditsNoSilo, this.player.credits);
+    } else G.playtester = true;
+  }
 }
 
 export { G };

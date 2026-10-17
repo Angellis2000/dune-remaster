@@ -14,6 +14,7 @@ import { AssetViewer } from "./ui/assets.ts";
 import { CommandPanel } from "./ui/command.ts";
 import { Minimap } from "./ui/minimap.ts";
 import { forgetRom, loadStoredRom, storeRom } from "./ui/romstore.ts";
+import { passwordFor, SettingsMenu, type HouseCode } from "./ui/settings.ts";
 import { MapView } from "./view/mapview.ts";
 
 const style = document.createElement("style");
@@ -154,8 +155,10 @@ async function startGame(rom: DuneRom): Promise<void> {
     for (let i = 1; i <= 9; i++) group.append(el("option", { value: `${h.code}${i}`, textContent: `${h.name} — миссия ${i}` }));
     select.append(group);
   }
+  let current = "A1";
   const loadMission = (code: string) => {
-    world.load(code[0] as "A" | "O" | "H", Number(code.slice(1)));
+    current = code;
+    world.load(code[0] as HouseCode, Number(code.slice(1)));
     const c = world.scenario.cursor;
     view.setWorld(world, c.x * CELL_PX + CELL_PX / 2, c.y * CELL_PX + CELL_PX / 2);
     minimap.setMap(world.map);
@@ -168,9 +171,62 @@ async function startGame(rom: DuneRom): Promise<void> {
   };
   select.addEventListener("change", () => loadMission(select.value));
   world.game.onEnd = (result) => {
-    endBanner.textContent = result === "won" ? "Миссия выполнена! Выберите следующую миссию." : "Миссия провалена. Выберите миссию, чтобы начать заново.";
+    const house = current[0] as HouseCode;
+    const next = Number(current.slice(1)) + 1;
+    const password = result === "won" ? passwordFor(house, next) : null;
+    endBanner.textContent =
+      result === "lost"
+        ? "Миссия провалена. Start — меню: начать сначала."
+        : password
+          ? `Миссия выполнена! Пароль следующего уровня: ${password}`
+          : "Миссия выполнена! Арракис ваш.";
     endBanner.hidden = false;
   };
+
+  // ---------------------------------------------------------------- Start: настройки
+  const prefs = { music: true, sound: true, radar: true };
+  try {
+    Object.assign(prefs, JSON.parse(localStorage.getItem("dune-prefs") ?? "{}"));
+  } catch {
+    /* настройки по умолчанию */
+  }
+  const savePrefs = () => {
+    try {
+      localStorage.setItem("dune-prefs", JSON.stringify(prefs));
+    } catch {
+      /* без сохранения */
+    }
+  };
+  const settings = new SettingsMenu({
+    music: () => prefs.music,
+    setMusic: (on) => ((prefs.music = on), savePrefs()),
+    sound: () => prefs.sound,
+    setSound: (on) => ((prefs.sound = on), savePrefs()),
+    radar: () => prefs.radar,
+    setRadar: (on) => {
+      prefs.radar = on;
+      minimap.canvas.hidden = !on;
+      savePrefs();
+    },
+    restart: () => loadMission(current),
+    chooseHouse: (house) => loadMission(`${house}1`),
+    password: (r) => {
+      if (r.kind === "level") loadMission(`${r.house}${r.mission}`);
+      else if (r.cheat === "LOOKAROUND" || r.cheat === "SPLURGEOLA" || r.cheat === "PLAYTESTER") {
+        world.game.cheat(r.cheat);
+        world.sync();
+        view.invalidate();
+        G.onMessage(r.cheat === "LOOKAROUND" ? "Карта открыта" : r.cheat === "SPLURGEOLA" ? "+25000 кредитов" : "Режим испытателя");
+      } else if (r.cheat === "VERSIONNUM") G.onMessage("Dune Remaster · движок по OpenDUNE, данные из ROM Mega Drive");
+      else G.onMessage("Финальные титры пока не сделаны");
+    },
+    toggled: (open) => {
+      paused = open;
+      pausedBanner.hidden = true;
+    },
+  });
+  stage.append(settings.root);
+  minimap.canvas.hidden = !prefs.radar;
 
   // ---------------------------------------------------------------- выбор и приказы
   const clearSelection = () => {
@@ -224,6 +280,62 @@ async function startGame(rom: DuneRom): Promise<void> {
     }
     updateHud();
   };
+  /**
+   * Кнопка A геймпада — как в оригинале MD (обработчик $027B50):
+   * свой юнит — выбрать (курсор становится прицелом); при выбранном юните A в точку — приказ
+   * (идти, атаковать, войти в здание), после приказа выбор снимается; A по тому же юниту — снять выбор.
+   * Своё здание — выбрать; A по выбранному зданию ещё раз — меню здания.
+   */
+  const padA = () => {
+    if (paused || world.game.ended) return;
+    const wx = view.cursorX;
+    const wy = view.cursorY;
+    const packed = World.packAt(wx, wy);
+    if (G.selectionType === SELECTION.PLACE || G.selectionType === SELECTION.TARGET) {
+      view.onPrimary(wx, wy);
+      view.markedUnit = null;
+      return;
+    }
+    const unit = world.unitAt(wx, wy);
+    const s = world.structureAtCell(packed & 63, packed >> 6);
+    const mine = commandable();
+    if (mine.length) {
+      if (unit && mine.includes(unit.ref)) {
+        clearSelection();
+      } else if (unit && unit.house === world.player && !unit.air) {
+        selectUnits([unit]);
+      } else {
+        for (const u of mine) world.game.order(u, world.game.defaultAction(u, packed), packed);
+        clearSelection();
+      }
+    } else if (unit && unit.house === world.player && !unit.air) {
+      selectUnits([unit]);
+    } else if (s && world.map.unveiled[packed]) {
+      if (view.selectedStructure === s && s.house === world.player) {
+        panel.open();
+      } else {
+        clearSelection();
+        view.selectedStructure = s;
+        world.game.selectedStructure = s.ref;
+      }
+    } else if (unit) {
+      selectUnits([unit]);
+    } else {
+      clearSelection();
+    }
+    view.markedUnit = playerUnitsSelected()[0] ?? null;
+    updateHud();
+  };
+  /** Кнопка B: отмена — постановки здания, выбора цели или выделения. */
+  const padB = () => {
+    if (G.selectionType === SELECTION.TARGET || G.selectionType === SELECTION.PLACE) {
+      world.game.cancelTarget();
+      view.placement = null;
+    } else clearSelection();
+    view.markedUnit = null;
+    updateHud();
+  };
+
   /** Правая кнопка: отменить выбор цели или постановку, иначе снять выделение, как в Red Alert. */
   view.onSecondary = () => {
     if (G.selectionType === SELECTION.TARGET || G.selectionType === SELECTION.PLACE) {
@@ -266,7 +378,9 @@ async function startGame(rom: DuneRom): Promise<void> {
     const enemy = (over && over.house !== world.player) || (overS && overS.house !== world.player);
     if (G.selectionType === SELECTION.TARGET) view.cursorKind = G.activeAction === ACTION.MOVE ? "move" : "attack";
     else if (G.selectionType === SELECTION.PLACE) view.cursorKind = "select";
+    else if (!view.mouseMode) view.cursorKind = mine ? "attack" : "select"; // в оригинале при выбранном юните — прицел
     else view.cursorKind = !mine ? "select" : over && over.house === world.player ? "select" : enemy ? "attack" : "move";
+    if (view.markedUnit && !playerUnitsSelected().includes(view.markedUnit)) view.markedUnit = null;
     view.inputLocked = panel.focused;
     if (frame % 10 === 0) panel.update();
     if (frame % 30 === 0) {
@@ -317,15 +431,18 @@ async function startGame(rom: DuneRom): Promise<void> {
   pad.onPress((b) => {
     if (!assets.root.hidden) return;
     lastButton = BUTTON_LABEL[b];
+    if (settings.handlePad(b)) {
+      updateHud();
+      return;
+    }
     if (panel.handlePad(b)) {
       updateHud();
       return;
     }
     if (b === "start") {
-      paused = !paused;
-      pausedBanner.hidden = !paused;
-    } else if (b === "a") view.onPrimary(view.cursorX, view.cursorY);
-    else if (b === "c") panel.open();
+      settings.open();
+    } else if (b === "a") padA();
+    else if (b === "b") padB();
     updateHud();
   });
 
@@ -353,7 +470,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     const where = h ? `Клетка ${h.x}, ${h.y} · иконка ${h.icon}` : "";
     const help = view.mouseMode
       ? "Левая — выбрать или приказ · протянуть — рамка · правая — снять выбор · колесо — масштаб"
-      : "Стрелки — курсор · B+стрелки — быстро · 1 A · 2 B · 3 C · Enter — Start";
+      : "Стрелки — курсор · C+стрелки — быстро · 1 A · 2 B · 3 C · Enter — Start (меню)";
     statusWhere.textContent = lastButton ? `${where} · ${lastButton}` : where;
     statusHelp.textContent = help;
     renderSelectionInfo();
@@ -378,6 +495,8 @@ async function startGame(rom: DuneRom): Promise<void> {
 
   loadMission("A1");
   canvas.focus();
+  // для автотестов: ?debug открывает мир и вид из консоли
+  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G } });
 }
 
 showRomScreen();

@@ -26,6 +26,23 @@ export interface FrameRef {
   flip: number;
 }
 
+/** Состояние юнита, от которого зависит кадр. */
+export interface UnitDrawState {
+  /** вторая анимация (ракеты): flags.animationFlip */
+  flip?: boolean;
+  /** транспортник несёт груз */
+  carrying?: boolean;
+  /** большая пуля */
+  big?: boolean;
+  /** кадр крыльев орнитоптера (spriteOffset) */
+  wing?: number;
+}
+
+/** Кадры эффектов, которых нет в MD-версии, — ближайшие похожие. */
+const EFFECT_FALLBACK: Record<number, number> = {
+  151: 153, 152: 154, 156: 223, 157: 224, 158: 225, 168: 180, 169: 181, 170: 182, 214: 218, 215: 219, 216: 220, 217: 221,
+};
+
 export class SpriteSet {
   private cache = new Map<string, SpriteImage>();
   private vram: Uint8Array;
@@ -54,7 +71,15 @@ export class SpriteSet {
   }
 
   /** Кадры юнита по ориентации корпуса и башни 0..255 (0 — север). */
-  unitFrames(type: number, orientation: number, anim = 0, turret = orientation): FrameRef[] {
+  unitFrames(type: number, orientation: number, anim = 0, turret = orientation, state: UnitDrawState = {}): FrameRef[] {
+    const refs = this.unitFramesBase(type, orientation, anim, turret, state);
+    // как GUI_Widget_Viewport_Draw: вторая анимация ракет, транспортник с грузом, большая пуля
+    const extra = (state.flip ? 5 : 0) + (state.carrying ? 3 : 0) + (state.big ? 1 : 0);
+    if (extra) for (const r of refs) if (r.frame >= 0) r.frame += extra;
+    return refs;
+  }
+
+  private unitFramesBase(type: number, orientation: number, anim: number, turret: number, state: UnitDrawState): FrameRef[] {
     const turretTable = ROM.turretFrames[type];
     if (turretTable !== undefined) {
       // $02EBFC: 8 направлений корпуса по 208 байт, внутри 8 направлений башни по 26 байт
@@ -65,7 +90,13 @@ export class SpriteSet {
     const { baseFrame, mode } = this.rom.unitDisplay(type);
     const b = this.rom.bytes;
     const s16 = (o: number) => (readU16(b, o) << 16) >> 16;
-    if (mode === 1 || mode === 5) {
+    if (mode === 5) {
+      // орнитоптер: по 3 кадра крыльев на направление
+      const d = ((orientation + 16) & 0xff) >> 5;
+      const wing = [2, 1, 0, 1][(state.wing ?? 0) & 3];
+      return [{ frame: baseFrame + s16(ROM.dir8 + d * 4) * 3 + wing, flip: readU16(b, ROM.dir8 + d * 4 + 2) }];
+    }
+    if (mode === 1) {
       const d = ((orientation + 16) & 0xff) >> 5;
       return [{ frame: baseFrame + s16(ROM.dir8 + d * 4), flip: readU16(b, ROM.dir8 + d * 4 + 2) }];
     }
@@ -81,10 +112,25 @@ export class SpriteSet {
     return [{ frame: baseFrame, flip: 0 }];
   }
 
+  /** Кадр есть в таблице MD (у пустых записей описание = FFFFFFFF). */
+  hasFrame(index: number): boolean {
+    if (index < 0 || index > 400) return false;
+    const def = ((this.rom.bytes[ROM.frameTable + index * 8 + 4] << 24) | (this.rom.bytes[ROM.frameTable + index * 8 + 5] << 16)) >>> 0;
+    return def !== 0xffff0000;
+  }
+
+  /** Кадр эффекта (взрыв, дым, пыль) по номеру спрайта движка; своя палитра кадра, без цвета дома. */
+  effect(spriteID: number): SpriteImage | null {
+    let id = spriteID;
+    if (!this.hasFrame(id)) id = EFFECT_FALLBACK[id] ?? -1;
+    if (id < 0 || !this.hasFrame(id)) return null;
+    return this.get({ frame: id, flip: 0 }, -1);
+  }
+
   get(ref: FrameRef, house: number): SpriteImage {
     const f = ref.def !== undefined ? this.rom.frameDef(ref.def) : this.rom.frame(ref.frame);
     const flip = ref.flip;
-    const pal = f.flag === 0x0b ? -1 : this.rom.housePaletteLine(house);
+    const pal = f.flag === 0x0b || house < 0 ? -1 : this.rom.housePaletteLine(house);
     const key = `${ref.def ?? ref.frame}:${flip}:${pal}`;
     let img = this.cache.get(key);
     if (!img) {

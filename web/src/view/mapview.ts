@@ -1,9 +1,9 @@
 /**
  * Вид на карту с курсором как в оригинале.
  *
- * Геймпад (по умолчанию): стрелки двигают курсор плавно, с разгоном от 1 до 3 пикселей за кадр
- * (замерено в оригинале); у края экрана курсор упирается и едет карта. B + стрелки — быстрая
- * прокрутка карты (8 пикселей за кадр), курсор при этом стоит на месте экрана, как в оригинале.
+ * Геймпад (по умолчанию), как в коде MD ($006E02): стрелки двигают курсор с разгоном от 1 до 3
+ * пикселей за кадр (+1/16 за кадр); у края экрана курсор упирается и едет карта. C + стрелки —
+ * быстрая прокрутка карты: 7 пикселей за кадр первую секунду, затем 14; курсор стоит на месте экрана.
  * Мышь (как в Red Alert): щелчок левой — выбрать или отдать приказ, протянуть левой — рамка
  * выделения, правая — снять выделение. Колесо — масштаб, средняя кнопка — сдвиг карты.
  * Мировые координаты — пиксели оригинала (клетка = 32).
@@ -22,9 +22,10 @@ const MOUSE_SCROLL = 1100; // скорость прокрутки мышью, э
 const FRAME = 1 / 60;
 const CURSOR_MIN = 1; // пикселей за кадр в начале движения
 const CURSOR_MAX = 3; // пикселей за кадр после разгона
-const CURSOR_ACCEL = 0.08; // прибавка скорости за кадр удержания
+const CURSOR_ACCEL = 1 / 16; // прибавка скорости за кадр удержания (0x1000 в 16.16)
 const CURSOR_MARGIN = 64; // от курсора до края экрана, после которого едет карта
-const FAST_SCROLL = 8; // B + стрелки: пикселей за кадр
+const FAST_SCROLL = [7, 14]; // C + стрелки: пикселей за кадр (первые 60 кадров и дальше)
+const FAST_SCROLL_DELAY = 60;
 const DRAG_START = 6; // на сколько экранных пикселей сдвинуть мышь, чтобы началась рамка
 
 export interface CellInfo {
@@ -314,8 +315,11 @@ export class MapView {
     requestAnimationFrame((tt) => this.tick(tt));
   }
 
-  /** крестовина занята меню (C): курсор стоит */
+  /** крестовина занята меню: курсор стоит */
   inputLocked = false;
+  private fastTime = 0;
+  /** выбранный геймпадом юнит (метка «стрелки» над ним, как в оригинале) */
+  markedUnit: Unit | null = null;
 
   /** Один кадр управления с крестовины. */
   private step(): void {
@@ -325,14 +329,17 @@ export class MapView {
     const dy = (p.isHeld("down") ? 1 : 0) - (p.isHeld("up") ? 1 : 0);
     if (!dx && !dy) {
       this.holdTime = 0;
+      this.fastTime = 0;
       return;
     }
-    if (p.isHeld("b")) {
+    if (p.isHeld("c")) {
       // быстрая прокрутка: едет карта, курсор остаётся на том же месте экрана
       const cx = this.camX;
       const cy = this.camY;
-      this.camX += dx * FAST_SCROLL;
-      this.camY += dy * FAST_SCROLL;
+      const speed = FAST_SCROLL[this.fastTime < FAST_SCROLL_DELAY ? 0 : 1];
+      this.fastTime++;
+      this.camX += dx * speed;
+      this.camY += dy * speed;
       this.clampCamera();
       this.cursorX += this.camX - cx;
       this.cursorY += this.camY - cy;
@@ -340,6 +347,7 @@ export class MapView {
       this.onChange();
       return;
     }
+    this.fastTime = 0;
     const speed = Math.min(CURSOR_MAX, CURSOR_MIN + this.holdTime * CURSOR_ACCEL);
     this.holdTime++;
     this.cursorX += dx * speed;
@@ -408,31 +416,63 @@ export class MapView {
     );
     // наземные снизу вверх, затем воздушные — поверх всех
     visible.sort((a, b) => (a.air ? 100000 : 0) + a.y - ((b.air ? 100000 : 0) + b.y));
+    const drawEffect = (spriteID: number, x: number, y: number) => {
+      const img = this.sprites.effect(spriteID);
+      if (img) ctx.drawImage(img.canvas, Math.round((x + img.ox) * z) - ox, Math.round((y + img.oy) * z) - oy, img.canvas.width * z, img.canvas.height * z);
+    };
+    // взрывы — под воздушными юнитами, как в оригинале
+    const drawBlasts = () => {
+      for (const b of world.blasts) drawEffect(b.spriteID, b.x, b.y);
+    };
+    let blastsDrawn = false;
     for (const u of visible) {
+      if (u.air && !blastsDrawn) {
+        drawBlasts();
+        blastsDrawn = true;
+      }
       const skin = this.sprites.unitSkin(u.type, u.orientation, u.anim >> 3, u.turret);
       if (skin) {
         const c = this.skins.scaled(skin.key, skin.box * z, skin.box * z)!;
+        if (u.shadow) {
+          ctx.globalAlpha = 0.35;
+          ctx.filter = "brightness(0)";
+          ctx.drawImage(c, Math.round((u.x - skin.box / 2 + 4) * z) - ox, Math.round((u.y - skin.box / 2 + 10) * z) - oy);
+          ctx.filter = "none";
+          ctx.globalAlpha = 1;
+        }
         ctx.drawImage(c, Math.round((u.x - skin.box / 2) * z) - ox, Math.round((u.y - skin.box / 2) * z) - oy);
-        continue;
+      } else {
+        for (const f of this.sprites.unitFrames(u.type, u.orientation, u.anim >> 3, u.turret, u.state)) {
+          const img = this.sprites.get(f, u.house);
+          const dx = Math.round((u.x + img.ox) * z) - ox;
+          const dy = Math.round((u.y + img.oy) * z) - oy;
+          if (u.shadow) {
+            // тень летящего: силуэт со сдвигом вниз-вправо
+            ctx.globalAlpha = 0.35;
+            ctx.filter = "brightness(0)";
+            ctx.drawImage(img.canvas, dx + 4 * z, dy + 10 * z, img.canvas.width * z, img.canvas.height * z);
+            ctx.filter = "none";
+            ctx.globalAlpha = 1;
+          }
+          ctx.drawImage(img.canvas, dx, dy, img.canvas.width * z, img.canvas.height * z);
+          if (u.highlighted) {
+            ctx.globalAlpha = 0.5;
+            ctx.globalCompositeOperation = "lighter";
+            ctx.drawImage(img.canvas, dx, dy, img.canvas.width * z, img.canvas.height * z);
+            ctx.globalCompositeOperation = "source-over";
+            ctx.globalAlpha = 1;
+          }
+        }
       }
-      for (const f of this.sprites.unitFrames(u.type, u.orientation, u.anim >> 3, u.turret)) {
-        const img = this.sprites.get(f, u.house);
-        ctx.drawImage(img.canvas, Math.round((u.x + img.ox) * z) - ox, Math.round((u.y + img.oy) * z) - oy, img.canvas.width * z, img.canvas.height * z);
+      if (u.dust >= 0) {
+        // пыль из-под харвестера (кадры 223–225), сбоку по направлению
+        const DUST = [[0, 7], [-7, 6], [-14, 1], [-9, -6], [0, -9], [9, -6], [14, 1], [7, 6]];
+        const [ddx, ddy] = DUST[((u.orientation + 16) & 0xff) >> 5];
+        drawEffect(223 + u.dust, u.x + ddx * 2, u.y + ddy * 2);
       }
+      if (u.smoke >= 0) drawEffect(180 + u.smoke, u.x, u.y - 14);
     }
-
-    // взрывы: пока кадры MD не сопоставлены — вспышка по ходу анимации
-    for (const b of world.blasts) {
-      const r = (6 + (b.age % 4) * 3) * z;
-      const g = ctx.createRadialGradient(b.x * z - ox, b.y * z - oy, 0, b.x * z - ox, b.y * z - oy, r);
-      g.addColorStop(0, "rgba(255,240,170,0.95)");
-      g.addColorStop(0.5, "rgba(255,150,40,0.8)");
-      g.addColorStop(1, "rgba(120,40,0,0)");
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(b.x * z - ox, b.y * z - oy, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    if (!blastsDrawn) drawBlasts();
 
     // постановка здания: рамка на клетках под курсором
     if (this.placement) {
@@ -449,7 +489,15 @@ export class MapView {
     // выделение — уголки рамки, как у курсора оригинала
     const s = this.selectedStructure;
     if (s) this.drawCorners(s.x * CELL_PX, s.y * CELL_PX, s.w * CELL_PX, s.h * CELL_PX, ox, oy);
-    for (const u of this.selectedUnits) this.drawCorners(u.x - 14, u.y - 14, 28, 28, ox, oy);
+    for (const u of this.selectedUnits) {
+      if (u === this.markedUnit) continue;
+      this.drawCorners(u.x - 14, u.y - 14, 28, 28, ox, oy);
+    }
+    if (this.markedUnit) {
+      const m = this.cursors.move;
+      const u = this.markedUnit;
+      ctx.drawImage(m, Math.round((u.x - 16) * z) - ox, Math.round((u.y - 16) * z) - oy, 32 * z, 32 * z);
+    }
 
     if (this.box?.active) {
       const a = this.box;

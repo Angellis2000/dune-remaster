@@ -16,8 +16,8 @@ from PIL import Image
 
 # RETRO_DEVICE_ID_JOYPAD_*
 BTN = dict(B=0, Y=1, SELECT=2, START=3, UP=4, DOWN=5, LEFT=6, RIGHT=7, A=8, X=9, L=10, R=11)
-# на MD: B=A(retro B)?  Используем раскладку gpgx: retro B -> MD A, retro A -> MD B, retro Y -> MD C
-MD = dict(A="B", B="A", C="Y", START="START", UP="UP", DOWN="DOWN", LEFT="LEFT", RIGHT="RIGHT",
+# Раскладка gpgx (проверено по байту кнопок игры $FFE41B): retro B -> MD B, retro A -> MD C, retro Y -> MD A
+MD = dict(A="Y", B="B", C="A", START="START", UP="UP", DOWN="DOWN", LEFT="LEFT", RIGHT="RIGHT",
           X="L", Y="X", Z="R", MODE="SELECT")
 
 ENV_GET_SYSTEM_DIRECTORY = 9

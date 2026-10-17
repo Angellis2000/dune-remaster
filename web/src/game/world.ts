@@ -5,8 +5,9 @@
  */
 import { CELL_PX, type DuneRom } from "../rom/dune.ts";
 import type { Scenario } from "../rom/scenario.ts";
-import { G, MAP_INFOS, MOVEMENT, STRUCTURE, packTile, packXY, type Structure as EStructure, type Unit as EUnit } from "../engine/core.ts";
+import { G, LST, MAP_INFOS, MOVEMENT, STRUCTURE, packTile, packXY, type Structure as EStructure, type Unit as EUnit } from "../engine/core.ts";
 import { explosions } from "../engine/explosion.ts";
+import { mapGetLandscapeType } from "../engine/map.ts";
 import { Game } from "../engine/game.ts";
 import { layoutSize, structureInfo, tableTileDiff, unitInfo } from "../engine/tables.ts";
 import { MAP_SIZE } from "../rom/dune.ts";
@@ -39,6 +40,13 @@ export interface Unit {
   anim: number;
   air: boolean;
   highlighted: boolean;
+  /** состояние для выбора кадра (см. SpriteSet.unitFrames) */
+  state: { flip?: boolean; carrying?: boolean; big?: boolean; wing?: number };
+  /** подбит и дымит: кадр дыма 0..2 или −1 */
+  smoke: number;
+  /** пыль из-под харвестера: кадр 0..2 или −1 */
+  dust: number;
+  shadow: boolean;
 }
 
 export interface Blast {
@@ -119,7 +127,10 @@ export class World {
       alive.add(u);
       let v = this.unitViews.get(u);
       if (!v || v.type !== u.o.type) {
-        v = { id: this.nextId++, ref: u, type: 0, house: 0, hp: 0, x: 0, y: 0, orientation: 0, turret: 0, anim: 0, air: false, highlighted: false };
+        v = {
+          id: this.nextId++, ref: u, type: 0, house: 0, hp: 0, x: u.o.position.x / 8, y: u.o.position.y / 8, orientation: 0, turret: 0,
+          anim: 0, air: false, highlighted: false, state: {}, smoke: -1, dust: -1, shadow: false,
+        };
         this.unitViews.set(u, v);
       }
       const ui = unitInfo[u.o.type];
@@ -127,13 +138,30 @@ export class World {
       v.type = u.o.type;
       v.house = u.deviated !== 0 ? u.deviatedHouse : u.o.houseID;
       v.hp = Math.round((u.o.hitpoints * 256) / Math.max(1, ui.o.hitpoints));
-      v.x = u.o.position.x / 8 + wob.x * 2;
-      v.y = u.o.position.y / 8 + wob.y * 2;
+      // движок двигает юниты раз в 3 кадра — на экране сглаживаем, чтобы ход был плавным
+      const tx = u.o.position.x / 8 + wob.x * 2;
+      const ty = u.o.position.y / 8 + wob.y * 2;
+      if (Math.abs(tx - v.x) > 40 || Math.abs(ty - v.y) > 40) {
+        v.x = tx;
+        v.y = ty;
+      } else {
+        v.x += (tx - v.x) * 0.45;
+        v.y += (ty - v.y) * 0.45;
+      }
       v.orientation = u.orientation[0].current & 0xff;
       v.turret = u.orientation[ui.o.flags.hasTurret ? 1 : 0].current & 0xff;
       v.anim = u.spriteOffset >= 0 ? (u.spriteOffset & 3) << 3 : 0;
       v.air = ui.movementType === MOVEMENT.WINGER;
       v.highlighted = u.o.flags.isHighlighted;
+      v.state = {
+        flip: !!ui.flags.hasAnimationSet && u.o.flags.animationFlip,
+        carrying: u.o.type === 0 && u.o.flags.inTransport,
+        big: ui.displayMode === 0 && u.o.flags.bulletIsBig,
+        wing: u.spriteOffset & 3,
+      };
+      v.smoke = u.o.flags.isSmoking ? [0, 1, 2, 1][u.spriteOffset & 3] : -1;
+      v.dust = u.o.type === 16 && u.actionID === 5 && u.spriteOffset >= 0 && this.onSpice(u) ? u.spriteOffset % 3 : -1;
+      v.shadow = !!ui.o.flags.hasShadow;
       units.push(v);
     }
     for (const u of [...this.unitViews.keys()]) if (!alive.has(u) && (!u.o.flags.used || u.o.flags.isNotOnMap)) this.unitViews.delete(u);
@@ -175,6 +203,11 @@ export class World {
 
     this.houses.clear();
     for (const h of G.houseFind) this.houses.set(h.index, { id: h.index, credits: h.credits, quota: h.creditsQuota, human: h.flags.human });
+  }
+
+  private onSpice(u: EUnit): boolean {
+    const t = mapGetLandscapeType(packTile(u.o.position));
+    return t === LST.SPICE || t === LST.THICK_SPICE;
   }
 
   /** Юнит под точкой (мировые пиксели): ближайший к центру в пределах клетки. */

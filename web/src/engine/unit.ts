@@ -798,6 +798,7 @@ export function unitDamage(unit: Unit | null, damage: number, range: number): bo
   if (!unit || !unit.o.flags.allocated) return false;
   let ui = unitInfo[unit.o.type];
   if (!ui.flags.isNormalUnit && unit.o.type !== UNIT.SANDWORM) return false;
+  if (G.playtester && unit.o.houseID === G.playerHouseID) return false;
   const alive = unit.o.hitpoints !== 0;
   unit.o.hitpoints = unit.o.hitpoints >= damage ? unit.o.hitpoints - damage : 0;
   unitDeviationDecrease(unit, 0);

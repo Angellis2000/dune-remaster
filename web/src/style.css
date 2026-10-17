@@ -616,3 +616,116 @@ button[aria-pressed="true"] {
     max-height: 45%;
   }
 }
+
+/* ---------------------------------------------------------------- Start: настройки */
+.settings {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 24px 16px;
+  background: rgba(11, 12, 16, 0.88);
+  z-index: 5;
+}
+
+.settings h2 {
+  margin: 0;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+
+.settings-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  width: min(360px, 100%);
+}
+
+.settings-list li.gap {
+  margin-top: 14px;
+}
+
+.settings-list button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 12px;
+  text-align: left;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.settings-list button b {
+  color: #7fd0ff;
+  font-weight: 600;
+}
+
+.settings-list button.cursor,
+.password-grid button.cursor {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.settings-note,
+.settings-footer {
+  margin: 0;
+  max-width: 420px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.settings-footer {
+  letter-spacing: 0.08em;
+}
+
+.password {
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+}
+
+.password-slots {
+  display: flex;
+  gap: 4px;
+}
+
+.password-slots span {
+  width: 26px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-bottom: 2px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 20px;
+}
+
+.password-slots span.next {
+  border-bottom-color: var(--accent);
+}
+
+.password-grid {
+  display: grid;
+  grid-template-columns: repeat(9, 34px);
+  gap: 4px;
+}
+
+.password-grid button {
+  height: 34px;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 16px;
+}
+
+@media (max-width: 420px) {
+  .password-grid {
+    grid-template-columns: repeat(9, 1fr);
+    width: 100%;
+  }
+}

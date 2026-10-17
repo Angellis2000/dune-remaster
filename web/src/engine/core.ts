@@ -357,6 +357,8 @@ export const G = {
   structureActivePosition: 0,
   factoryWindowConstructionYard: false,
   musicInBattle: 0,
+  /** код PLAYTESTER: юниты игрока гибнут только в пасти червя */
+  playtester: false,
   scenario: newScenario(),
   /** звуки и сообщения уходят в интерфейс через эти обработчики */
   onSound: (_id: number, _pos?: Tile32) => {},
