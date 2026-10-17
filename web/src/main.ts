@@ -217,9 +217,7 @@ async function startGame(rom: DuneRom): Promise<void> {
         world.game.cheat(r.cheat);
         world.sync();
         view.invalidate();
-        G.onMessage(r.cheat === "LOOKAROUND" ? "Карта открыта" : r.cheat === "SPLURGEOLA" ? "+25000 кредитов" : "Режим испытателя");
-      } else if (r.cheat === "VERSIONNUM") G.onMessage("Dune Remaster · движок по OpenDUNE, данные из ROM Mega Drive");
-      else G.onMessage("Финальные титры пока не сделаны");
+      } else if (r.cheat === "DUNEFINALE") G.onMessage("Финальные титры пока не сделаны");
     },
     toggled: (open) => {
       paused = open;

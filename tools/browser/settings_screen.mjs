@@ -18,7 +18,15 @@ await key("ArrowDown", 3); await key("ArrowRight", 2); await key("ArrowDown"); a
 await key("ArrowUp", 4); await key("Digit1"); await shot("s3_music_off");
 await key("ArrowUp"); await shot("s4_wrap");
 await key("ArrowUp", 2); await key("Digit1"); await page.waitForTimeout(100); await shot("s5_password");
-// S P I C E D A N C E с геймпада: S — ряд 2, столбец 8
+// код с клавиатуры: экран остаётся открытым, туман выключается
+await page.keyboard.type("LOOKAROUND", { delay: 30 });
+await key("Digit1"); // курсор сам встал на ↵
+await page.waitForTimeout(100);
+console.log("after LOOKAROUND: open", await page.isVisible(".settings"), "reveal", await page.evaluate(() => window.dune.G.revealAll));
+await shot("s6_code");
+await key("Enter"); // Start — назад в «НАСТРОЙКИ»
+await key("ArrowUp", 3); await key("Digit1"); // снова «ВВЕСТИ ПАРОЛЬ»
+// S P I C E D A N C E с геймпада
 const grid = "ABCDEFGHIJKLMNOPQRST";
 let cur = 0;
 for (const ch of "SPICEDANCE") {
@@ -28,9 +36,9 @@ for (const ch of "SPICEDANCE") {
   await key(c1 > c0 ? "ArrowRight" : "ArrowLeft", Math.abs(c1 - c0));
   await key("Digit1");
   cur = t;
-  if (ch === "C") await shot("s6_typing");
 }
-await key("Enter"); // Start с полным паролем — ввод
+await shot("s7_typed");
+await key("Digit1"); // A на ↵
 await page.waitForTimeout(300);
 console.log("settings open:", await page.isVisible(".settings"), "mission:", await page.inputValue("#mission-select"));
 console.log("errors:", errors);

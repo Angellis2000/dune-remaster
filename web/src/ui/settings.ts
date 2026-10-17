@@ -52,6 +52,8 @@ const GRID_STEP = 16;
 const LAST_ROW = [..."UVWXYZ", "<", ">", "OK"];
 const INPUT_X = 120;
 const INPUT_Y = 112;
+/** клетка ↵ (ряд 2, столбец 8) */
+const ENTER_CELL = 28;
 
 /** Дома в порядке выбора и их номера в таблице имён ROM (0 — Харконнены, 1 — Атрейдесы, 2 — Ордосы). */
 const HOUSES: { code: HouseCode; id: number }[] = [
@@ -91,6 +93,7 @@ export class SettingsMenu {
   private word: string[] = [];
   private pos = 0;
   private frame = 0;
+  private blink = 0;
   private raf = 0;
 
   constructor(
@@ -179,6 +182,7 @@ export class SettingsMenu {
     const row = Math.floor(this.cell / 10);
     const col = this.cell % 10;
     const rowLen = (r: number) => (r === 2 ? LAST_ROW.length : 10);
+    this.blink = 0;
     if (b === "left") this.cell = row * 10 + ((col + rowLen(row) - 1) % rowLen(row));
     else if (b === "right") this.cell = row * 10 + ((col + 1) % rowLen(row));
     else if (b === "up" || b === "down") {
@@ -186,9 +190,16 @@ export class SettingsMenu {
       this.cell = r * 10 + Math.min(col, rowLen(r) - 1);
     } else if (b === "a" || b === "b" || b === "c") this.pressCell();
     else if (b === "start") {
-      if (this.word.filter(Boolean).length === PASSWORD_LENGTH) this.submit();
-      else this.mode = "menu";
+      // в оригинале Start только выходит; полный пароль уровня (набранный с клавиатуры) заодно запускаем
+      if (this.pos === PASSWORD_LENGTH && decodePassword(this.word.join(""))?.kind === "level") this.submit();
+      else this.toMenu();
     }
+  }
+
+  /** Start на экране пароля — назад в «НАСТРОЙКИ», стрелка на первом пункте (как в оригинале). */
+  private toMenu(): void {
+    this.mode = "menu";
+    this.index = 0;
   }
 
   private pressCell(): void {
@@ -196,26 +207,31 @@ export class SettingsMenu {
     const col = this.cell % 10;
     const key = row < 2 ? LETTERS[row * 10 + col] : LAST_ROW[col];
     if (key === "<") this.pos = Math.max(0, this.pos - 1);
-    else if (key === ">") this.pos = Math.min(PASSWORD_LENGTH - 1, this.pos + 1);
+    else if (key === ">") this.pos = Math.min(PASSWORD_LENGTH, this.pos + 1, this.word.length);
     else if (key === "OK") this.submit();
     else this.type(key);
   }
 
+  /** Буква в позицию ввода; после десятой курсор сам встаёт на ↵, дальше буквы не идут. */
   private type(ch: string): void {
-    this.word[this.pos] = ch;
-    this.pos = Math.min(PASSWORD_LENGTH - 1, this.pos + 1);
+    if (this.pos >= PASSWORD_LENGTH) return;
+    this.word[this.pos++] = ch;
+    if (this.pos === PASSWORD_LENGTH) this.cell = ENTER_CELL;
   }
 
+  /**
+   * ↵ — проверка по таблице паролей ($021908). Пароль уровня запускает уровень; коды срабатывают,
+   * а экран остаётся; неверный пароль ничего не делает.
+   */
   private submit(): void {
     const result = decodePassword(this.word.join(""));
-    if (!result) {
-      // неверный пароль: поле очищается, как сброс ввода в оригинале
-      this.word = [];
-      this.pos = 0;
-      return;
-    }
-    this.close();
-    this.host.password(result);
+    if (!result) return;
+    if (result.kind === "level" || result.cheat === "DUNEFINALE") {
+      this.close();
+      this.host.password(result);
+    } else if (result.cheat === "VERSIONNUM") {
+      this.word = [...this.strings.version.padEnd(PASSWORD_LENGTH).slice(0, PASSWORD_LENGTH)];
+    } else this.host.password(result);
   }
 
   private onKey(e: KeyboardEvent): void {
@@ -226,11 +242,11 @@ export class SettingsMenu {
       this.type(e.code.slice(3));
     } else if (e.code === "Backspace") {
       e.preventDefault();
-      this.pos = Math.max(0, this.pos - (this.word[this.pos] ? 0 : 1));
-      this.word[this.pos] = "";
+      this.pos = Math.max(0, this.pos - 1);
+      this.word.length = this.pos;
     } else if (e.code === "Escape") {
       e.preventDefault();
-      this.mode = "menu";
+      this.toMenu();
     }
   }
 
@@ -255,6 +271,7 @@ export class SettingsMenu {
 
   private loop(): void {
     this.frame++;
+    this.blink++;
     this.draw();
     if (!this.root.hidden) this.raf = requestAnimationFrame(() => this.loop());
   }
@@ -287,7 +304,10 @@ export class SettingsMenu {
     const fx = GRID_X + col * GRID_STEP - 4;
     const fy = GRID_Y + row * GRID_STEP - 4;
     const frame = this.gfx.letterFrame();
-    if (wide) {
+    // рамка мигает (в оригинале пропадает на несколько кадров); после нажатия сразу видна
+    if ((this.blink & 31) >= 24) {
+      /* рамка погашена */
+    } else if (wide) {
       // ↵ шире буквы: рамку растягиваем на две клетки
       g.drawImage(frame, 0, 0, 8, 16, fx, fy, 8, 16);
       g.drawImage(frame, 8, 0, 8, 16, fx + 24, fy, 8, 16);
@@ -295,6 +315,6 @@ export class SettingsMenu {
     } else g.drawImage(frame, fx, fy);
     const text = Array.from({ length: PASSWORD_LENGTH }, (_, i) => this.word[i] || " ").join("");
     g.drawImage(this.gfx.text(text, 3), INPUT_X, INPUT_Y);
-    if ((this.frame >> 4) & 1) g.drawImage(this.gfx.text("_", 3), INPUT_X + this.pos * 8, INPUT_Y);
+    g.drawImage(this.gfx.text("_", 3), INPUT_X + this.pos * 8, INPUT_Y);
   }
 }

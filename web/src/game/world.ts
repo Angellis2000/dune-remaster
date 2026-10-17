@@ -117,13 +117,14 @@ export class World {
       const t = G.map[i];
       this.map.ground[i] = t.groundTileID;
       this.map.overlay[i] = t.overlayTileID;
-      this.map.unveiled[i] = t.isUnveiled ? 1 : 0;
+      this.map.unveiled[i] = t.isUnveiled || G.revealAll ? 1 : 0;
+      if (G.revealAll) this.map.overlay[i] = 0;
     }
     const alive = new Set<EUnit>();
     const units: Unit[] = [];
     for (const u of G.unitFind) {
       if (u.o.flags.isNotOnMap) continue;
-      if (!G.map[packTile(u.o.position)].isUnveiled) continue;
+      if (!G.map[packTile(u.o.position)].isUnveiled && !G.revealAll) continue;
       alive.add(u);
       let v = this.unitViews.get(u);
       if (!v || v.type !== u.o.type) {
@@ -197,7 +198,7 @@ export class World {
     for (const e of explosions) {
       if (!e.commands || e.spriteID === 0) continue;
       const p = packTile(e.position);
-      if (!G.map[p].isUnveiled) continue;
+      if (!G.map[p].isUnveiled && !G.revealAll) continue;
       this.blasts.push({ x: e.position.x / 8, y: e.position.y / 8, type: e.type, spriteID: e.spriteID, age: e.current });
     }
 

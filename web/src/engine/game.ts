@@ -585,16 +585,16 @@ export class Game {
     return structureGetBuildable(s);
   }
 
-  /** Коды оригинала, вводимые как пароль. */
+  /** Коды оригинала, вводимые как пароль (код проверки $021908). */
   cheat(code: "LOOKAROUND" | "SPLURGEOLA" | "PLAYTESTER"): void {
     if (code === "LOOKAROUND") {
-      for (let packed = 0; packed < 4096; packed++) if (mapIsValidPosition(packed)) mapUnveilTile(packed, G.playerHouseID);
+      G.revealAll = !G.revealAll; // bchg — повторный ввод выключает
     } else if (code === "SPLURGEOLA") {
       if (!this.player) return;
-      this.player.credits = Math.min(0xffff, this.player.credits + 25000);
+      this.player.credits = 25000; // оригинал ставит ровно 25000 ($61A8), а не прибавляет
       // без хранилищ лишнее сгорело бы на следующем такте — как со стартовыми кредитами
       G.playerCreditsNoSilo = Math.max(G.playerCreditsNoSilo, this.player.credits);
-    } else G.playtester = true;
+    } else G.playtester = !G.playtester;
   }
 }
 

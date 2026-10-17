@@ -359,6 +359,8 @@ export const G = {
   musicInBattle: 0,
   /** код PLAYTESTER: юниты игрока гибнут только в пасти червя */
   playtester: false,
+  /** код LOOKAROUND: туман не рисуется (в оригинале переключатель $FFC198 бит 0) */
+  revealAll: false,
   scenario: newScenario(),
   /** звуки и сообщения уходят в интерфейс через эти обработчики */
   onSound: (_id: number, _pos?: Tile32) => {},

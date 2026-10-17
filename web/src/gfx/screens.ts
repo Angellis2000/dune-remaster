@@ -147,7 +147,7 @@ export class ScreenGfx {
    * Надписи меню — из ROM, по тем же ссылкам, что в коде меню ($020E00) и экрана дома ($026F6A):
    * так меню на языке загруженного ROM (русский перевод или английский оригинал).
    */
-  menuStrings(): { yes: string; no: string; restart: string; chooseHouse: string; houses: string[] } {
+  menuStrings(): { yes: string; no: string; restart: string; chooseHouse: string; houses: string[]; version: string } {
     const b = this.rom.bytes;
     // lea/pea (d16,pc): адрес = адрес слова смещения + смещение
     const pcRel = (at: number, opcode: number, fallback: string) =>
@@ -159,6 +159,8 @@ export class ScreenGfx {
       no: pcRel(0x020e60, 0x43fa, "НЕТ"),
       restart: pcRel(0x020ec2, 0x487a, "НАЧАТЬ СНАЧАЛА"),
       chooseHouse: pcRel(0x020ed6, 0x487a, "ВЫБРАТЬ ДРУГОЙ ДОМ"),
+      // VERSIONNUM: строка версии, которую код $021A1E пишет в поле ввода пароля
+      version: pcRel(0x021a1e, 0x487a, "VERSION"),
       // 9 байт на дом, по номеру дома: 0 — Харконнены, 1 — Атрейдесы, 2 — Ордосы
       houses: [0, 1, 2].map((i) => (housesAt > 0 ? decodeText(b, housesAt + i * 9, 9) : fallbackHouses[i])),
     };
