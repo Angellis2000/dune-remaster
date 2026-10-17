@@ -16,6 +16,7 @@ import { CommandPanel } from "./ui/command.ts";
 import { Minimap } from "./ui/minimap.ts";
 import { forgetRom, loadStoredRom, storeRom } from "./ui/romstore.ts";
 import { FactoryWindow } from "./ui/factory.ts";
+import { Hud, hudState } from "./ui/hud.ts";
 import { passwordFor, SettingsMenu, type HouseCode } from "./ui/settings.ts";
 import { MapView } from "./view/mapview.ts";
 
@@ -106,6 +107,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   const statusWhere = el("span");
   const statusHelp = el("span", { className: "help" });
   const status = el("div", { className: "status" }, statusWhere, statusHelp);
+  // кредиты рисует HUD цифрами ROM; число здесь — для чтения с экрана и автотестов
   const credits = el("output", { className: "credits", id: "credits" });
   const info = el("div", { className: "selection-info" });
   info.hidden = true;
@@ -119,6 +121,8 @@ async function startGame(rom: DuneRom): Promise<void> {
   skins.onChange = () => view.invalidate();
   const minimap = new Minimap(view, icons);
   stage.append(minimap.canvas);
+  const hud = new Hud(rom);
+  stage.append(hud.canvas);
   const world = new World(rom);
   view.veiledIcon = G.veiledTileID;
   const panel = new CommandPanel(rom, world, {
@@ -133,6 +137,8 @@ async function startGame(rom: DuneRom): Promise<void> {
     },
     targetMode: (text) => G.onMessage(text),
     changed: () => updateHud(),
+    // с геймпада вместо меню — HUD оригинала справа вверху
+    visible: () => view.mouseMode,
   });
   stage.append(panel.root);
   let paused = false;
@@ -169,6 +175,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     pausedBanner.hidden = true;
     endBanner.hidden = true;
     message.hidden = true;
+    hud.credits.reset(world.houses.get(world.player)?.credits ?? 0);
     updateHud();
   };
   select.addEventListener("change", () => loadMission(select.value));
@@ -441,6 +448,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     if (view.markedUnit && !playerUnitsSelected().includes(view.markedUnit)) view.markedUnit = null;
     view.inputLocked = panel.focused;
     if (frame % 10 === 0) panel.update();
+    drawHud();
     if (frame % 30 === 0) {
       minimap.refresh(world.units.map((u) => ({ x: u.x, y: u.y, color: u.house === world.player ? "#7fd0ff" : "#ff6a5a" })));
       updateHud();
@@ -482,6 +490,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     view.setMouseMode(!view.mouseMode);
     mouseBtn.setAttribute("aria-pressed", String(view.mouseMode));
     canvas.classList.toggle("mouse", view.mouseMode);
+    if (!view.mouseMode) panel.close();
   };
   mouseBtn.addEventListener("click", toggleMouse);
 
@@ -523,6 +532,7 @@ async function startGame(rom: DuneRom): Promise<void> {
 
   function updateHud(): void {
     zoomVal.value = `${view.zoom}×`;
+    hud.setZoom(view.zoom);
     credits.value = String(world.houses.get(world.player)?.credits ?? 0);
     const h = view.cursorCell();
     const where = h ? `Клетка ${h.x}, ${h.y} · иконка ${h.icon}` : "";
@@ -533,6 +543,14 @@ async function startGame(rom: DuneRom): Promise<void> {
     statusHelp.textContent = help;
     renderSelectionInfo();
     minimap.draw();
+  }
+
+  /** HUD справа вверху: счётчик кредитов тикает раз в кадр карты ($011F38), выбор — по $0294C2. */
+  function drawHud(): void {
+    if (!paused) hud.credits.tick(world.houses.get(world.player)?.credits ?? 0);
+    const unit = [...view.selectedUnits][0]?.ref ?? null;
+    const s = view.selectedStructure?.ref ?? null;
+    hud.draw(view.mouseMode ? null : hudState(rom, s, unit));
   }
 
   function renderSelectionInfo(): void {

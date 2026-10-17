@@ -38,6 +38,8 @@ export interface CommandHost {
   /** после приказа, которому нужна цель на карте */
   targetMode(text: string): void;
   changed(): void;
+  /** показывать ли меню (в режиме мыши) */
+  visible(): boolean;
 }
 
 export class CommandPanel {
@@ -122,6 +124,10 @@ export class CommandPanel {
 
   /** Перестроить содержимое по текущему выбору. */
   update(): void {
+    if (!this.host.visible() && !this.focused) {
+      this.root.hidden = true;
+      return;
+    }
     const units = this.host.selectedUnits();
     const s = this.host.selectedStructure();
     const other = this.host.inspected();
