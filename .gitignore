@@ -11,3 +11,7 @@ third_party/
 
 __pycache__/
 *.pyc
+
+# веб-движок
+web/node_modules/
+web/dist/
