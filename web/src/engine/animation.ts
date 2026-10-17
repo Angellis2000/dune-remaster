@@ -72,10 +72,15 @@ function funcSetGroundTile(a: Animation, parameter: number): void {
   const count = layoutTileCount[a.tileLayout];
   const packed = packTile(a.tile);
   const group = G.iconGroups[a.iconGroup];
-  const base = structureFrameStride(a.iconGroup, count) * parameter;
-  // MD: у групп иконок зданий только 3 кадра (стройка, развалины, готово); кадры дальше
-  // в оригинале не меняют клетки (проверено в эмуляторе) — пропускаем их
-  if (base + count > group.length && !(a.iconGroup === ICONGROUP_BASE_DEFENSE_TURRET || a.iconGroup === ICONGROUP_BASE_ROCKET_TURRET)) return;
+  const stride = structureFrameStride(a.iconGroup, count);
+  let base = stride * parameter;
+  // MD: у групп иконок зданий только 3 кадра (стройка, развалины, готово); на кадрах дальше
+  // в оригинале здание остаётся готовым (проверено в эмуляторе). Пропускать их нельзя: смена
+  // анимации (харвестер въехал в завод) сначала возвращает под зданием песок, и оно бы пропало.
+  if (base + count > group.length && !(a.iconGroup === ICONGROUP_BASE_DEFENSE_TURRET || a.iconGroup === ICONGROUP_BASE_ROCKET_TURRET)) {
+    base = stride * 2;
+    if (base + count > group.length) return;
+  }
   let special: number | null = null;
   if (parameter > 1 && (a.iconGroup === ICONGROUP_BASE_DEFENSE_TURRET || a.iconGroup === ICONGROUP_BASE_ROCKET_TURRET)) {
     const s = structureGetByPackedTile(packed);

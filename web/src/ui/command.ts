@@ -268,10 +268,7 @@ export class CommandPanel {
             label: `Поставить: ${nameOf(prod.type)}`,
             picture: this.picture("structure", prod.type),
             run: () => {
-              if (game.placeIt(s)) {
-                this.focused = false;
-                this.host.targetMode("Выберите место для здания (A), правая кнопка — отмена");
-              }
+              if (game.placeIt(s)) this.focused = false;
               this.done();
             },
           });
@@ -302,6 +299,7 @@ export class CommandPanel {
           active: !!prod && prod.type === opt.type,
           run: () => {
             game.build(s, opt.type);
+            this.focused = false; // как в оригинале: заказ принят — назад на карту
             this.done();
           },
         });

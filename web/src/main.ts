@@ -1,8 +1,8 @@
 import css from "./style.css?inline";
-import { ACTION, G, SELECTION } from "./engine/core.ts";
+import { ACTION, G, SELECTION, STRUCTURE } from "./engine/core.ts";
 import { layoutSize, structureInfo } from "./engine/tables.ts";
 import { unitSelect } from "./engine/unit.ts";
-import { World, type Unit as WorldUnit } from "./game/world.ts";
+import { World, type Structure as WorldStructure, type Unit as WorldUnit } from "./game/world.ts";
 import { buildCursors } from "./gfx/cursors.ts";
 import { IconSet } from "./gfx/icons.ts";
 import { buildPackZip, importPack, packCanvases } from "./gfx/pack.ts";
@@ -229,11 +229,18 @@ async function startGame(rom: DuneRom): Promise<void> {
   minimap.canvas.hidden = !prefs.radar;
 
   // ---------------------------------------------------------------- выбор и приказы
+  /** дворы, чьё готовое здание уже предлагалось поставить */
+  const offered = new WeakSet<object>();
   const clearSelection = () => {
     view.selectedUnits.clear();
     view.selectedStructure = null;
     unitSelect(null);
     world.game.selectedStructure = null;
+  };
+  const selectStructure = (s: WorldStructure) => {
+    clearSelection();
+    view.selectedStructure = s;
+    world.game.selectedStructure = s.ref;
   };
   const playerUnitsSelected = () => [...view.selectedUnits].filter((u) => u.house === world.player && u.ref.o.flags.used && !u.ref.o.flags.isNotOnMap);
   /** юниты, которым отдаётся приказ: выделенные свои */
@@ -291,13 +298,26 @@ async function startGame(rom: DuneRom): Promise<void> {
     const wx = view.cursorX;
     const wy = view.cursorY;
     const packed = World.packAt(wx, wy);
+    const s = world.structureAtCell(packed & 63, packed >> 6);
+    if (G.selectionType === SELECTION.PLACE && world.game.canPlaceAt(packed) === 0 && s && s.house === world.player) {
+      // в оригинале A по своему зданию при постановке открывает его окно
+      world.game.cancelPlace();
+      selectStructure(s);
+      panel.open();
+      return;
+    }
     if (G.selectionType === SELECTION.PLACE || G.selectionType === SELECTION.TARGET) {
       view.onPrimary(wx, wy);
       view.markedUnit = null;
       return;
     }
+    // готовое здание («OK» над строительным двором): A по двору — сразу постановка
+    if (s && s.house === world.player && world.game.production(s.ref)?.ready && world.game.placeIt(s.ref)) {
+      selectStructure(s);
+      updateHud();
+      return;
+    }
     const unit = world.unitAt(wx, wy);
-    const s = world.structureAtCell(packed & 63, packed >> 6);
     const mine = commandable();
     if (mine.length) {
       if (unit && mine.includes(unit.ref)) {
@@ -311,13 +331,8 @@ async function startGame(rom: DuneRom): Promise<void> {
     } else if (unit && unit.house === world.player && !unit.air) {
       selectUnits([unit]);
     } else if (s && world.map.unveiled[packed]) {
-      if (view.selectedStructure === s && s.house === world.player) {
-        panel.open();
-      } else {
-        clearSelection();
-        view.selectedStructure = s;
-        world.game.selectedStructure = s.ref;
-      }
+      if (view.selectedStructure === s && s.house === world.player) panel.open();
+      else selectStructure(s);
     } else if (unit) {
       selectUnits([unit]);
     } else {
@@ -367,6 +382,22 @@ async function startGame(rom: DuneRom): Promise<void> {
       view.invalidate();
     }
     if (messageTimer > 0 && --messageTimer === 0) message.hidden = true;
+    // MD: готовое здание сразу «прилипает» к курсору; после отмены (B) над двором горит «OK»
+    view.readyStructures = [];
+    for (const s of world.structures) {
+      if (s.house !== world.player || s.type !== STRUCTURE.CONSTRUCTION_YARD) continue;
+      const prod = world.game.production(s.ref);
+      if (prod && !prod.ready) offered.delete(s.ref);
+      if (!prod?.ready) continue;
+      if (!offered.has(s.ref) && !paused && G.selectionType !== SELECTION.PLACE && G.selectionType !== SELECTION.TARGET && !panel.focused) {
+        offered.add(s.ref);
+        if (world.game.placeIt(s.ref)) {
+          selectStructure(s);
+          continue;
+        }
+      }
+      view.readyStructures.push(s);
+    }
     if (G.selectionType === SELECTION.PLACE && G.structureActiveType !== 0xffff) {
       const si = structureInfo[G.structureActiveType];
       const size = layoutSize[si.layout];
@@ -469,7 +500,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     const h = view.cursorCell();
     const where = h ? `Клетка ${h.x}, ${h.y} · иконка ${h.icon}` : "";
     const help = view.mouseMode
-      ? "Левая — выбрать или приказ · протянуть — рамка · правая — снять выбор · колесо — масштаб"
+      ? "Левая — выбрать или приказ · протянуть — рамка · правая — снять выбор · стрелки — карта · колесо — масштаб"
       : "Стрелки — курсор · C+стрелки — быстро · 1 A · 2 B · 3 C · Enter — Start (меню)";
     statusWhere.textContent = lastButton ? `${where} · ${lastButton}` : where;
     statusHelp.textContent = help;
@@ -496,7 +527,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   loadMission("A1");
   canvas.focus();
   // для автотестов: ?debug открывает мир и вид из консоли
-  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G } });
+  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites } });
 }
 
 showRomScreen();

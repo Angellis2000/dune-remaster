@@ -943,6 +943,9 @@ export function structureGetBuildable(s: Structure | null): number {
         }
         if ((structuresBuilt & structuresRequired) >>> 0 === structuresRequired || s.o.houseID !== G.playerHouseID) {
           if (s.o.houseID !== HOUSE.HARKONNEN && i === STRUCTURE.LIGHT_VEHICLE) availableCampaign = 2;
+          // MD ($00FF2E): тяжёлый завод и Дом IX со двора не строятся, казармы WOR — не у Ордосов
+          if (i === STRUCTURE.HEAVY_VEHICLE || i === STRUCTURE.HOUSE_OF_IX) continue;
+          if (i === STRUCTURE.WOR_TROOPER && G.playerHouseID === HOUSE.ORDOS) continue;
           if (G.campaignID >= availableCampaign - 1 && (lsi.o.availableHouse & (1 << s.o.houseID)) !== 0) {
             if (s.upgradeLevel >= lsi.o.upgradeLevelRequired || s.o.houseID !== G.playerHouseID) {
               lsi.o.available = 1;
@@ -953,6 +956,9 @@ export function structureGetBuildable(s: Structure | null): number {
           }
         }
       }
+      // MD ($00FFCC): плиты 2×2 строятся всегда
+      structureInfo[STRUCTURE.SLAB_2x2].o.available = 1;
+      ret |= 1 << STRUCTURE.SLAB_2x2;
       return ret >>> 0;
     case STRUCTURE.STARPORT:
       return 0xffffffff;

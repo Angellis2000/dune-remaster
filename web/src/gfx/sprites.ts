@@ -90,6 +90,10 @@ export class SpriteSet {
     const { baseFrame, mode } = this.rom.unitDisplay(type);
     const b = this.rom.bytes;
     const s16 = (o: number) => (readU16(b, o) << 16) >> 16;
+    if (type === 24) {
+      const d = ((orientation + 8) & 0xff) >> 4;
+      return [{ frame: readU16(b, ROM.sonicFrames + d * 2), flip: 0 }];
+    }
     if (mode === 5) {
       // орнитоптер: по 3 кадра крыльев на направление
       const d = ((orientation + 16) & 0xff) >> 5;
@@ -153,7 +157,8 @@ export class SpriteSet {
     const H = Math.max(1, Math.max(...boxes.map((b) => b.y + b.h)) - minY);
     const px = new Uint32Array(W * H);
     const firstTile = f.pieces[0].attr & 0x7ff;
-    for (const { p, x, y } of boxes) {
+    // у VDP спрайт с меньшим номером лежит сверху: рисуем куски с конца (башня танка — первый кусок)
+    for (const { p, x, y } of [...boxes].reverse()) {
       const line = houseLine >= 0 ? houseLine : (p.attr >> 13) & 3;
       const hf = ((p.attr >> 11) & 1) ^ (flip & 1);
       const vf = ((p.attr >> 12) & 1) ^ ((flip >> 1) & 1);

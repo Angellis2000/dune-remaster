@@ -95,6 +95,9 @@ export class MapView {
   veiledIcon = 0;
   /** постановка здания: размер и годность места (1 — да, <0 — без бетона, 0 — нельзя) */
   placement: { w: number; h: number; valid: number } | null = null;
+  /** здания с готовым к постановке заказом — над ними «OK», как в оригинале */
+  readyStructures: Structure[] = [];
+  private stripes = new Map<string, CanvasPattern>();
 
   private drawIcon(id: number, x: number, y: number, size: number): void {
     if (this.skins.iconOverridden[id]) {
@@ -332,8 +335,9 @@ export class MapView {
       this.fastTime = 0;
       return;
     }
-    if (p.isHeld("c")) {
-      // быстрая прокрутка: едет карта, курсор остаётся на том же месте экрана
+    if (p.isHeld("c") || this.mouseMode) {
+      // быстрая прокрутка: едет карта, курсор остаётся на том же месте экрана.
+      // В режиме мыши стрелки только двигают карту — курсор принадлежит мыши.
       const cx = this.camX;
       const cy = this.camY;
       const speed = FAST_SCROLL[this.fastTime < FAST_SCROLL_DELAY ? 0 : 1];
@@ -479,12 +483,14 @@ export class MapView {
       const pl = this.placement;
       const cx = Math.floor(this.cursorX / CELL_PX);
       const cy = Math.floor(this.cursorY / CELL_PX);
-      ctx.fillStyle = pl.valid > 0 ? "rgba(80,220,120,0.35)" : pl.valid < 0 ? "rgba(240,200,60,0.35)" : "rgba(230,60,60,0.4)";
-      ctx.fillRect(cx * size - ox, cy * size - oy, pl.w * size, pl.h * size);
-      ctx.strokeStyle = "#fff";
-      ctx.lineWidth = Math.max(1, z);
-      ctx.strokeRect(cx * size - ox + 0.5, cy * size - oy + 0.5, pl.w * size - 1, pl.h * size - 1);
+      // как в MD: косая штриховка по всей площади здания, зелёная — можно, красная — нельзя
+      ctx.save();
+      ctx.translate(cx * size - ox, cy * size - oy);
+      ctx.fillStyle = this.stripePattern(pl.valid !== 0 ? "#2fa83a" : "#d02a1e", z);
+      ctx.fillRect(0, 0, pl.w * size, pl.h * size);
+      ctx.restore();
     }
+    for (const r of this.readyStructures) this.drawOk((r.x + r.w / 2) * CELL_PX, (r.y + r.h / 2) * CELL_PX, ox, oy);
 
     // выделение — уголки рамки, как у курсора оригинала
     const s = this.selectedStructure;
@@ -506,8 +512,49 @@ export class MapView {
       ctx.strokeRect(Math.min(a.x, this.mouse.x) + 0.5, Math.min(a.y, this.mouse.y) + 0.5, Math.abs(this.mouse.x - a.x), Math.abs(this.mouse.y - a.y));
     }
 
+    if (this.placement) return; // при постановке курсором служит сама штриховка
     const cur = this.cursors[this.cursorKind];
     ctx.drawImage(cur, Math.round((this.cursorX - 16) * z) - ox, Math.round((this.cursorY - 16) * z) - oy, 32 * z, 32 * z);
+  }
+
+  private stripePattern(color: string, z: number): CanvasPattern {
+    const key = `${color}:${z}`;
+    let p = this.stripes.get(key);
+    if (!p) {
+      const n = 4 * z;
+      const c = document.createElement("canvas");
+      c.width = c.height = n;
+      const g = c.getContext("2d")!;
+      g.fillStyle = color;
+      // полоса в 2 пикселя оригинала через 2, наискосок
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (((i + j) % n) < n / 2) g.fillRect(i, j, 1, 1);
+      p = this.ctx.createPattern(c, "repeat")!;
+      this.stripes.set(key, p);
+    }
+    return p;
+  }
+
+  /** Значок «OK» над зданием, чей заказ готов к постановке. */
+  private drawOk(wx: number, wy: number, ox: number, oy: number): void {
+    const ctx = this.ctx;
+    const z = this.zoom;
+    const x = Math.round(wx * z) - ox;
+    const y = Math.round(wy * z) - oy;
+    const r = 9 * z;
+    ctx.save();
+    ctx.fillStyle = "#e8f6ff";
+    ctx.strokeStyle = "#1c5fd0";
+    ctx.lineWidth = 2 * z;
+    ctx.beginPath();
+    ctx.ellipse(x, y, r * 1.25, r, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#1c5fd0";
+    ctx.font = `800 ${10 * z}px "Exo 2", sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("OK", x, y + z / 2);
+    ctx.restore();
   }
 
   /** Четыре уголка (из оригинального курсора-рамки) по углам прямоугольника. */
