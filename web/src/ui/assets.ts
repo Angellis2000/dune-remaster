@@ -4,6 +4,7 @@
  */
 import { STRUCTURE_NAMES, UNIT_NAMES } from "../game/names.ts";
 import type { IconSet } from "../gfx/icons.ts";
+import type { Skins } from "../gfx/skins.ts";
 import { CELL_PX, type DuneRom, type Picture } from "../rom/dune.ts";
 
 type Tab = "icons" | "units" | "structures" | "palette";
@@ -16,6 +17,7 @@ export class AssetViewer {
   constructor(
     private rom: DuneRom,
     private icons: IconSet,
+    private skins: Skins,
     onClose: () => void,
   ) {
     this.root.className = "assets";
@@ -54,7 +56,14 @@ export class AssetViewer {
     this.body.replaceChildren();
     if (tab === "icons") this.renderIcons();
     if (tab === "units") this.renderPictures(this.rom.unitPictures(), UNIT_NAMES);
-    if (tab === "structures") this.renderPictures(this.rom.structurePictures(), STRUCTURE_NAMES);
+    if (tab === "structures") {
+      const note = document.createElement("p");
+      note.className = "note";
+      note.textContent =
+        "Свою картинку здания можно перетащить на карточку или выбрать кнопкой. Она рисуется на карте вместо оригинальных клеток, на всю площадь здания (2×2, 3×3 и т. д.), и хранится только в этом браузере.";
+      this.body.append(note);
+      this.renderPictures(this.rom.structurePictures(), STRUCTURE_NAMES, true);
+    }
     if (tab === "palette") this.renderPalette();
   }
 
@@ -79,7 +88,7 @@ export class AssetViewer {
     this.body.append(note, grid);
   }
 
-  private renderPictures(list: Picture[], names: string[]): void {
+  private renderPictures(list: Picture[], names: string[], skinnable = false): void {
     const grid = document.createElement("div");
     grid.className = "grid pictures";
     for (const p of list) {
@@ -91,9 +100,67 @@ export class AssetViewer {
       const cap = document.createElement("figcaption");
       cap.textContent = `${p.id} · ${names[p.id] ?? "?"}`;
       fig.append(c, cap);
+      if (skinnable) this.addSkinControls(fig, p.id, names[p.id] ?? String(p.id));
       grid.append(fig);
     }
     this.body.append(grid);
+  }
+
+  /** Кнопки «своя картинка / сбросить» и приём файла перетаскиванием. */
+  private addSkinControls(fig: HTMLElement, type: number, name: string): void {
+    const preview = document.createElement("img");
+    preview.className = "skin-preview";
+    preview.alt = `Своя картинка: ${name}`;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.hidden = true;
+    const pick = document.createElement("button");
+    pick.type = "button";
+    pick.textContent = "Своя картинка…";
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.textContent = "Сбросить";
+    const row = document.createElement("div");
+    row.className = "skin-actions";
+    row.append(pick, reset, input);
+
+    const refresh = () => {
+      const img = this.skins.structureImage(type);
+      reset.hidden = !img;
+      preview.hidden = !img;
+      fig.classList.toggle("skinned", !!img);
+      if (img) {
+        const c = document.createElement("canvas");
+        c.width = img.width;
+        c.height = img.height;
+        c.getContext("2d")!.drawImage(img, 0, 0);
+        preview.src = c.toDataURL();
+      }
+    };
+    const apply = async (f: File | undefined) => {
+      if (!f || !f.type.startsWith("image/")) return;
+      await this.skins.setStructure(type, f);
+      refresh();
+    };
+    pick.addEventListener("click", () => input.click());
+    input.addEventListener("change", () => apply(input.files?.[0]));
+    reset.addEventListener("click", async () => {
+      await this.skins.clearStructure(type);
+      refresh();
+    });
+    fig.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      fig.classList.add("over");
+    });
+    fig.addEventListener("dragleave", () => fig.classList.remove("over"));
+    fig.addEventListener("drop", (e) => {
+      e.preventDefault();
+      fig.classList.remove("over");
+      apply(e.dataTransfer?.files[0]);
+    });
+    fig.append(preview, row);
+    refresh();
   }
 
   private renderPalette(): void {

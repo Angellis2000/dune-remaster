@@ -10,6 +10,7 @@
  */
 import type { CursorKind } from "../gfx/cursors.ts";
 import type { IconSet } from "../gfx/icons.ts";
+import type { Skins } from "../gfx/skins.ts";
 import type { SpriteSet } from "../gfx/sprites.ts";
 import type { Pad } from "../input/pad.ts";
 import { CELL_PX, MAP_SIZE } from "../rom/dune.ts";
@@ -78,6 +79,7 @@ export class MapView {
     private sprites: SpriteSet,
     private cursors: Record<CursorKind, HTMLCanvasElement>,
     private pad: Pad,
+    private skins: Skins,
   ) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d", { alpha: false })!;
@@ -368,6 +370,12 @@ export class MapView {
         const s = this.icons.source(map.ground[(y << 6) | x]);
         ctx.drawImage(s.image, s.sx, s.sy, s.sw, s.sh, x * size - ox, y * size - oy, size, size);
       }
+    }
+    // свои картинки зданий — одной картинкой на всю раскладку
+    for (const st of world.structures) {
+      if (st.x > x1 || st.y > y1 || st.x + st.w <= x0 || st.y + st.h <= y0) continue;
+      const img = this.skins.structure(st.type, st.w * size, st.h * size);
+      if (img) ctx.drawImage(img, st.x * size - ox, st.y * size - oy);
     }
     if (this.showGrid) this.drawGrid(x0, y0, x1, y1, size, ox, oy);
 

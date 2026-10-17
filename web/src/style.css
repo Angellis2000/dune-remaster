@@ -333,6 +333,41 @@ button[aria-pressed="true"] {
   color: var(--muted);
 }
 
+.grid.pictures figure {
+  align-content: start;
+  padding: 8px;
+  border: 1px dashed transparent;
+  border-radius: 6px;
+}
+
+.grid.pictures figure.over {
+  border-color: var(--accent, #e0a040);
+  background: rgba(224, 160, 64, 0.08);
+}
+
+.grid.pictures figure.skinned {
+  border-color: var(--line);
+}
+
+.skin-preview {
+  width: 112px;
+  height: 112px;
+  object-fit: contain;
+  background: #000;
+}
+
+.skin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.skin-actions button {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
 .palette {
   display: grid;
   gap: 8px;

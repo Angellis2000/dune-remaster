@@ -4,6 +4,7 @@ import { HOUSE_NAMES } from "./game/tables.ts";
 import { World } from "./game/world.ts";
 import { buildCursors } from "./gfx/cursors.ts";
 import { IconSet } from "./gfx/icons.ts";
+import { Skins } from "./gfx/skins.ts";
 import { SpriteSet } from "./gfx/sprites.ts";
 import { BUTTON_LABEL, Pad } from "./input/pad.ts";
 import { CELL_PX, DuneRom, RomError } from "./rom/dune.ts";
@@ -89,8 +90,10 @@ const MISSION_HOUSES: { code: "A" | "O" | "H"; name: string }[] = [
   { code: "H", name: "Харконнены" },
 ];
 
-function startGame(rom: DuneRom): void {
+async function startGame(rom: DuneRom): Promise<void> {
   const icons = new IconSet(rom);
+  const skins = new Skins();
+  await skins.load();
   const sprites = new SpriteSet(rom);
   const canvas = el("canvas", { className: "view", tabIndex: 0 });
   canvas.setAttribute("aria-label", "Карта миссии");
@@ -104,7 +107,8 @@ function startGame(rom: DuneRom): void {
   pausedBanner.hidden = true;
   const stage = el("div", { className: "stage" }, canvas, status, credits, info, pausedBanner);
   const pad = new Pad();
-  const view = new MapView(canvas, icons, sprites, buildCursors(rom), pad);
+  const view = new MapView(canvas, icons, sprites, buildCursors(rom), pad, skins);
+  skins.onChange = () => view.invalidate();
   const minimap = new Minimap(view, icons);
   stage.append(minimap.canvas);
   let world: World | null = null;
@@ -200,7 +204,7 @@ function startGame(rom: DuneRom): void {
   };
   grid.addEventListener("click", toggleGrid);
 
-  const assets = new AssetViewer(rom, icons, () => (assets.root.hidden = true));
+  const assets = new AssetViewer(rom, icons, skins, () => (assets.root.hidden = true));
   stage.append(assets.root);
   const assetsBtn = el("button", { type: "button", textContent: "Ресурсы", title: "Графика из ROM с номерами (R)" });
   const toggleAssets = () => {

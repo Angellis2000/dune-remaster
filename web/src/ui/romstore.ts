@@ -1,15 +1,21 @@
 /**
- * ROM хранится только в браузере игрока (IndexedDB), чтобы не выбирать файл каждый раз.
- * Никуда не отправляется. Если хранилище недоступно (приватный режим и т. п.) — просто не запоминаем.
+ * ROM и свои картинки хранятся только в браузере игрока (IndexedDB), чтобы не выбирать файлы
+ * каждый раз. Никуда не отправляются. Если хранилище недоступно (приватный режим и т. п.) —
+ * просто не запоминаем.
  */
 const DB = "dune-remaster";
 const STORE = "rom";
+const SKINS = "skins";
 const KEY = "current";
 
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE);
+    const req = indexedDB.open(DB, 2);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+      if (!db.objectStoreNames.contains(SKINS)) db.createObjectStore(SKINS);
+    };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
@@ -47,5 +53,37 @@ export async function forgetRom(): Promise<void> {
     db.transaction(STORE, "readwrite").objectStore(STORE).delete(KEY);
   } catch {
     /* нечего удалять */
+  }
+}
+
+/** Все свои картинки: ключ вида "structure:8" -> файл. */
+export async function loadSkinFiles(): Promise<Map<string, Blob>> {
+  const out = new Map<string, Blob>();
+  try {
+    const db = await open();
+    await new Promise<void>((resolve) => {
+      const req = db.transaction(SKINS).objectStore(SKINS).openCursor();
+      req.onsuccess = () => {
+        const c = req.result;
+        if (!c) return resolve();
+        out.set(String(c.key), c.value as Blob);
+        c.continue();
+      };
+      req.onerror = () => resolve();
+    });
+  } catch {
+    /* хранилище недоступно */
+  }
+  return out;
+}
+
+export async function storeSkinFile(key: string, file: Blob | null): Promise<void> {
+  try {
+    const db = await open();
+    const store = db.transaction(SKINS, "readwrite").objectStore(SKINS);
+    if (file) store.put(file, key);
+    else store.delete(key);
+  } catch {
+    /* хранилище недоступно — картинка проживёт до перезагрузки */
   }
 }
