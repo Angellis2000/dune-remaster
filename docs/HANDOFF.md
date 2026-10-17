@@ -40,8 +40,10 @@ Playwright стоит в `/opt/node-tools/node_modules/playwright`, а Chromium 
 (`/home/user/dune-remaster/...`), при необходимости поправь.
 
 `rom/dune_defence2.bin` — это ромхак, наш загрузчик его не принимает. Работаем с `rom/dune_usa.gen`.
-Английский оригинал (USA, без перевода) тоже подходит: адреса графики, карт и сценариев те же,
-LCW-тест и все 27 миссий проходят; отличаются только тексты.
+Русский ROM часто лежит под именем «Dune - The Battle for Arrakis (USA).gen» (архив
+`Dune_-_Battle_for_Arrakis_U_S_Rus_Shedevr_NewGame_Lipetsk_02_08_2011.zip`). Нужный файл: 1 МБ,
+SHA-1 `7a7e3ec6aaeb3d8fbcfb779834565412252ce616`, по `$020D6B` — «НАЧАТЬ СНАЧАЛА» кодами шрифта
+(`48 41 79 41 54 62 …`).
 
 `web/src/rom/` раньше не попадал в git: правило `rom/` в `.gitignore` срабатывало на любой глубине.
 Модули восстановлены 2026-10-17 по собранному JS опубликованной страницы, теперь в `.gitignore`
