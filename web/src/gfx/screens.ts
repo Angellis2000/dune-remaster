@@ -143,6 +143,27 @@ export class ScreenGfx {
     });
   }
 
+  /**
+   * Надписи меню — из ROM, по тем же ссылкам, что в коде меню ($020E00) и экрана дома ($026F6A):
+   * так меню на языке загруженного ROM (русский перевод или английский оригинал).
+   */
+  menuStrings(): { yes: string; no: string; restart: string; chooseHouse: string; houses: string[] } {
+    const b = this.rom.bytes;
+    // lea/pea (d16,pc): адрес = адрес слова смещения + смещение
+    const pcRel = (at: number, opcode: number, fallback: string) =>
+      readU16(b, at) === opcode ? decodeText(b, at + 2 + ((readU16(b, at + 2) << 16) >> 16)) : fallback;
+    const housesAt = readU16(b, 0x026f6a) === 0x41f9 ? (readU16(b, 0x026f6c) << 16) | readU16(b, 0x026f6e) : -1;
+    const fallbackHouses = ["ХАРКОННЕНЫ", "АТРЕЙДЕСЫ", "ОРДОСЫ"];
+    return {
+      yes: pcRel(0x020e5a, 0x43fa, "ДА"),
+      no: pcRel(0x020e60, 0x43fa, "НЕТ"),
+      restart: pcRel(0x020ec2, 0x487a, "НАЧАТЬ СНАЧАЛА"),
+      chooseHouse: pcRel(0x020ed6, 0x487a, "ВЫБРАТЬ ДРУГОЙ ДОМ"),
+      // 9 байт на дом, по номеру дома: 0 — Харконнены, 1 — Атрейдесы, 2 — Ордосы
+      houses: [0, 1, 2].map((i) => (housesAt > 0 ? decodeText(b, housesAt + i * 9, 9) : fallbackHouses[i])),
+    };
+  }
+
   /** Имена из таблицы [указатель, номер] (фонотека, спецэффекты). */
   names(table: number): { name: string; id: number }[] {
     const out: { name: string; id: number }[] = [];

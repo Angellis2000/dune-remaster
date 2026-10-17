@@ -53,10 +53,11 @@ const LAST_ROW = [..."UVWXYZ", "<", ">", "OK"];
 const INPUT_X = 120;
 const INPUT_Y = 112;
 
-const HOUSES: { code: HouseCode; name: string }[] = [
-  { code: "A", name: "АТРЕЙДЕСЫ" },
-  { code: "O", name: "ОРДОСЫ" },
-  { code: "H", name: "ХАРКОННЕНЫ" },
+/** Дома в порядке выбора и их номера в таблице имён ROM (0 — Харконнены, 1 — Атрейдесы, 2 — Ордосы). */
+const HOUSES: { code: HouseCode; id: number }[] = [
+  { code: "A", id: 1 },
+  { code: "O", id: 2 },
+  { code: "H", id: 0 },
 ];
 
 export interface SettingsHost {
@@ -84,6 +85,7 @@ export class SettingsMenu {
   private house = 0;
   private tracks: { name: string; id: number }[];
   private sounds: { name: string; id: number }[];
+  private strings: ReturnType<ScreenGfx["menuStrings"]>;
   // экран пароля
   private cell = 0;
   private word: string[] = [];
@@ -106,6 +108,7 @@ export class SettingsMenu {
     this.root.append(this.canvas);
     this.tracks = gfx.names(MENU_ROM.tracks);
     this.sounds = gfx.names(MENU_ROM.sounds);
+    this.strings = gfx.menuStrings();
     window.addEventListener("keydown", (e) => this.onKey(e));
     this.canvas.addEventListener("click", (e) => this.onClick(e));
   }
@@ -258,7 +261,8 @@ export class SettingsMenu {
 
   private draw(): void {
     const g = this.ctx;
-    const yes = (on: boolean) => (on ? "ДА" : "НЕТ");
+    const str = this.strings;
+    const yes = (on: boolean) => (on ? str.yes : str.no);
     if (this.mode === "menu") {
       g.drawImage(this.gfx.background("settings"), 0, 0);
       // значения — бирюзовые (строка палитры 2), команды внизу — белые (строка 3)
@@ -270,9 +274,9 @@ export class SettingsMenu {
         this.sounds[this.sfx]?.name ?? "",
       ];
       values.forEach((v, i) => g.drawImage(this.gfx.text(v, 2), VALUE_X, ROWS[i]));
-      g.drawImage(this.gfx.text("НАЧАТЬ СНАЧАЛА", 3), 32, ROWS[ITEM.RESTART]);
-      g.drawImage(this.gfx.text("ВЫБРАТЬ ДРУГОЙ ДОМ", 3), 32, ROWS[ITEM.HOUSE]);
-      if (this.index === ITEM.HOUSE) g.drawImage(this.gfx.text(HOUSES[this.house].name, 2), VALUE_X + 8, ROWS[ITEM.HOUSE] + 12);
+      g.drawImage(this.gfx.text(str.restart, 3), 32, ROWS[ITEM.RESTART]);
+      g.drawImage(this.gfx.text(str.chooseHouse, 3), 32, ROWS[ITEM.HOUSE]);
+      if (this.index === ITEM.HOUSE) g.drawImage(this.gfx.text(str.houses[HOUSES[this.house].id], 2), VALUE_X + 8, ROWS[ITEM.HOUSE] + 12);
       g.drawImage(this.gfx.arrow(this.frame >> 2), 12, ROWS[this.index] - 4);
       return;
     }
