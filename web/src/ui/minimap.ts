@@ -1,5 +1,10 @@
 /** Мини-карта: клетки средним цветом иконки, рамка видимой области, щелчок — перейти. */
-import type { GameMap } from "../game/map.ts";
+/** что нужно мини-карте от карты: иконки, разведанные клетки, границы */
+export interface MinimapSource {
+  ground: Uint16Array;
+  unveiled?: Uint8Array;
+  bounds: { x: number; y: number; w: number; h: number };
+}
 import type { IconSet } from "../gfx/icons.ts";
 import { CELL_PX } from "../rom/dune.ts";
 import type { MapView } from "../view/mapview.ts";
@@ -7,7 +12,7 @@ import type { MapView } from "../view/mapview.ts";
 export class Minimap {
   readonly canvas = document.createElement("canvas");
   private base = document.createElement("canvas");
-  private map: GameMap | null = null;
+  private map: MinimapSource | null = null;
   private scale = 2;
 
   constructor(
@@ -34,7 +39,7 @@ export class Minimap {
     this.canvas.addEventListener("pointerup", () => (down = false));
   }
 
-  setMap(map: GameMap): void {
+  setMap(map: MinimapSource): void {
     this.map = map;
     const b = map.bounds;
     this.scale = Math.max(2, Math.floor(160 / b.w));
@@ -42,12 +47,25 @@ export class Minimap {
       c.width = b.w * this.scale;
       c.height = b.h * this.scale;
     }
+    this.refresh();
+  }
+
+  /** Перерисовать клетки (после разведки и изменений карты). */
+  refresh(units: { x: number; y: number; color: string }[] = []): void {
+    const map = this.map;
+    if (!map) return;
+    const b = map.bounds;
     const ctx = this.base.getContext("2d")!;
     for (let y = 0; y < b.h; y++) {
       for (let x = 0; x < b.w; x++) {
-        ctx.fillStyle = this.icons.averageColor[map.ground[((y + b.y) << 6) | (x + b.x)]] ?? "#000";
+        const p = ((y + b.y) << 6) | (x + b.x);
+        ctx.fillStyle = map.unveiled && !map.unveiled[p] ? "#000" : (this.icons.averageColor[map.ground[p]] ?? "#000");
         ctx.fillRect(x * this.scale, y * this.scale, this.scale, this.scale);
       }
+    }
+    for (const u of units) {
+      ctx.fillStyle = u.color;
+      ctx.fillRect(Math.floor(u.x / CELL_PX - b.x) * this.scale, Math.floor(u.y / CELL_PX - b.y) * this.scale, this.scale, this.scale);
     }
     this.draw();
   }

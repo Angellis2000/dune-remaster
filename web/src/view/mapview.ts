@@ -90,6 +90,20 @@ export class MapView {
     requestAnimationFrame((t) => this.tick(t));
   }
 
+  /** клетка тумана (g_veiledTileID) — рисуется чёрной */
+  veiledIcon = 0;
+  /** постановка здания: размер и годность места (1 — да, <0 — без бетона, 0 — нельзя) */
+  placement: { w: number; h: number; valid: number } | null = null;
+
+  private drawIcon(id: number, x: number, y: number, size: number): void {
+    if (this.skins.iconOverridden[id]) {
+      this.ctx.drawImage(this.skins.scaled(`icon:${id}`, size, size)!, x, y);
+      return;
+    }
+    const s = this.icons.source(id);
+    this.ctx.drawImage(s.image, s.sx, s.sy, s.sw, s.sh, x, y, size, size);
+  }
+
   setWorld(world: World, focusX: number, focusY: number): void {
     this.resize();
     this.world = world;
@@ -367,17 +381,16 @@ export class MapView {
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
         if (!map.inBounds(x, y)) continue;
-        const id = map.ground[(y << 6) | x];
-        if (this.skins.iconOverridden[id]) {
-          ctx.drawImage(this.skins.scaled(`icon:${id}`, size, size)!, x * size - ox, y * size - oy);
-          continue;
-        }
-        const s = this.icons.source(id);
-        ctx.drawImage(s.image, s.sx, s.sy, s.sw, s.sh, x * size - ox, y * size - oy, size, size);
+        const p = (y << 6) | x;
+        const ov = map.overlay[p];
+        if (ov === this.veiledIcon && this.veiledIcon !== 0) continue; // туман: чёрная клетка
+        this.drawIcon(map.ground[p], x * size - ox, y * size - oy, size);
+        if (ov !== 0) this.drawIcon(ov, x * size - ox, y * size - oy, size);
       }
     }
     // свои картинки зданий — одной картинкой на всю раскладку
     for (const st of world.structures) {
+      if (!st.built) continue;
       if (st.x > x1 || st.y > y1 || st.x + st.w <= x0 || st.y + st.h <= y0) continue;
       const img = this.skins.structure(st.type, st.w * size, st.h * size);
       if (img) ctx.drawImage(img, st.x * size - ox, st.y * size - oy);
@@ -389,7 +402,8 @@ export class MapView {
     const visible = world.units.filter(
       (u) => u.x > this.camX - margin && u.x < this.camX + v.w + margin && u.y > this.camY - margin && u.y < this.camY + v.h + margin,
     );
-    visible.sort((a, b) => a.y - b.y);
+    // наземные снизу вверх, затем воздушные — поверх всех
+    visible.sort((a, b) => (a.air ? 100000 : 0) + a.y - ((b.air ? 100000 : 0) + b.y));
     for (const u of visible) {
       const skin = this.sprites.unitSkin(u.type, u.orientation, u.anim >> 3, u.turret);
       if (skin) {
@@ -401,6 +415,31 @@ export class MapView {
         const img = this.sprites.get(f, u.house);
         ctx.drawImage(img.canvas, Math.round((u.x + img.ox) * z) - ox, Math.round((u.y + img.oy) * z) - oy, img.canvas.width * z, img.canvas.height * z);
       }
+    }
+
+    // взрывы: пока кадры MD не сопоставлены — вспышка по ходу анимации
+    for (const b of world.blasts) {
+      const r = (6 + (b.age % 4) * 3) * z;
+      const g = ctx.createRadialGradient(b.x * z - ox, b.y * z - oy, 0, b.x * z - ox, b.y * z - oy, r);
+      g.addColorStop(0, "rgba(255,240,170,0.95)");
+      g.addColorStop(0.5, "rgba(255,150,40,0.8)");
+      g.addColorStop(1, "rgba(120,40,0,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(b.x * z - ox, b.y * z - oy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // постановка здания: рамка на клетках под курсором
+    if (this.placement) {
+      const pl = this.placement;
+      const cx = Math.floor(this.cursorX / CELL_PX);
+      const cy = Math.floor(this.cursorY / CELL_PX);
+      ctx.fillStyle = pl.valid > 0 ? "rgba(80,220,120,0.35)" : pl.valid < 0 ? "rgba(240,200,60,0.35)" : "rgba(230,60,60,0.4)";
+      ctx.fillRect(cx * size - ox, cy * size - oy, pl.w * size, pl.h * size);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = Math.max(1, z);
+      ctx.strokeRect(cx * size - ox + 0.5, cy * size - oy + 0.5, pl.w * size - 1, pl.h * size - 1);
     }
 
     // выделение — уголки рамки, как у курсора оригинала

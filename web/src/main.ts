@@ -1,7 +1,10 @@
 import css from "./style.css?inline";
 import { STRUCTURE_NAMES, UNIT_NAMES } from "./game/names.ts";
 import { HOUSE_NAMES } from "./game/tables.ts";
-import { World } from "./game/world.ts";
+import { ACTION, G, SELECTION } from "./engine/core.ts";
+import { layoutSize, structureInfo } from "./engine/tables.ts";
+import { unitSelect } from "./engine/unit.ts";
+import { World, type Unit as WorldUnit } from "./game/world.ts";
 import { buildCursors } from "./gfx/cursors.ts";
 import { IconSet } from "./gfx/icons.ts";
 import { buildPackZip, importPack, packCanvases } from "./gfx/pack.ts";
@@ -114,9 +117,22 @@ async function startGame(rom: DuneRom): Promise<void> {
   skins.onChange = () => view.invalidate();
   const minimap = new Minimap(view, icons);
   stage.append(minimap.canvas);
-  let world: World | null = null;
+  const world = new World(rom);
+  view.veiledIcon = G.veiledTileID;
   let paused = false;
   let lastButton = "";
+  let frame = 0;
+  const message = el("div", { className: "message", role: "status" });
+  const endBanner = el("div", { className: "paused end" });
+  endBanner.hidden = true;
+  stage.append(message, endBanner);
+  let messageTimer = 0;
+  G.onMessage = (text: string) => {
+    message.textContent = text;
+    message.hidden = false;
+    messageTimer = 60 * 6;
+  };
+  message.hidden = true;
 
   // выбор миссии
   const select = el("select", { id: "mission-select" });
@@ -126,68 +142,121 @@ async function startGame(rom: DuneRom): Promise<void> {
     select.append(group);
   }
   const loadMission = (code: string) => {
-    const scenario = rom.scenario(code[0] as "A" | "O" | "H", Number(code.slice(1)));
-    world = new World(rom, scenario);
-    const c = scenario.cursor;
+    world.load(code[0] as "A" | "O" | "H", Number(code.slice(1)));
+    const c = world.scenario.cursor;
     view.setWorld(world, c.x * CELL_PX + CELL_PX / 2, c.y * CELL_PX + CELL_PX / 2);
     minimap.setMap(world.map);
     select.value = code;
     paused = false;
     pausedBanner.hidden = true;
+    endBanner.hidden = true;
+    message.hidden = true;
     updateHud();
   };
   select.addEventListener("change", () => loadMission(select.value));
+  world.game.onEnd = (result) => {
+    endBanner.textContent = result === "won" ? "Миссия выполнена! Выберите следующую миссию." : "Миссия провалена. Выберите миссию, чтобы начать заново.";
+    endBanner.hidden = false;
+  };
 
   // ---------------------------------------------------------------- выбор и приказы
   const clearSelection = () => {
     view.selectedUnits.clear();
     view.selectedStructure = null;
+    unitSelect(null);
+    world.game.selectedStructure = null;
   };
-  const playerUnitsSelected = () => [...view.selectedUnits].filter((u) => u.house === world!.player);
+  const playerUnitsSelected = () => [...view.selectedUnits].filter((u) => u.house === world.player && u.ref.o.flags.used && !u.ref.o.flags.isNotOnMap);
+  /** юниты, которым отдаётся приказ: выделенные свои */
+  const commandable = () => playerUnitsSelected().map((u) => u.ref);
+  const selectUnits = (list: WorldUnit[]) => {
+    clearSelection();
+    for (const u of list) view.selectedUnits.add(u);
+    if (list.length) unitSelect(list[0].ref);
+  };
 
   /** A / щелчок левой: выбрать то, что под курсором, или отдать приказ выбранным. */
   view.onPrimary = (wx, wy) => {
-    if (!world || paused) return;
+    if (paused || world.game.ended) return;
+    const packed = World.packAt(wx, wy);
+    if (G.selectionType === SELECTION.PLACE) {
+      if (world.game.place(packed)) view.placement = null;
+      world.sync();
+      updateHud();
+      return;
+    }
+    if (G.selectionType === SELECTION.TARGET) {
+      const action = G.activeAction;
+      const others = commandable().filter((u) => u !== G.unitActive);
+      world.game.targetClick(packed);
+      for (const u of others) world.game.order(u, action, packed);
+      updateHud();
+      return;
+    }
     const unit = world.unitAt(wx, wy);
-    const mine = playerUnitsSelected();
-    if (unit && (unit.house === world.player || !mine.length)) {
-      clearSelection();
-      view.selectedUnits.add(unit);
+    const mine = commandable();
+    if (unit && unit.house === world.player) {
+      selectUnits([unit]);
     } else if (mine.length) {
-      // приказ: пока только движение по прямой (механика движения OpenDUNE — следующий этап)
-      const target = unit ? { x: unit.x, y: unit.y } : { x: wx, y: wy };
-      mine.forEach((u, i) => {
-        const ring = i === 0 ? 0 : 14 + Math.floor((i - 1) / 6) * 14;
-        const a = (i * Math.PI) / 3;
-        u.target = { x: target.x + Math.cos(a) * ring, y: target.y + Math.sin(a) * ring };
-      });
+      for (const u of mine) world.game.order(u, world.game.defaultAction(u, packed), packed);
+    } else if (unit) {
+      selectUnits([unit]);
     } else {
       clearSelection();
-      const s = world.structureAtCell(Math.floor(wx / CELL_PX), Math.floor(wy / CELL_PX));
-      if (s) view.selectedStructure = s;
+      const s = world.structureAtCell(packed & 63, packed >> 6);
+      if (s && world.map.unveiled[packed]) {
+        view.selectedStructure = s;
+        world.game.selectedStructure = s.ref;
+      }
     }
     updateHud();
   };
-  /** Правая кнопка: снять выделение, как в Red Alert. */
+  /** Правая кнопка: отменить выбор цели или постановку, иначе снять выделение, как в Red Alert. */
   view.onSecondary = () => {
-    clearSelection();
+    if (G.selectionType === SELECTION.TARGET || G.selectionType === SELECTION.PLACE) {
+      world.game.cancelTarget();
+      view.placement = null;
+    } else clearSelection();
     updateHud();
   };
   /** Рамка: выбрать все свои юниты внутри. */
   view.onBox = (r) => {
-    if (!world || paused) return;
-    const inside = world.units.filter((u) => u.house === world!.player && u.x >= r.x0 && u.x <= r.x1 && u.y >= r.y0 && u.y <= r.y1);
+    if (paused) return;
+    const inside = world.units.filter((u) => u.house === world.player && !u.air && u.x >= r.x0 && u.x <= r.x1 && u.y >= r.y0 && u.y <= r.y1);
     if (!inside.length) return;
-    clearSelection();
-    for (const u of inside) view.selectedUnits.add(u);
+    selectUnits(inside);
     updateHud();
   };
   view.onFrame = () => {
-    if (world && !paused) world.step();
-    if (world) {
-      const over = world.unitAt(view.cursorX, view.cursorY);
-      const mine = playerUnitsSelected().length > 0;
-      view.cursorKind = !mine ? "select" : over && over.house !== world.player ? "attack" : over ? "select" : "move";
+    frame++;
+    // окно игрока — для скриптов (юниты вне окна думают медленнее, как в оригинале)
+    const v = view.viewSize();
+    G.viewportPacked = World.packAt(Math.max(0, view.camX), Math.max(0, view.camY));
+    G.viewportTilesW = Math.ceil(v.w / CELL_PX);
+    G.viewportTilesH = Math.ceil(v.h / CELL_PX);
+    if (!paused) {
+      world.step();
+      world.sync();
+      for (const u of [...view.selectedUnits]) if (!u.ref.o.flags.used || u.ref.o.flags.isNotOnMap || !world.units.includes(u)) view.selectedUnits.delete(u);
+      if (view.selectedStructure && !world.structures.includes(view.selectedStructure)) view.selectedStructure = null;
+      view.invalidate();
+    }
+    if (messageTimer > 0 && --messageTimer === 0) message.hidden = true;
+    if (G.selectionType === SELECTION.PLACE && G.structureActiveType !== 0xffff) {
+      const si = structureInfo[G.structureActiveType];
+      const size = layoutSize[si.layout];
+      view.placement = { w: size.width, h: size.height, valid: world.game.canPlaceAt(World.packAt(view.cursorX, view.cursorY)) };
+    } else view.placement = null;
+    const over = world.unitAt(view.cursorX, view.cursorY);
+    const overS = world.structureAtCell(Math.floor(view.cursorX / CELL_PX), Math.floor(view.cursorY / CELL_PX));
+    const mine = playerUnitsSelected().length > 0;
+    const enemy = (over && over.house !== world.player) || (overS && overS.house !== world.player);
+    if (G.selectionType === SELECTION.TARGET) view.cursorKind = G.activeAction === ACTION.MOVE ? "move" : "attack";
+    else if (G.selectionType === SELECTION.PLACE) view.cursorKind = "select";
+    else view.cursorKind = !mine ? "select" : over && over.house === world.player ? "select" : enemy ? "attack" : "move";
+    if (frame % 30 === 0) {
+      minimap.refresh(world.units.map((u) => ({ x: u.x, y: u.y, color: u.house === world.player ? "#7fd0ff" : "#ff6a5a" })));
+      updateHud();
     }
   };
 
@@ -237,7 +306,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       paused = !paused;
       pausedBanner.hidden = !paused;
     } else if (b === "a") view.onPrimary(view.cursorX, view.cursorY);
-    else if (b === "c") clearSelection(); // в оригинале C открывает меню приказов/строительства — будет следующим этапом
+    else if (b === "c") clearSelection(); // меню C — следующим шагом
     updateHud();
   });
 
@@ -260,7 +329,7 @@ async function startGame(rom: DuneRom): Promise<void> {
 
   function updateHud(): void {
     zoomVal.value = `${view.zoom}×`;
-    if (world) credits.value = String(world.houses.get(world.player)?.credits ?? 0);
+    credits.value = String(world.houses.get(world.player)?.credits ?? 0);
     const h = view.cursorCell();
     const where = h ? `Клетка ${h.x}, ${h.y} · иконка ${h.icon}` : "";
     const help = view.mouseMode
@@ -273,7 +342,6 @@ async function startGame(rom: DuneRom): Promise<void> {
   }
 
   function renderSelectionInfo(): void {
-    if (!world) return;
     const units = [...view.selectedUnits];
     const s = view.selectedStructure;
     if (!units.length && !s) {
