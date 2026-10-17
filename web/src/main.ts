@@ -1,6 +1,4 @@
 import css from "./style.css?inline";
-import { STRUCTURE_NAMES, UNIT_NAMES } from "./game/names.ts";
-import { HOUSE_NAMES } from "./game/tables.ts";
 import { ACTION, G, SELECTION } from "./engine/core.ts";
 import { layoutSize, structureInfo } from "./engine/tables.ts";
 import { unitSelect } from "./engine/unit.ts";
@@ -13,6 +11,7 @@ import { SpriteSet } from "./gfx/sprites.ts";
 import { BUTTON_LABEL, Pad } from "./input/pad.ts";
 import { CELL_PX, DuneRom, RomError } from "./rom/dune.ts";
 import { AssetViewer } from "./ui/assets.ts";
+import { CommandPanel } from "./ui/command.ts";
 import { Minimap } from "./ui/minimap.ts";
 import { forgetRom, loadStoredRom, storeRom } from "./ui/romstore.ts";
 import { MapView } from "./view/mapview.ts";
@@ -119,6 +118,20 @@ async function startGame(rom: DuneRom): Promise<void> {
   stage.append(minimap.canvas);
   const world = new World(rom);
   view.veiledIcon = G.veiledTileID;
+  const panel = new CommandPanel(rom, world, {
+    selectedUnits: () => commandable(),
+    selectedStructure: () => view.selectedStructure?.ref ?? null,
+    inspected: () => {
+      const u = [...view.selectedUnits][0];
+      if (u && u.house !== world.player) return { type: u.type, house: u.house, hp: u.hp, isUnit: true };
+      const s = view.selectedStructure;
+      if (s && s.house !== world.player) return { type: s.type, house: s.house, hp: s.hp, isUnit: false };
+      return null;
+    },
+    targetMode: (text) => G.onMessage(text),
+    changed: () => updateHud(),
+  });
+  stage.append(panel.root);
   let paused = false;
   let lastButton = "";
   let frame = 0;
@@ -254,6 +267,8 @@ async function startGame(rom: DuneRom): Promise<void> {
     if (G.selectionType === SELECTION.TARGET) view.cursorKind = G.activeAction === ACTION.MOVE ? "move" : "attack";
     else if (G.selectionType === SELECTION.PLACE) view.cursorKind = "select";
     else view.cursorKind = !mine ? "select" : over && over.house === world.player ? "select" : enemy ? "attack" : "move";
+    view.inputLocked = panel.focused;
+    if (frame % 10 === 0) panel.update();
     if (frame % 30 === 0) {
       minimap.refresh(world.units.map((u) => ({ x: u.x, y: u.y, color: u.house === world.player ? "#7fd0ff" : "#ff6a5a" })));
       updateHud();
@@ -302,11 +317,15 @@ async function startGame(rom: DuneRom): Promise<void> {
   pad.onPress((b) => {
     if (!assets.root.hidden) return;
     lastButton = BUTTON_LABEL[b];
+    if (panel.handlePad(b)) {
+      updateHud();
+      return;
+    }
     if (b === "start") {
       paused = !paused;
       pausedBanner.hidden = !paused;
     } else if (b === "a") view.onPrimary(view.cursorX, view.cursorY);
-    else if (b === "c") clearSelection(); // меню C — следующим шагом
+    else if (b === "c") panel.open();
     updateHud();
   });
 
@@ -342,27 +361,8 @@ async function startGame(rom: DuneRom): Promise<void> {
   }
 
   function renderSelectionInfo(): void {
-    const units = [...view.selectedUnits];
-    const s = view.selectedStructure;
-    if (!units.length && !s) {
-      info.hidden = true;
-      return;
-    }
-    info.hidden = false;
-    if (s) {
-      info.replaceChildren(
-        el("strong", {}, STRUCTURE_NAMES[s.type] ?? "?"),
-        el("span", {}, `${HOUSE_NAMES[s.house] ?? "?"} · прочность ${Math.round((s.hp / 256) * 100)}%`),
-      );
-    } else if (units.length === 1) {
-      const u = units[0];
-      info.replaceChildren(
-        el("strong", {}, UNIT_NAMES[u.type] ?? `Тип ${u.type}`),
-        el("span", {}, `${HOUSE_NAMES[u.house] ?? "?"} · прочность ${Math.round((u.hp / 256) * 100)}%`),
-      );
-    } else {
-      info.replaceChildren(el("strong", {}, `Выбрано юнитов: ${units.length}`));
-    }
+    info.hidden = true;
+    panel.update();
   }
   view.onChange = updateHud;
 

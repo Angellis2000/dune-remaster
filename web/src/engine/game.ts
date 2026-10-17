@@ -7,7 +7,7 @@ import type { Scenario } from "../rom/scenario.ts";
 import { animationInit, animationTick } from "./animation.ts";
 import {
   ACTION, G, HOUSE_INVALID, INDEX_INVALID, IT, MOVEMENT, SELECTION, STATE, STRUCTURE, UNIT, findAll, houseAllocate, houseFind,
-  idiv, indexEncode, indexGetUnit, newScenario, packTile, packXY, poolsReset, randomLCGSeed, randomSeed, s8, structureFind, unitAllocate,
+  idiv, indexEncode, indexGetUnit, newScenario, packTile, packXY, poolsReset, randomLCGSeed, randomRange, randomSeed, s8, structureFind, unitAllocate,
   unitFind, unitFree, unpackTile, type House, type Structure, type Unit,
 } from "./core.ts";
 import { explosionInit, explosionTick } from "./explosion.ts";
@@ -472,23 +472,37 @@ export class Game {
         const o = structureInfo[i].o;
         if (o.available) out.push({ type: i, available: o.available, cost: o.buildCredits, time: o.buildTime });
       }
-      out.sort((a, b) => structureInfo[a.type].o.sortPriority - structureInfo[b.type].o.sortPriority);
+      out.sort((a, b) => structureInfo[b.type].o.sortPriority - structureInfo[a.type].o.sortPriority);
     } else {
       for (let i = 0; i < UNIT.MAX; i++) {
         const o = unitInfo[i].o;
         if (o.available) out.push({ type: i, available: o.available, cost: o.buildCredits, time: o.buildTime });
       }
-      out.sort((a, b) => unitInfo[a.type].o.sortPriority - unitInfo[b.type].o.sortPriority);
+      out.sort((a, b) => unitInfo[b.type].o.sortPriority - unitInfo[a.type].o.sortPriority);
     }
     return out;
   }
 
+  /** Цены космопорта: случайные, как в окне заказа оригинала (GUI_FactoryWindow_CalculateStarportPrice). */
+  starportPrices(): number[] {
+    return unitInfo.map((ui) => {
+      const c = ui.o.buildCredits;
+      return Math.min(idiv(c, 10) * 4 + idiv(c, 10) * (randomRange(0, 6) + randomRange(0, 6)), 999);
+    });
+  }
+
+  /** Купить юнит в космопорте: деньги списываются сразу, доставка — фрегатом. */
+  starportBuy(s: Structure, type: number, price: number): boolean {
+    const h = G.houses[s.o.houseID];
+    if (G.starportAvailable[type] <= 0 || h.credits < price) return false;
+    h.credits -= price;
+    structureStarportBuy(s, [type]);
+    return true;
+  }
+
   /** Начать производство (или купить в космопорте). */
   build(s: Structure, type: number): void {
-    if (s.o.type === STRUCTURE.STARPORT) {
-      structureStarportBuy(s, [type]);
-      return;
-    }
+    if (s.o.type === STRUCTURE.STARPORT) return;
     if (s.o.flags.onHold && s.objectType === type && s.o.linkedID !== 0xff) {
       s.o.flags.onHold = false;
       return;

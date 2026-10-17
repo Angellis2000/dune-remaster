@@ -314,8 +314,12 @@ export class MapView {
     requestAnimationFrame((tt) => this.tick(tt));
   }
 
+  /** крестовина занята меню (C): курсор стоит */
+  inputLocked = false;
+
   /** Один кадр управления с крестовины. */
   private step(): void {
+    if (this.inputLocked) return;
     const p = this.pad;
     const dx = (p.isHeld("right") ? 1 : 0) - (p.isHeld("left") ? 1 : 0);
     const dy = (p.isHeld("down") ? 1 : 0) - (p.isHeld("up") ? 1 : 0);

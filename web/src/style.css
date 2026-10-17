@@ -491,3 +491,128 @@ button[aria-pressed="true"] {
   text-align: center;
   letter-spacing: 0.02em;
 }
+
+/* ---------------------------------------------------------------- меню C */
+.command {
+  position: absolute;
+  top: 110px;
+  right: max(12px, env(safe-area-inset-right, 0px));
+  width: 236px;
+  max-height: calc(100% - 300px);
+  min-height: 120px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: rgba(11, 12, 16, 0.92);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.command.focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.command > div {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.command > div img {
+  width: 100%;
+  aspect-ratio: 96 / 56;
+  image-rendering: pixelated;
+  border-radius: 4px;
+  background: #000;
+}
+
+.command-sub,
+.command-hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0;
+}
+
+.command-hp {
+  height: 6px;
+  border-radius: 3px;
+  background: #2a2c33;
+  overflow: hidden;
+}
+
+.command-hp span {
+  display: block;
+  height: 100%;
+  background: #58c46b;
+}
+
+.command-hp span.mid {
+  background: #e3b341;
+}
+
+.command-hp span.low {
+  background: #e05545;
+}
+
+.command-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow: auto;
+  display: grid;
+  gap: 4px;
+  align-content: start;
+}
+
+.command-list button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 13px;
+}
+
+.command-list button img {
+  width: 40px;
+  height: 24px;
+  image-rendering: pixelated;
+  border-radius: 2px;
+}
+
+.command-list button:not(:has(img)) {
+  grid-template-columns: 1fr auto;
+}
+
+.command-list button small {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.command-list button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.command-list button.cursor {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.command-list button:disabled {
+  opacity: 0.45;
+}
+
+@media (max-width: 640px) {
+  .command {
+    top: auto;
+    bottom: 56px;
+    width: min(236px, calc(100% - 24px));
+    max-height: 45%;
+  }
+}
