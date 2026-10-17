@@ -128,7 +128,8 @@ button[aria-pressed="true"] {
   gap: 8px;
 }
 
-.drop .primary {
+.drop .primary,
+.pack-bar .primary {
   background: var(--accent);
   border-color: var(--accent);
   color: #1b1405;
@@ -251,7 +252,7 @@ button[aria-pressed="true"] {
   inset: 0;
   z-index: 5;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   background: var(--bg);
 }
 
@@ -281,6 +282,22 @@ button[aria-pressed="true"] {
 
 .assets .close {
   margin-left: auto;
+}
+
+.pack-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  border-bottom: 1px solid var(--line);
+}
+
+.pack-status {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .assets-body {

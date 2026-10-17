@@ -7,6 +7,8 @@
 import type { DuneRom, SpriteFrame } from "../rom/dune.ts";
 import { ROM } from "../rom/dune.ts";
 import { readU16 } from "../rom/md.ts";
+import { unitBox, unitStem } from "./pack.ts";
+import type { Skins } from "./skins.ts";
 
 export interface SpriteImage {
   canvas: HTMLCanvasElement;
@@ -29,9 +31,26 @@ export class SpriteSet {
   private vram: Uint8Array;
   private palette: Uint32Array;
 
+  /** своя графика юнитов (если загружена) */
+  skins: Skins | null = null;
+  private boxes = new Map<number, number>();
+
   constructor(private rom: DuneRom) {
     this.vram = rom.spriteVram();
     this.palette = rom.gamePalette();
+  }
+
+  /** Своя картинка для этого вида юнита: ключ и сторона квадрата (мировые пиксели) с центром юнита посередине. */
+  unitSkin(type: number, orientation: number, anim: number, turret: number): { key: string; box: number } | null {
+    if (!this.skins) return null;
+    const key = `unit:${type}:${unitStem(this.rom, type, orientation, anim, turret)}`;
+    if (!this.skins.has(key)) return null;
+    let box = this.boxes.get(type);
+    if (box === undefined) {
+      box = unitBox(this.rom, this, type);
+      this.boxes.set(type, box);
+    }
+    return { key, box };
   }
 
   /** Кадры юнита по ориентации корпуса и башни 0..255 (0 — север). */

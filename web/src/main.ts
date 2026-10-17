@@ -4,6 +4,7 @@ import { HOUSE_NAMES } from "./game/tables.ts";
 import { World } from "./game/world.ts";
 import { buildCursors } from "./gfx/cursors.ts";
 import { IconSet } from "./gfx/icons.ts";
+import { buildPackZip, importPack, packCanvases } from "./gfx/pack.ts";
 import { Skins } from "./gfx/skins.ts";
 import { SpriteSet } from "./gfx/sprites.ts";
 import { BUTTON_LABEL, Pad } from "./input/pad.ts";
@@ -107,7 +108,9 @@ async function startGame(rom: DuneRom): Promise<void> {
   pausedBanner.hidden = true;
   const stage = el("div", { className: "stage" }, canvas, status, credits, info, pausedBanner);
   const pad = new Pad();
-  const view = new MapView(canvas, icons, sprites, buildCursors(rom), pad, skins);
+  sprites.skins = skins;
+  const cursors = buildCursors(rom);
+  const view = new MapView(canvas, icons, sprites, cursors, pad, skins);
   skins.onChange = () => view.invalidate();
   const minimap = new Minimap(view, icons);
   stage.append(minimap.canvas);
@@ -204,7 +207,11 @@ async function startGame(rom: DuneRom): Promise<void> {
   };
   grid.addEventListener("click", toggleGrid);
 
-  const assets = new AssetViewer(rom, icons, skins, () => (assets.root.hidden = true));
+  let originals: Map<string, HTMLCanvasElement> | null = null;
+  const assets = new AssetViewer(rom, icons, skins, () => (assets.root.hidden = true), {
+    exportZip: () => buildPackZip(rom, icons, sprites, cursors),
+    importFiles: (files) => importPack(files, skins, () => (originals ??= packCanvases(rom, icons, sprites, cursors))),
+  });
   stage.append(assets.root);
   const assetsBtn = el("button", { type: "button", textContent: "Ресурсы", title: "Графика из ROM с номерами (R)" });
   const toggleAssets = () => {

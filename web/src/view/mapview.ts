@@ -367,7 +367,12 @@ export class MapView {
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
         if (!map.inBounds(x, y)) continue;
-        const s = this.icons.source(map.ground[(y << 6) | x]);
+        const id = map.ground[(y << 6) | x];
+        if (this.skins.iconOverridden[id]) {
+          ctx.drawImage(this.skins.scaled(`icon:${id}`, size, size)!, x * size - ox, y * size - oy);
+          continue;
+        }
+        const s = this.icons.source(id);
         ctx.drawImage(s.image, s.sx, s.sy, s.sw, s.sh, x * size - ox, y * size - oy, size, size);
       }
     }
@@ -386,6 +391,12 @@ export class MapView {
     );
     visible.sort((a, b) => a.y - b.y);
     for (const u of visible) {
+      const skin = this.sprites.unitSkin(u.type, u.orientation, u.anim >> 3, u.turret);
+      if (skin) {
+        const c = this.skins.scaled(skin.key, skin.box * z, skin.box * z)!;
+        ctx.drawImage(c, Math.round((u.x - skin.box / 2) * z) - ox, Math.round((u.y - skin.box / 2) * z) - oy);
+        continue;
+      }
       for (const f of this.sprites.unitFrames(u.type, u.orientation, u.anim >> 3, u.turret)) {
         const img = this.sprites.get(f, u.house);
         ctx.drawImage(img.canvas, Math.round((u.x + img.ox) * z) - ox, Math.round((u.y + img.oy) * z) - oy, img.canvas.width * z, img.canvas.height * z);

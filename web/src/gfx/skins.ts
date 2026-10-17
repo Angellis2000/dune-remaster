@@ -1,12 +1,12 @@
 /**
- * Свои картинки поверх оригинальной графики. Здание рисуется одной картинкой на всю
- * свою раскладку (например, Строительный двор — 2×2 клетки), вместо иконок из ROM.
- * Картинка любого размера: для каждого масштаба она заранее уменьшается с хорошим
- * сглаживанием, чтобы на экране не было «лесенки» и мерцания.
+ * Своя графика поверх оригинальной. Ключи:
+ *   icon:N        — клетка карты N (32×32 мировых пикселя);
+ *   structure:T   — здание типа T целиком, на всю раскладку (2×2, 3×3 и т. д.);
+ *   unit:T:кадр   — кадр юнита типа T (кадр — имя файла из набора: d3, d3_f1, d2_t5).
+ * Картинка любого размера: под каждый масштаб она заранее уменьшается со сглаживанием.
+ * Хранится только в браузере (IndexedDB).
  */
 import { loadSkinFiles, storeSkinFile } from "../ui/romstore.ts";
-
-const key = (type: number) => `structure:${type}`;
 
 interface Skin {
   image: ImageBitmap;
@@ -14,58 +14,108 @@ interface Skin {
 }
 
 export class Skins {
-  private structures = new Map<number, Skin>();
+  private skins = new Map<string, Skin>();
+  /** клетки карты, у которых есть своя картинка (быстрая проверка при отрисовке) */
+  readonly iconOverridden = new Uint8Array(512);
   onChange: () => void = () => {};
 
   async load(): Promise<void> {
     for (const [k, blob] of await loadSkinFiles()) {
-      const m = /^structure:(\d+)$/.exec(k);
-      if (!m) continue;
       try {
-        this.structures.set(Number(m[1]), { image: await createImageBitmap(blob), scaled: new Map() });
+        this.put(k, await createImageBitmap(blob));
       } catch {
         /* испорченный файл — пропускаем */
       }
     }
   }
 
-  hasStructure(type: number): boolean {
-    return this.structures.has(type);
+  private put(key: string, image: ImageBitmap | null): void {
+    if (image) this.skins.set(key, { image, scaled: new Map() });
+    else this.skins.delete(key);
+    const m = /^icon:(\d+)$/.exec(key);
+    if (m) this.iconOverridden[Number(m[1])] = image ? 1 : 0;
   }
 
-  structureImage(type: number): ImageBitmap | null {
-    return this.structures.get(type)?.image ?? null;
+  has(key: string): boolean {
+    return this.skins.has(key);
   }
 
-  async setStructure(type: number, file: Blob): Promise<void> {
-    const image = await createImageBitmap(file);
-    this.structures.set(type, { image, scaled: new Map() });
-    await storeSkinFile(key(type), file);
+  image(key: string): ImageBitmap | null {
+    return this.skins.get(key)?.image ?? null;
+  }
+
+  keys(): string[] {
+    return [...this.skins.keys()];
+  }
+
+  async set(key: string, file: Blob, save = true): Promise<void> {
+    this.put(key, await createImageBitmap(file));
+    if (save) await storeSkinFile(key, file);
     this.onChange();
   }
 
-  async clearStructure(type: number): Promise<void> {
-    this.structures.delete(type);
-    await storeSkinFile(key(type), null);
+  async clear(key: string): Promise<void> {
+    this.put(key, null);
+    await storeSkinFile(key, null);
     this.onChange();
   }
 
-  /** Картинка здания, уменьшенная ровно до w×h экранных пикселей. */
-  structure(type: number, w: number, h: number): HTMLCanvasElement | null {
-    const s = this.structures.get(type);
+  async clearAll(): Promise<void> {
+    for (const k of this.keys()) {
+      this.put(k, null);
+      await storeSkinFile(k, null);
+    }
+    this.onChange();
+  }
+
+  /** Картинка, уменьшенная ровно до w×h экранных пикселей. */
+  scaled(key: string, w: number, h: number): HTMLCanvasElement | null {
+    const s = this.skins.get(key);
     if (!s) return null;
+    w = Math.max(1, Math.round(w));
+    h = Math.max(1, Math.round(h));
     const k = `${w}x${h}`;
     let c = s.scaled.get(k);
     if (!c) {
       c = downscale(s.image, w, h);
+      if (s.scaled.size > 16) s.scaled.clear();
       s.scaled.set(k, c);
     }
     return c;
   }
+
+  // совместимость с просмотром ресурсов
+  hasStructure(type: number): boolean {
+    return this.has(`structure:${type}`);
+  }
+  structureImage(type: number): ImageBitmap | null {
+    return this.image(`structure:${type}`);
+  }
+  setStructure(type: number, file: Blob): Promise<void> {
+    return this.set(`structure:${type}`, file);
+  }
+  clearStructure(type: number): Promise<void> {
+    return this.clear(`structure:${type}`);
+  }
+  structure(type: number, w: number, h: number): HTMLCanvasElement | null {
+    return this.scaled(`structure:${type}`, w, h);
+  }
 }
 
-/** Уменьшение вдвое за шаг — заметно чище, чем одним drawImage. */
-function downscale(src: CanvasImageSource & { width: number; height: number }, w: number, h: number): HTMLCanvasElement {
+/**
+ * Подгонка под размер на экране. Уменьшение — вдвое за шаг со сглаживанием (чище, чем одним
+ * drawImage); увеличение — без сглаживания, чтобы пиксельная графика не мылилась.
+ */
+export function downscale(src: CanvasImageSource & { width: number; height: number }, w: number, h: number): HTMLCanvasElement {
+  if (w >= src.width && h >= src.height) {
+    const out = document.createElement("canvas");
+    out.width = w;
+    out.height = h;
+    const g = out.getContext("2d")!;
+    g.imageSmoothingEnabled = false;
+    g.drawImage(src, 0, 0, w, h);
+    return out;
+  }
   let cur: CanvasImageSource = src;
   let cw = src.width;
   let ch = src.height;
