@@ -15,6 +15,8 @@ export const GEMS_ROM = {
   driverEnd: 0x0041dc,
   fifo: 0x1b40,
   writeIndex: 0x0036,
+  /** индекс чтения драйвера: сколько байтов очереди он уже забрал */
+  readIndex: 0x0037,
   banks: { patches: 0x0d02ae, envelopes: 0x0d0251, sequences: 0x0cf970, samples: 0x0c8160 },
 } as const;
 
@@ -41,6 +43,8 @@ export class SoundMachine implements Z80Bus {
   /** отсчётов до конца инициализации драйвера и команды, ждущие её */
   private booting = 0;
   private held: number[][] = [];
+  /** байты команд, ещё не поместившиеся в очередь Z80 */
+  private out: number[] = [];
   /** такты ожидания шины 68000 при чтении окна ROM (в среднем 3 на обращение, как в Genesis Plus GX) */
   private waits = 0;
   private cycleDebt = 0;
@@ -63,6 +67,8 @@ export class SoundMachine implements Z80Bus {
     this.ram.set(this.rom.subarray(GEMS_ROM.driverStart, GEMS_ROM.driverEnd), 0);
     this.z80.reset();
     this.bank = 0;
+    this.out = [];
+    this.held = [];
     const b = GEMS_ROM.banks;
     const addr = (a: number) => [a & 0xff, (a >> 8) & 0xff, (a >> 16) & 0xff];
     // $001624: байт $FF, затем $0B (без префикса) и четыре адреса по 3 байта
@@ -88,9 +94,17 @@ export class SoundMachine implements Z80Bus {
       this.held.push([cmd, ...args]);
       return;
     }
-    this.push(0xff);
-    this.push(cmd);
-    for (const a of args) this.push(a);
+    // очередь Z80 — кольцо из 64 байтов без защиты от переполнения: игра MD шлёт немного команд за кадр,
+    // а у нас их бывает больше (звуки боя, догон кадров) — лишнее ждёт, пока драйвер освободит место
+    if (this.out.length < 4096) this.out.push(0xff, cmd, ...args);
+  }
+
+  /** Переложить ждущие байты в очередь Z80, сколько влезет (одно место оставляем пустым). */
+  private feed(): void {
+    let free = 63 - ((this.ram[GEMS_ROM.writeIndex] - this.ram[GEMS_ROM.readIndex]) & 0x3f);
+    let n = 0;
+    while (n < this.out.length && free-- > 0) this.push(this.out[n++]);
+    if (n) this.out.splice(0, n);
   }
 
   // ---------------------------------------------------------------- шина Z80
@@ -128,6 +142,7 @@ export class SoundMachine implements Z80Bus {
       for (const [cmd, ...args] of this.held) this.command(cmd, ...args);
       this.held = [];
     }
+    if (this.out.length) this.feed();
     this.cycleDebt += Z80_CLOCK / FM_RATE;
     while (this.cycleDebt > 0) {
       if (this.intPending > 0) {
