@@ -32,8 +32,19 @@ export const MENU_ROM = {
     cursor: 0x049fc4,
     /** значки цены, энергии и прочности 2×2, строка 1 */
     statIcons: [0x04a31c, 0x04a39c, 0x04a49c],
+    /** у заводов юнитов и космопорта вместо энергии — патрон (урон юнита) */
+    ammoIcon: 0x04a41c,
     /** значки размера здания 2×2: 1×1, 2×2, 3×2, 3×3 */
     sizeIcons: 0x008638,
+  },
+  /**
+   * Окно космопорта (трасса открытия): своя рамка — 4 LCW-потока тайлов и карта Window, строка палитры 2
+   * зелёная ($0A6C58), строки 1 и 3 — как у окна здания. Раскладка кнопок, сетки и чисел та же.
+   */
+  starport: {
+    map: 0x0c7608,
+    tiles: [0x0bab86, 0x0bb20a, 0x0bb9dc, 0x0bc0ce],
+    palettes: [0x013816, 0x0a6c58, 0x013856],
   },
   /** шрифт: 128 тайлов, номер тайла = код символа; 9 — буква, 12 — фон */
   font: 0x04f6c8,
@@ -194,6 +205,29 @@ export class ScreenGfx {
       MENU_ROM.factory.palettes.forEach((addr, i) => pal.set(this.rom.readPalette(addr, 1), (i + 1) * 16));
       return pal;
     });
+  }
+
+  /** Палитра окна космопорта: строка 2 зелёная. */
+  starportPalette(): Uint32Array {
+    return this.memoPal("starport", () => {
+      const pal = new Uint32Array(64).fill(cramToRGBA(0));
+      MENU_ROM.starport.palettes.forEach((addr, i) => pal.set(this.rom.readPalette(addr, 1), (i + 1) * 16));
+      return pal;
+    });
+  }
+
+  starportBackground(): HTMLCanvasElement {
+    return this.memo("bg:starport", () => this.tilemapScreen(MENU_ROM.starport.tiles, MENU_ROM.starport.map, this.starportPalette()));
+  }
+
+  /** Рамка-курсор космопорта: те же тайлы, строка 2 у него зелёная. */
+  starportCursor(): HTMLCanvasElement {
+    return this.memo("scur", () => this.sprite(MENU_ROM.factory.cursor, 4, 3, 2, this.starportPalette(), false));
+  }
+
+  /** Значок патрона 2×2 (урон юнита) — у заводов юнитов и космопорта вместо энергии. */
+  ammoIcon(): HTMLCanvasElement {
+    return this.memo("ammo", () => this.sprite(MENU_ROM.factory.ammoIcon, 2, 2, 1, this.factoryPalette(), false));
   }
 
   /** Рамка окна здания целиком (320×224). */

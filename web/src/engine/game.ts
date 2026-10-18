@@ -6,7 +6,7 @@ import type { DuneRom } from "../rom/dune.ts";
 import type { Scenario } from "../rom/scenario.ts";
 import { animationInit, animationTick } from "./animation.ts";
 import {
-  ACTION, G, HOUSE_INVALID, INDEX_INVALID, IT, MOVEMENT, SELECTION, STATE, STRUCTURE, UNIT, findAll, houseAllocate, houseFind,
+  ACTION, G, HOUSE, HOUSE_INVALID, INDEX_INVALID, IT, MOVEMENT, SELECTION, STATE, STRUCTURE, UNIT, findAll, houseAllocate, houseFind,
   idiv, indexEncode, indexGetUnit, newScenario, packTile, packXY, poolsReset, randomLCGSeed, randomRange, randomSeed, s8, structureFind, unitAllocate,
   unitFind, unitFree, unpackTile, type House, type Structure, type Unit,
 } from "./core.ts";
@@ -19,7 +19,7 @@ import { scriptFunctionsStructure, scriptFunctionsTeam, scriptFunctionsUnit } fr
 import { msg } from "./strings.ts";
 import {
   gameLoopStructure, setUnitCreateWrapper, structureCancelBuild, structureActivateSpecial, structureBuildObject, structureCreate, structureFree,
-  structureGetBuildable, structureGetByPackedTile, structureGetStructuresBuilt, structureIsValidBuildLocation, structurePlayerPlace,
+  structureGetBuildable, structureGetByPackedTile, structureGetStructuresBuilt, structureIsUpgradable, structureIsValidBuildLocation, structurePlayerPlace,
   structureRemoveFog, structureResetTimers, structureSetRepairingState, structureSetState, structureSetUpgradingState,
   structureStarportBuy,
 } from "./structure.ts";
@@ -43,6 +43,28 @@ export type MissionEnd = "won" | "lost";
 
 let tablesReady = false;
 
+/** $010DA2: какой юнит покажет пункт улучшения завода (по уровню и дому). */
+function upgradeUnlocksUnit(s: Structure): number {
+  const level = s.upgradeLevel;
+  const built = G.houses[s.creatorHouseID]?.structuresBuilt ?? 0;
+  switch (s.o.type) {
+    case STRUCTURE.LIGHT_VEHICLE:
+      return level === 1 ? UNIT.HARVESTER : UNIT.QUAD;
+    case STRUCTURE.HEAVY_VEHICLE:
+      if (!(built & (1 << STRUCTURE.OUTPOST))) return UNIT.HARVESTER;
+      if (level === 1) return s.creatorHouseID === HOUSE.ORDOS ? UNIT.SIEGE_TANK : UNIT.LAUNCHER;
+      return level === 2 ? UNIT.SIEGE_TANK : UNIT.MCV;
+    case STRUCTURE.HIGH_TECH:
+      return s.o.houseID === HOUSE.HARKONNEN ? UNIT.CARRYALL : UNIT.ORNITHOPTER;
+    case STRUCTURE.WOR_TROOPER:
+      return UNIT.TROOPERS;
+    case STRUCTURE.BARRACKS:
+      return s.o.houseID === HOUSE.ORDOS && level === 1 ? UNIT.TROOPER : UNIT.INFANTRY;
+    default:
+      return UNIT.CARRYALL;
+  }
+}
+
 export class Game {
   /** номер миссии 1..9 и дом сценария */
   mission = 1;
@@ -52,6 +74,11 @@ export class Game {
   /** выбранное здание (клетка g_selectionPosition) */
   selectedStructure: Structure | null = null;
   private levelEndTimer = 0;
+  /** космопорт MD: юниты сценария (CHOAM) по возрастанию номера — в окне и при нулевом запасе */
+  starportListed: number[] = [];
+  /** цены космопорта MD и кадр, до которого они действуют ($FFBF88, 18000 кадров) */
+  private starportPriceList: number[] = [];
+  private starportPriceUntil = -1;
 
   constructor(private rom: DuneRom) {
     if (!tablesReady) {
@@ -206,6 +233,8 @@ export class Game {
       teamCreate(t.house, TEAM_ACTION_CHAR[t.aiMode] ?? 0, MOVEMENT_CHAR[t.movement] ?? MOVEMENT.FOOT, t.min, t.max);
     }
     for (const [type, count] of sc.choam) if (type < UNIT.MAX) G.starportAvailable[type] = count;
+    this.starportListed = [...sc.choam.keys()].filter((t) => t < UNIT.MAX).sort((a, b) => a - b);
+    this.starportPriceUntil = -1;
     for (const b of sc.bloom) {
       const p = packXY(b.x, b.y);
       G.map[p].groundTileID = G.bloomTileID;
@@ -483,12 +512,19 @@ export class Game {
     return out;
   }
 
-  /** Цены космопорта: случайные, как в окне заказа оригинала (GUI_FactoryWindow_CalculateStarportPrice). */
+  /**
+   * Цены космопорта MD ($008F14, формула $027334): цена постройки × (60 + random(0..50) + random(0..50)) / 100.
+   * Пересчитываются, когда истёк таймер $FFBF88 (18000 кадров), иначе окно показывает прежние.
+   */
   starportPrices(): number[] {
-    return unitInfo.map((ui) => {
-      const c = ui.o.buildCredits;
-      return Math.min(idiv(c, 10) * 4 + idiv(c, 10) * (randomRange(0, 6) + randomRange(0, 6)), 999);
-    });
+    if (this.starportPriceUntil < 0 || G.timerGame >= this.starportPriceUntil) {
+      this.starportPriceList = unitInfo.map((ui) => {
+        const f = randomRange(0, 50) + randomRange(0, 50) + 60;
+        return Math.floor((ui.o.buildCredits * f) / 100);
+      });
+      this.starportPriceUntil = G.timerGame + 18000;
+    }
+    return this.starportPriceList;
   }
 
   /** Купить юнит в космопорте: деньги списываются сразу, доставка — фрегатом. */
@@ -579,6 +615,25 @@ export class Game {
   upgradeInfo(s: Structure): { possible: boolean; cost: number } {
     const si = structureInfo[s.o.type];
     return { possible: s.upgradeTimeLeft !== 0 && !!si.o.flags.factory, cost: idiv(si.o.buildCredits, 2) };
+  }
+
+  /**
+   * Пункт «*УЛУЧШИТЬ*» в окне здания MD ($00FAF4…$00FC26): у заводов (не космопорта), если здание можно
+   * улучшить и у дома построен радар; цена — половина стоимости здания. `unlocks` — что улучшение откроет
+   * (его картинку показывает окно): у двора ракетная башня, у заводов юнитов — по таблице $010DA2.
+   */
+  upgradeEntry(s: Structure): { unlocks: number; cost: number } | null {
+    const si = structureInfo[s.o.type];
+    if (!si.o.flags.factory || s.o.type === STRUCTURE.STARPORT) return null;
+    if (!structureIsUpgradable(s)) return null;
+    const h = G.houses[s.o.houseID];
+    if (!(h.structuresBuilt & (1 << STRUCTURE.OUTPOST))) return null;
+    const cost = Math.trunc(si.o.buildCredits / 2);
+    if (s.o.type === STRUCTURE.CONSTRUCTION_YARD) return { unlocks: STRUCTURE.ROCKET_TURRET, cost };
+    const unlocks = upgradeUnlocksUnit(s);
+    // $00FC1E: только если этот юнит ещё не в списке
+    if (this.buildOptions(s).some((o) => o.type === unlocks)) return null;
+    return { unlocks, cost };
   }
 
   buildable(s: Structure): number {

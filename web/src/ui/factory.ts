@@ -5,10 +5,11 @@
  * стройку и возвращает на карту, по готовому зданию — постановка. Пока окно открыто, игра стоит.
  * В режиме мыши вместо него остаётся правое меню (ui/command.ts).
  */
-import { STRUCTURE, type Structure } from "../engine/core.ts";
+import { G, STRUCTURE, UNIT, type Structure } from "../engine/core.ts";
+import { unitAirSlotFree } from "../engine/structure.ts";
 import type { Game } from "../engine/game.ts";
 import { layoutSize, structureInfo, unitInfo } from "../engine/tables.ts";
-import { SCREEN_H, SCREEN_W, type ScreenGfx } from "../gfx/screens.ts";
+import { decodeText, SCREEN_H, SCREEN_W, type ScreenGfx } from "../gfx/screens.ts";
 import type { Button } from "../input/pad.ts";
 import type { DuneRom, Picture } from "../rom/dune.ts";
 
@@ -48,7 +49,14 @@ interface Order {
   type: number;
   available: number;
   cost: number;
+  /** пункт «*УЛУЧШИТЬ*»: что улучшение откроет (тип здания у двора, юнита у заводов) */
+  upgrade?: number;
 }
+
+/** Иконка пункта улучшения (гаечный ключ): номер 19 в таблице зданий, 27 — юнитов (обе $06E890). */
+const UPGRADE_ICON = { structures: 19, units: 27 };
+/** Имя пункта улучшения — строка ROM, которую копирует код окна ($0276FA). */
+const UPGRADE_NAME = 0x0276be;
 
 export class FactoryWindow {
   readonly root: HTMLElement;
@@ -90,6 +98,10 @@ export class FactoryWindow {
     return !!this.s && this.s.o.type !== STRUCTURE.CONSTRUCTION_YARD;
   }
 
+  private get starport(): boolean {
+    return this.s?.o.type === STRUCTURE.STARPORT;
+  }
+
   open(s: Structure): void {
     this.s = s;
     this.cursor = -3;
@@ -108,9 +120,18 @@ export class FactoryWindow {
 
   private refresh(): void {
     const s = this.s;
-    const orders = s && structureInfo[s.o.type].o.flags.factory && s.o.type !== STRUCTURE.STARPORT ? this.host.game().buildOptions(s) : [];
+    if (s && this.starport) {
+      // $008F2E: юниты CHOAM по возрастанию номера (и с нулевым запасом), цены — $027334
+      const prices = this.host.game().starportPrices();
+      this.orders = this.host.game().starportListed.map((type) => ({ type, available: G.starportAvailable[type], cost: prices[type] }));
+      return;
+    }
+    const orders: Order[] = s && structureInfo[s.o.type].o.flags.factory ? this.host.game().buildOptions(s) : [];
     // в окне оригинала порядок обратный правому меню: по возрастанию приоритета (плиты, затем ветряк)
     this.orders = orders.reverse();
+    // улучшение сортируется с приоритетом $7F ($028E44) — последним
+    const up = s ? this.host.game().upgradeEntry(s) : null;
+    if (up) this.orders.push({ type: -1, available: 1, cost: up.cost, upgrade: up.unlocks });
   }
 
   handlePad(b: Button): boolean {
@@ -150,6 +171,20 @@ export class FactoryWindow {
     }
     const order = this.orders[this.cursor];
     if (!order || order.available < 0) return;
+    if (this.starport) {
+      // $028BB4: цена не больше кредитов, запас есть, для авиации — свободное место ($FFC728); покупка — и на карту
+      if (order.cost > this.host.credits() || G.starportAvailable[order.type] <= 0) return;
+      if ((order.type === UNIT.CARRYALL || order.type === UNIT.ORNITHOPTER) && !unitAirSlotFree()) return;
+      if (game.starportBuy(s, order.type, order.cost)) this.close();
+      return;
+    }
+    if (order.upgrade !== undefined) {
+      // $0290D4: уже улучшается — ничего; иначе улучшение и назад на карту
+      if (s.o.flags.upgrading) return;
+      game.upgrade(s);
+      this.close();
+      return;
+    }
     const prod = game.production(s);
     if (prod && prod.type === order.type) {
       // готовое здание — сразу постановка; заказ в работе — просто назад на карту
@@ -194,7 +229,7 @@ export class FactoryWindow {
     const units = this.units;
     g.fillStyle = "#000";
     g.fillRect(0, 0, SCREEN_W, SCREEN_H);
-    g.drawImage(gfx.factoryBackground(), 0, 0);
+    g.drawImage(this.starport ? gfx.starportBackground() : gfx.factoryBackground(), 0, 0);
 
     // кнопки: светлая — можно нажать, тёмная — нечего
     const prod = game.production(s);
@@ -210,7 +245,7 @@ export class FactoryWindow {
     this.orders.forEach((o, i) => {
       const row = Math.floor(i / COLUMNS) - firstRow;
       if (row < 0 || row >= ROWS_VISIBLE) return;
-      const icon = gfx.factoryIcon(units, o.type);
+      const icon = gfx.factoryIcon(units, o.upgrade !== undefined ? (units ? UPGRADE_ICON.units : UPGRADE_ICON.structures) : o.type);
       const x = GRID_X + (i % COLUMNS) * CELL_W;
       const y = GRID_Y + row * CELL_H;
       if (icon) g.drawImage(icon, x, y);
@@ -229,14 +264,24 @@ export class FactoryWindow {
     if ((this.frame >> 3) % 4 !== 3) {
       const cx = this.cursor < 0 ? GRID_X + (this.cursor + 3) * CELL_W : GRID_X + (this.cursor % COLUMNS) * CELL_W;
       const cy = this.cursor < 0 ? TAB_Y : GRID_Y + (Math.floor(this.cursor / COLUMNS) - firstRow) * CELL_H;
-      g.drawImage(gfx.factoryCursor(), cx, cy);
+      g.drawImage(this.starport ? gfx.starportCursor() : gfx.factoryCursor(), cx, cy);
     }
 
     // правая часть: под курсором заказ — его картинка и числа, на кнопках — само здание без чисел
     const order = this.cursor >= 0 ? this.orders[this.cursor] : null;
-    const pic = order ? this.picture(units, order.type) : this.picture(false, s.o.type);
+    if (order?.upgrade !== undefined) {
+      // картинка того, что откроет улучшение; числа: цена, 0, 0
+      const pic = this.picture(units, order.upgrade);
+      if (pic) g.drawImage(pic, PICTURE.x, PICTURE.y);
+      g.drawImage(gfx.plainText(decodeText(this.rom.bytes, UPGRADE_NAME, 12).padEnd(12)), NAME.x, NAME.y);
+      [order.cost, 0, 0].forEach((v, i) => {
+        const t = gfx.plainText(String(v));
+        g.drawImage(t, NUMBERS_RIGHT - t.width, NUMBER_ROWS[i]);
+      });
+    }
+    const pic = order ? (order.upgrade !== undefined ? null : this.picture(units, order.type)) : this.picture(false, s.o.type);
     if (pic) g.drawImage(pic, PICTURE.x, PICTURE.y);
-    if (order) {
+    if (order && order.upgrade === undefined) {
       if (!units) {
         const layout = structureInfo[order.type].layout;
         const size = layoutSize[layout];
@@ -247,13 +292,16 @@ export class FactoryWindow {
       const pad = Math.floor((NAME.chars - name.length) / 2);
       g.drawImage(gfx.plainText(" ".repeat(Math.max(0, pad)) + name), NAME.x, NAME.y);
       const oi = units ? unitInfo[order.type].o : structureInfo[order.type].o;
-      const power = units ? 0 : Math.abs(structureInfo[order.type].powerUsage);
-      [order.cost, power, oi.hitpoints].forEach((v, i) => {
+      // у юнитов средняя строка — урон (+$54 описания), у зданий — энергия
+      const middle = units ? unitInfo[order.type].damage : Math.abs(structureInfo[order.type].powerUsage);
+      [order.cost, middle, oi.hitpoints].forEach((v, i) => {
         const t = gfx.plainText(String(v));
         g.drawImage(t, NUMBERS_RIGHT - t.width, NUMBER_ROWS[i]);
       });
     }
-    STAT_ICON_Y.forEach((y, i) => g.drawImage(gfx.statIcon(i), STAT_ICON_X, y));
+    // патрон — у заводов юнитов и космопорта; у ремонта, дворца и прочих — молния, как у двора
+    const ammo = units && (this.starport || !!structureInfo[s.o.type].o.flags.factory);
+    STAT_ICON_Y.forEach((y, i) => g.drawImage(i === 1 && ammo ? gfx.ammoIcon() : gfx.statIcon(i), STAT_ICON_X, y));
 
     // кредиты вверху справа
     const credits = gfx.plainText(String(this.host.credits()));
