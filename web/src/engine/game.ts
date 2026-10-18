@@ -494,7 +494,12 @@ export class Game {
   buildOptions(s: Structure): { type: number; available: number; cost: number; time: number }[] {
     const si = structureInfo[s.o.type];
     if (!si.o.flags.factory) return [];
+    // structureBuildObject сначала снимает ремонт — для подсчёта списка его надо сохранить
+    const { repairing, onHold } = s.o.flags;
+    s.o.flags.repairing = false; // без сообщения «ремонт прекращён»
     structureBuildObject(s, 0xffff);
+    s.o.flags.repairing = repairing;
+    s.o.flags.onHold = onHold;
     const out: { type: number; available: number; cost: number; time: number }[] = [];
     if (s.o.type === STRUCTURE.CONSTRUCTION_YARD) {
       for (let i = 0; i < STRUCTURE.MAX; i++) {
@@ -604,6 +609,33 @@ export class Game {
   cancelBuild(s: Structure): void {
     structureCancelBuild(s);
     structureSetState(s, STATE.IDLE);
+  }
+
+  /**
+   * СТОП окна здания MD ($02915E → $0103AA): отменить всё — заказ (потраченное возвращается), улучшение
+   * (тоже с возвратом, следующее начнётся с нуля) и ремонт.
+   */
+  stopAll(s: Structure): void {
+    const h = G.houses[s.o.houseID];
+    if (s.o.linkedID !== 0xff) {
+      // $0103AA: заказ убирается, дому возвращается ровно потраченное ($5A)
+      const before = h.credits;
+      structureCancelBuild(s);
+      h.credits = before + s.spent;
+      structureSetState(s, STATE.IDLE);
+    } else if (s.o.flags.upgrading) {
+      h.credits += s.spent;
+      s.o.flags.upgrading = false;
+      s.upgradeTimeLeft = 100;
+    }
+    s.spent = 0;
+    s.o.flags.repairing = false;
+    s.o.flags.onHold = false;
+  }
+
+  /** РЕМОНТ окна здания MD ($02912C): только включает ремонт, и только у повреждённого здания. */
+  startRepair(s: Structure): void {
+    if (s.o.hitpoints < structureInfo[s.o.type].o.hitpoints && !s.o.flags.repairing) structureSetRepairingState(s, 1);
   }
 
   palaceSpecial(s: Structure): void {

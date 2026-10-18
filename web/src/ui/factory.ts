@@ -5,7 +5,7 @@
  * стройку и возвращает на карту, по готовому зданию — постановка. Пока окно открыто, игра стоит.
  * В режиме мыши вместо него остаётся правое меню (ui/command.ts).
  */
-import { G, STRUCTURE, UNIT, type Structure } from "../engine/core.ts";
+import { G, STATE, STRUCTURE, UNIT, type Structure } from "../engine/core.ts";
 import { unitAirSlotFree } from "../engine/structure.ts";
 import type { Game } from "../engine/game.ts";
 import { layoutSize, structureInfo, unitInfo } from "../engine/tables.ts";
@@ -189,11 +189,11 @@ export class FactoryWindow {
     const game = this.host.game();
     if (this.cursor === -3) return this.close();
     if (this.cursor === -2) {
-      if (s.o.hitpoints < structureInfo[s.o.type].o.hitpoints) game.toggleRepair(s);
+      game.startRepair(s);
       return;
     }
     if (this.cursor === -1) {
-      if (game.production(s)) game.holdOrResume(s);
+      game.stopAll(s);
       return;
     }
     const order = this.orders[this.cursor];
@@ -205,6 +205,8 @@ export class FactoryWindow {
       if (game.starportBuy(s, order.type, order.cost)) this.close();
       return;
     }
+    // $029060: выбор пункта снимает ремонт
+    if (s.o.flags.repairing) s.o.flags.repairing = false;
     if (order.upgrade !== undefined) {
       // $0290D4: уже улучшается — ничего; иначе улучшение и назад на карту
       if (s.o.flags.upgrading) return;
@@ -270,10 +272,12 @@ export class FactoryWindow {
       g.drawImage(gfx.windowLight(this.starport ? "starport" : "factory", l.table, l.words, st.frame), l.col * 8, l.row * 8);
     });
 
-    // кнопки: светлая — можно нажать, тёмная — нечего
+    // кнопки ($028F8C, $029042): РЕМОНТ светлая у повреждённого, СТОП — если идёт ремонт, стройка,
+    // улучшение или (у двора) готовый заказ ждёт постановки
     const prod = game.production(s);
     const damaged = s.o.hitpoints < structureInfo[s.o.type].o.hitpoints;
-    const enabled = [true, damaged, !!prod];
+    const busy = s.o.linkedID !== 0xff && (s.state === STATE.BUSY || (!units && s.state === STATE.READY));
+    const enabled = [true, damaged, s.o.flags.repairing || s.o.flags.upgrading || busy];
     TABS.forEach((t, i) => {
       const icon = gfx.factoryIcon(units, enabled[i] ? t.on : t.off);
       if (icon) g.drawImage(icon, GRID_X + i * CELL_W, TAB_Y);

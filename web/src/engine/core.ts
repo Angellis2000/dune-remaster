@@ -198,6 +198,8 @@ export interface Structure {
   buildCostRemainder: number;
   state: number; // int16
   hitpointsMax: number;
+  /** MD $5A: сколько кредитов уже ушло на текущий заказ или улучшение — возвращается при отмене ($0103AA) */
+  spent: number;
   /** MD $4E дворца: пауза после спецоружия в тиках дворца (ракета 300, фримены 180, диверсант 240) */
   specialWait: number;
 }
@@ -270,7 +272,7 @@ export function newUnit(): Unit {
 }
 
 export function newStructure(): Structure {
-  return { o: newObject(), creatorHouseID: 0, rotationSpriteDiff: 0, objectType: 0, upgradeLevel: 0, upgradeTimeLeft: 0, countDown: 0, buildCostRemainder: 0, state: 0, hitpointsMax: 0, specialWait: 0 };
+  return { o: newObject(), creatorHouseID: 0, rotationSpriteDiff: 0, objectType: 0, upgradeLevel: 0, upgradeTimeLeft: 0, countDown: 0, buildCostRemainder: 0, state: 0, hitpointsMax: 0, specialWait: 0, spent: 0 };
 }
 
 export function newHouse(): House {

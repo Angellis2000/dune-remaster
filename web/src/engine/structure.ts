@@ -93,6 +93,7 @@ export function gameLoopStructure(): void {
         const upgradeCost = idiv(si.o.buildCredits, 40);
         if (upgradeCost <= h.credits) {
           h.credits -= upgradeCost;
+          s.spent += upgradeCost;
           if (s.upgradeTimeLeft > 5) {
             s.upgradeTimeLeft -= 5;
           } else {
@@ -135,6 +136,7 @@ export function gameLoopStructure(): void {
           if (idiv(buildCost, 256) <= h.credits) {
             s.buildCostRemainder = buildCost & 0xff;
             h.credits -= idiv(buildCost, 256);
+            s.spent += idiv(buildCost, 256);
             if (buildSpeed < s.countDown) {
               s.countDown -= buildSpeed;
             } else {
@@ -833,6 +835,7 @@ export function structureBuildObject(s: Structure | null, objectType: number): b
   if (o) {
     s.o.linkedID = o.index & 0xff;
     s.objectType = objectType;
+    s.spent = 0;
     s.countDown = oi.buildTime << 8;
     structureSetState(s, STATE.BUSY);
     if (s.o.houseID !== G.playerHouseID) return true;
@@ -856,6 +859,7 @@ export function structureSetUpgradingState(s: Structure | null, state: number): 
   }
   if (state === 0 || s.o.flags.upgrading || s.upgradeTimeLeft === 0) return ret;
   if (s.o.houseID === G.playerHouseID) G.onMessage(msg.upgradingStarts, 2);
+  s.spent = 0;
   s.o.flags.onHold = true;
   s.o.flags.repairing = false;
   s.o.flags.upgrading = true;
