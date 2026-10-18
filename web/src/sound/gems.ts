@@ -27,6 +27,8 @@ export const GEMS = {
 
 const Z80_CLOCK = 3579545;
 const FM_RATE = 7670453 / 144;
+/** время на разбор инициализации GEMS (0,1 с) */
+const BOOT_SAMPLES = 5300;
 /** тактов Z80 на кадр NTSC: 262 строки по 228 */
 const FRAME_CYCLES = 262 * 228;
 
@@ -36,6 +38,9 @@ export class SoundMachine implements Z80Bus {
   private ym = new YM2612();
   private psg = new PSG();
   private bank = 0;
+  /** отсчётов до конца инициализации драйвера и команды, ждущие её */
+  private booting = 0;
+  private held: number[][] = [];
   /** такты ожидания шины 68000 при чтении окна ROM (в среднем 3 на обращение, как в Genesis Plus GX) */
   private waits = 0;
   private cycleDebt = 0;
@@ -64,6 +69,7 @@ export class SoundMachine implements Z80Bus {
     this.push(0xff);
     this.push(GEMS.INIT);
     for (const a of [b.patches, b.envelopes, b.sequences, b.samples]) for (const x of addr(a)) this.push(x);
+    this.booting = BOOT_SAMPLES;
   }
 
   /** Байт в очередь ($0015EA). */
@@ -73,8 +79,15 @@ export class SoundMachine implements Z80Bus {
     this.ram[GEMS_ROM.writeIndex] = (i + 1) & 0x3f;
   }
 
-  /** Команда с аргументами ($0015DE + $0015EA). */
+  /**
+   * Команда с аргументами ($0015DE + $0015EA). Пока драйвер разбирает инициализацию, команды копятся:
+   * в оригинале до первой команды проходят кадры.
+   */
   command(cmd: number, ...args: number[]): void {
+    if (this.booting > 0) {
+      this.held.push([cmd, ...args]);
+      return;
+    }
     this.push(0xff);
     this.push(cmd);
     for (const a of args) this.push(a);
@@ -107,6 +120,14 @@ export class SoundMachine implements Z80Bus {
 
   /** Один отсчёт синтезатора: Z80 на свою долю тактов, затем такт YM2612. */
   private nativeSample(): void {
+    if (this.booting > 0 && --this.booting === 0) {
+      // в оригинале при включении всегда запускается секвенция 0 (музыка заставки, $017418); без этого
+      // драйвер не берёт каналы под звуки — повторяем запуск и сразу стоп
+      this.command(GEMS.START, 0);
+      this.command(GEMS.STOP, 0);
+      for (const [cmd, ...args] of this.held) this.command(cmd, ...args);
+      this.held = [];
+    }
     this.cycleDebt += Z80_CLOCK / FM_RATE;
     while (this.cycleDebt > 0) {
       if (this.intPending > 0) {
