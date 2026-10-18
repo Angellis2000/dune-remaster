@@ -163,6 +163,7 @@ export const MD = {
   iconLandscape: 0x00581c, // тип ландшафта по номеру иконки (358 байт, FF — нет)
   animationRubble: 0x06ae30, // g_table_animation_structure[0]
   animationBuild: 0x06ae36, // g_table_animation_structure[1]
+  houseInfo: 0x06c75c, // 6 записей по 30 байт, раскладка как у PC (без имени)
 } as const;
 
 /** Флаги ObjectInfo в MD: тот же порядок, что у PC, но с лишним битом 3. */
@@ -277,6 +278,20 @@ export function applyRomTables(rom: Uint8Array): void {
     li.canBecomeSpice = r16(p + 14) ? 1 : 0;
     li.craterType = r16(p + 16);
     li.radarColour = r16(p + 18);
+  }
+
+  // дома: стойкость, износ, цвет радара, время спецоружия и доставки, спецоружие, мелодии
+  for (let h = 0; h < houseInfo.length; h++) {
+    const p = MD.houseInfo + h * 30;
+    const hi = houseInfo[h];
+    hi.toughness = r16(p + 2);
+    hi.degradingChance = r16(p + 4);
+    // MD прибавляет 1 к износу при ударе ($00BEB2), в таблице хранится на 1 меньше, чем у PC
+    hi.degradingAmount = r16(p + 6) + 1;
+    hi.minimapColor = r16(p + 8);
+    hi.specialCountDown = r16(p + 10);
+    hi.starportDeliveryTime = r16(p + 12);
+    hi.specialWeapon = r16(p + 16);
   }
 
   iconLandscape.fill(-1);

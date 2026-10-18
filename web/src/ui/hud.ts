@@ -115,11 +115,11 @@ export function hudState(rom: DuneRom, s: Structure | null, u: Unit | null): Hud
       return out;
     }
     if (t === STRUCTURE.PALACE) {
-      // знак у дворца ставит поле $4E (не опознано), бит 8 здесь не показывается
-      out.prohibited = false;
+      // $029356: знак, пока идёт пауза после спецоружия ($4E), полосы в это время нет
+      out.prohibited = s.specialWait !== 0;
       out.order = s.o.houseID === HOUSE.ATREIDES ? HUD_ROM.fremenTroopersFrame : frameOf(uInfo(s.objectType & 0xff));
       const total = houseInfo[s.o.houseID].specialCountDown;
-      if (s.countDown !== 0) out.bar = { value: total - s.countDown, max: total, color: 7, y: BAR_LOW };
+      if (s.specialWait === 0 && s.countDown !== 0) out.bar = { value: total - s.countDown, max: total, color: 7, y: BAR_LOW };
       return out;
     }
     const h = G.houses[s.o.houseID];

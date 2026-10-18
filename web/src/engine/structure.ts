@@ -81,7 +81,9 @@ export function gameLoopStructure(): void {
     G.scriptCurrentTeam = null;
 
     if (tickPalace && s.o.type === STRUCTURE.PALACE) {
-      if (s.countDown !== 0) s.countDown--;
+      // MD $00BDEA: сначала пауза после спецоружия, отсчёт стоит и при бите 8 (предел юнитов)
+      if (s.specialWait !== 0) s.specialWait--;
+      else if (s.countDown !== 0 && !(s.o.houseID === G.playerHouseID && structureLimitReached(s))) s.countDown--;
       if (s.countDown === 0 && !h.flags.human && h.flags.isAIActive) structureActivateSpecial(s);
     }
     if (tickDegrade && s.o.flags.degrades && s.o.hitpoints > idiv(si.o.hitpoints, 2)) structureDamage(s, hi.degradingAmount, 0);
@@ -430,6 +432,7 @@ export function structureActivateSpecial(s: Structure | null): void {
       G.unitHouseMissile = u;
       if (!u) break;
       s.countDown = houseInfo[s.o.houseID].specialCountDown;
+      s.specialWait = 300; // $022D98
       if (!h.flags.human) {
         const find = findAll();
         for (;;) {
@@ -463,6 +466,7 @@ export function structureActivateSpecial(s: Structure | null): void {
         unitSetAction(u, ACTION.HUNT);
       }
       s.countDown = houseInfo[s.o.houseID].specialCountDown;
+      s.specialWait = 180; // $02301C
       break;
     }
     case HOUSE_WEAPON.SABOTEUR: {
@@ -477,6 +481,7 @@ export function structureActivateSpecial(s: Structure | null): void {
       if (!u) return;
       unitSetAction(u, ACTION.SABOTAGE);
       s.countDown = houseInfo[s.o.houseID].specialCountDown;
+      s.specialWait = 240; // $0230B4
       break;
     }
   }
