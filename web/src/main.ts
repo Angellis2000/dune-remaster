@@ -24,6 +24,7 @@ import { EndPicture, Flyby, FLYBY_FRAMES } from "./ui/endgame.ts";
 import { ScoreScreen, type MissionStats } from "./ui/score.ts";
 import { MUSIC, Sound } from "./sound/sound.ts";
 import { TutorialScreen } from "./ui/tutorial.ts";
+import { FinaleScreen } from "./ui/finale.ts";
 import { Hud, hudState } from "./ui/hud.ts";
 import { SettingsMenu, type HouseCode } from "./ui/settings.ts";
 import { MapView } from "./view/mapview.ts";
@@ -265,10 +266,8 @@ async function startGame(rom: DuneRom): Promise<void> {
           scoreScreen.open(stats, () => {
             briefingMusic = true;
             if (m < 9) briefing(house, m + 1);
-            else {
-              endBanner.textContent = "Арракис ваш! Финальные титры пока не сделаны.";
-              endBanner.hidden = false;
-            }
+            // $022BB6: после 9-й миссии — финал и титры, затем главное меню
+            else finale.open(world.player, () => frontend.openTitle());
           }),
         );
       else mentat.open({ house, level: m - 1, text: mentat.text(house, m, 2), buttons: "key" }, () => scoreScreen.open(stats, () => ((briefingMusic = true), briefing(house, m))));
@@ -332,10 +331,16 @@ async function startGame(rom: DuneRom): Promise<void> {
         world.game.cheat(r.cheat);
         world.sync();
         view.invalidate();
-      } else if (r.cheat === "DUNEFINALE") G.onMessage("Финальные титры пока не сделаны");
+      } else if (r.cheat === "DUNEFINALE") {
+        // код DUNEFINALE — финал за дом текущей миссии
+        settings.close();
+        paused = true;
+        inMission = false;
+        finale.open(world.player, () => frontend.openTitle());
+      }
     },
     toggled: (open) => {
-      paused = open || frontend.isOpen || mentat.isOpen || endPicture.isOpen || scoreScreen.isOpen;
+      paused = open || frontend.isOpen || mentat.isOpen || endPicture.isOpen || scoreScreen.isOpen || finale.isOpen;
       // $020EF4: меню в игре — мелодия стоп и звук 6; по выходу — та же или новая боевая
       if (inMission && !optionsFromTitle) {
         if (open) {
@@ -388,7 +393,8 @@ async function startGame(rom: DuneRom): Promise<void> {
   });
   stage.append(frontend.root);
   const tutorial = new TutorialScreen(rom, sound);
-  stage.append(tutorial.root);
+  const finale = new FinaleScreen(rom, sound);
+  stage.append(tutorial.root, finale.root);
   // ментат: брифинг ($01F3EA) — ПРИНЯТЬ начинает миссию, СОВЕТ — совет на том же экране и снова кнопки
   const mentat = new MentatScreen(rom, sound);
   stage.append(mentat.root);
@@ -698,7 +704,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     if (!assets.root.hidden) return;
     lastButton = BUTTON_LABEL[b];
     if (ending) return;
-    if (tutorial.handlePad(b) || scoreScreen.handlePad(b) || endPicture.handlePad(b) || mentat.handlePad(b) || frontend.handlePad(b) || settings.handlePad(b) || factory.handlePad(b)) {
+    if (finale.handlePad(b) || tutorial.handlePad(b) || scoreScreen.handlePad(b) || endPicture.handlePad(b) || mentat.handlePad(b) || frontend.handlePad(b) || settings.handlePad(b) || factory.handlePad(b)) {
       updateHud();
       return;
     }
@@ -780,7 +786,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   }
   canvas.focus();
   // для автотестов: ?debug открывает мир и вид из консоли
-  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat, endPicture, scoreScreen, frontend, sound, tutorial } });
+  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat, endPicture, scoreScreen, frontend, sound, tutorial, finale } });
 }
 
 showRomScreen();

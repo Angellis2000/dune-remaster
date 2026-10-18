@@ -28,6 +28,19 @@ export const TUTORIAL_ROM = {
 
 type Step = Generator<void, boolean | void, void>;
 
+/** Описание загрузки тайлов ($000CD8): слово «число тайлов» (бит 15 — LCW), длинное слово «откуда»; 0 — конец. */
+export function loadTileList(b: Uint8Array, vram: Uint8Array, desc: number, dst: number): void {
+  for (let p = desc; ; p += 6) {
+    const n = readU16(b, p);
+    if (!n) break;
+    const src = readU32(b, p + 2) & 0xffffff;
+    const count = n & 0x7fff;
+    const data = n & 0x8000 ? lcwDecompress(b, src).data : b.subarray(src, src + count * 32);
+    vram.set(data.subarray(0, Math.min(count * 32, 0x10000 - dst)), dst);
+    dst += count * 32;
+  }
+}
+
 const FADE_FRAMES = 5;
 
 function stepColor(c: number, target: number): number {
@@ -148,18 +161,8 @@ export class TutorialScreen {
   }
 
   // ---------------------------------------------------------------- ROM
-  /** Описание загрузки тайлов ($000CD8): слово «число тайлов» (бит 15 — LCW), длинное слово «откуда». */
   private loadTiles(desc: number, dst: number): void {
-    const b = this.rom.bytes;
-    for (let p = desc; ; p += 6) {
-      const n = readU16(b, p);
-      if (!n) break;
-      const src = readU32(b, p + 2) & 0xffffff;
-      const count = n & 0x7fff;
-      const data = n & 0x8000 ? lcwDecompress(b, src).data : b.subarray(src, src + count * 32);
-      this.vram.set(data.subarray(0, Math.min(count * 32, 0x10000 - dst)), dst);
-      dst += count * 32;
-    }
+    loadTileList(this.rom.bytes, this.vram, desc, dst);
   }
 
   /** $04166A: набор — тайлы с VRAM 0 и потоки кадров плоскостей A и B. */
