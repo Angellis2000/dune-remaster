@@ -106,7 +106,7 @@ export class SettingsMenu {
     private host: SettingsHost,
   ) {
     this.root = document.createElement("section");
-    this.root.className = "settings";
+    this.root.className = "settings options";
     this.root.setAttribute("role", "dialog");
     this.root.setAttribute("aria-label", "Настройки");
     this.root.hidden = true;
