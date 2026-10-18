@@ -1,6 +1,7 @@
 import css from "./style.css?inline";
 import { ACTION, G, SELECTION, STRUCTURE } from "./engine/core.ts";
 import { layoutSize, structureInfo } from "./engine/tables.ts";
+import { structureLimitReached } from "./engine/structure.ts";
 import { unitSelect } from "./engine/unit.ts";
 import { World, type Structure as WorldStructure, type Unit as WorldUnit } from "./game/world.ts";
 import { buildCursors } from "./gfx/cursors.ts";
@@ -11,6 +12,7 @@ import { ScreenGfx } from "./gfx/screens.ts";
 import { SpriteSet } from "./gfx/sprites.ts";
 import { BUTTON_LABEL, Pad } from "./input/pad.ts";
 import { CELL_PX, DuneRom, ROM, RomError } from "./rom/dune.ts";
+import { readU32 } from "./rom/md.ts";
 import { AssetViewer } from "./ui/assets.ts";
 import { CommandPanel } from "./ui/command.ts";
 import { Minimap } from "./ui/minimap.ts";
@@ -122,7 +124,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   const minimap = new Minimap(view, icons);
   stage.append(minimap.canvas);
   const hud = new Hud(rom);
-  stage.append(hud.canvas);
+  stage.append(hud.canvas, hud.warning);
   const world = new World(rom);
   view.veiledIcon = G.veiledTileID;
   const panel = new CommandPanel(rom, world, {
@@ -409,6 +411,11 @@ async function startGame(rom: DuneRom): Promise<void> {
     if (messageTimer > 0 && --messageTimer === 0) message.hidden = true;
     // значки над своими зданиями, как $00DC9C: у двора и дворца «OK», иначе при ремонте — молоток
     view.structureIcons = [];
+    // спрайт значка мигает ($0010B0): виден `shown` кадров, затем один кадр скрыт (счётчик +4/+5 спрайта)
+    const icon = (s: WorldStructure, def: number, shown: number) => {
+      if (frame % (shown + 1) !== shown) view.structureIcons.push({ s, def });
+    };
+    const fromTable = (table: number, index: number) => readU32(rom.bytes, table + index * 4);
     for (const s of world.structures) {
       if (s.house !== world.player || s.ref.o.hitpoints === 0) continue;
       if (s.type === STRUCTURE.CONSTRUCTION_YARD) {
@@ -424,12 +431,17 @@ async function startGame(rom: DuneRom): Promise<void> {
           // бит 15 слова $6: пока двор выбран для постановки своего заказа, «OK» нет
           ok = !(G.selectionType === SELECTION.PLACE && world.game.selectedStructure === s.ref);
         }
-        if (ok) view.structureIcons.push({ s, table: ROM.statusIcons.ok, index: 3 });
-        else if (s.ref.o.flags.repairing) view.structureIcons.push({ s, table: ROM.statusIcons.repair, index: 3 });
+        if (ok) icon(s, fromTable(ROM.statusIcons.ok, 3), 6);
+        else if (s.ref.o.flags.repairing) icon(s, fromTable(ROM.statusIcons.repair, 3), 7);
       } else if (s.type === STRUCTURE.PALACE) {
-        // $00DCFE: ракета готова ($56 = 0) и не ждёт цели ($FFDC4C); бит 8 слова $6 пока не опознан
-        if (s.ref.countDown === 0 && !G.unitHouseMissile) view.structureIcons.push({ s, table: ROM.statusIcons.ok, index: 6 });
-        else if (s.ref.o.flags.repairing) view.structureIcons.push({ s, table: ROM.statusIcons.repair, index: 6 });
+        // $00DCFE: спецоружие готово ($56 = 0), ракета не ждёт цели ($FFDC4C) и нет бита 8
+        // (у Атрейдесов — пул наземных юнитов полон, фрименам негде появиться)
+        if (s.ref.countDown === 0 && !G.unitHouseMissile && !structureLimitReached(s.ref)) icon(s, fromTable(ROM.statusIcons.ok, 6), 6);
+        else if (s.ref.o.flags.repairing) icon(s, fromTable(ROM.statusIcons.repair, 6), 7);
+      } else if (s.type === STRUCTURE.WINDTRAP) {
+        // $00DD6A: молния, пока потребление дома больше выработки
+        const h = G.houses[world.player];
+        if (h.powerUsage > h.powerProduction) icon(s, ROM.statusIcons.lightning, 3);
       }
     }
     if (G.selectionType === SELECTION.PLACE && G.structureActiveType !== 0xffff) {

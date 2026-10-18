@@ -8,6 +8,7 @@
  * вторая полоса $009866 ($F640), кредиты $00A5DA ($F6C0), счётчик кредитов $011F38.
  */
 import { G, HOUSE, STATE, STRUCTURE, UNIT, type Structure, type Unit } from "../engine/core.ts";
+import { structureLimitReached, unitAirSlotFree } from "../engine/structure.ts";
 import { houseInfo, structureInfo } from "../engine/tables.ts";
 import { blitTile, readU16, readU32 } from "../rom/md.ts";
 import type { DuneRom } from "../rom/dune.ts";
@@ -22,6 +23,10 @@ export const HUD_ROM = {
   digits: 0x050ad4,
   /** цвет полосы прочности по номеру занятого тайла (0–3) */
   hpColors: 0x009742,
+  /** знак запрета 3×3 тайла поверх иконки заказа (спрайт $FFC750, описание $065B3A), строка палитры 0 */
+  prohibited: 0x065a1a,
+  /** надпись «НЕТ ДЕНЕГ»: 11 сырых тайлов в строку, строка палитры 0 (спрайт $FFC862, описание $065CAE в (112, 112)) */
+  noMoney: 0x065b4e,
   /** кадр иконки улучшения ($029536) и фрименов ($0297A2, $02993A) */
   upgradeFrame: 0x40,
   fremenTroopersFrame: 0x5e,
@@ -46,9 +51,11 @@ export interface HudState {
   hp: { value: number; max: number } | null;
   order: number | null;
   bar: Bar | null;
+  /** знак запрета над иконкой заказа ($009CF4) */
+  prohibited: boolean;
 }
 
-const EMPTY: HudState = { portrait: null, hp: null, order: null, bar: null };
+const EMPTY: HudState = { portrait: null, hp: null, order: null, bar: null, prohibited: false };
 
 /** Вторая полоса: под иконкой заказа ($06A7E2, y=112) или сразу под прочностью ($06A7E8, y=80). */
 const BAR_LOW = 112;
@@ -67,8 +74,13 @@ export function hudState(rom: DuneRom, s: Structure | null, u: Unit | null): Hud
   if (s && !u) {
     const t = s.o.type;
     const si = sInfo(t);
-    const out: HudState = { portrait: frameOf(si), hp: { value: s.o.hitpoints, max: readU16(b, si + 0x10) }, order: null, bar: null };
+    const out: HudState = { portrait: frameOf(si), hp: { value: s.o.hitpoints, max: readU16(b, si + 0x10) }, order: null, bar: null, prohibited: false };
     if (s.o.houseID !== G.playerHouseID) return out;
+    // $0295DE: запрет — двор при пределе построек (кроме заказа плит и стен), остальные при бите 8,
+    // высокие технологии ещё и без места для авиации; у космопорта знака нет
+    const limit = structureLimitReached(s);
+    if (t === STRUCTURE.CONSTRUCTION_YARD) out.prohibited = limit && s.objectType !== STRUCTURE.SLAB_2x2 && s.objectType !== STRUCTURE.WALL;
+    else if (t !== STRUCTURE.STARPORT) out.prohibited = limit || (t === STRUCTURE.HIGH_TECH && !unitAirSlotFree());
     if (s.o.flags.upgrading) {
       out.order = HUD_ROM.upgradeFrame;
       out.bar = { value: 100 - s.upgradeTimeLeft, max: 100, color: 7, y: BAR_LOW };
@@ -103,6 +115,8 @@ export function hudState(rom: DuneRom, s: Structure | null, u: Unit | null): Hud
       return out;
     }
     if (t === STRUCTURE.PALACE) {
+      // знак у дворца ставит поле $4E (не опознано), бит 8 здесь не показывается
+      out.prohibited = false;
       out.order = s.o.houseID === HOUSE.ATREIDES ? HUD_ROM.fremenTroopersFrame : frameOf(uInfo(s.objectType & 0xff));
       const total = houseInfo[s.o.houseID].specialCountDown;
       if (s.countDown !== 0) out.bar = { value: total - s.countDown, max: total, color: 7, y: BAR_LOW };
@@ -131,7 +145,7 @@ export function hudState(rom: DuneRom, s: Structure | null, u: Unit | null): Hud
     // $029922: у фрименов свои картинки (кроме червя)
     const portrait = u.o.houseID === HOUSE.FREMEN && t !== UNIT.SANDWORM ? (t === UNIT.TROOPERS ? HUD_ROM.fremenTroopersFrame : HUD_ROM.fremenFrame) : frameOf(ui);
     if (u.o.hitpoints === 0) return EMPTY;
-    const out: HudState = { portrait, hp: { value: u.o.hitpoints, max: readU16(b, ui + 0x10) }, order: null, bar: null };
+    const out: HudState = { portrait, hp: { value: u.o.hitpoints, max: readU16(b, ui + 0x10) }, order: null, bar: null, prohibited: false };
     // $02998E: у харвестера — груз пряности из 100, полоса под прочностью
     if (t === UNIT.HARVESTER) out.bar = { value: u.amount, max: 100, color: 3, y: BAR_HIGH };
     return out;
@@ -174,6 +188,58 @@ export function barPixels(p: number, color: number): Uint8Array {
  * Счётчик кредитов $011F38 (режим 0): показанное число догоняет кредиты дома
  * шагом до 16 в кадр (сдвиг копится по 1/8), как в оригинале. Звуки щелчков (0x34/0x35) — пока без звука.
  */
+/**
+ * Надпись «НЕТ ДЕНЕГ» ($0099AC): зовётся счётчиком кредитов, пока показано меньше 50.
+ * Пока число меняется — взвод (90 кадров показа, без паузы). Когда досчитало — показ 90 кадров,
+ * затем пауза 900 и показ по 60. Спрайт мигает сам: 8 кадров виден, 1 скрыт. Сверено в эмуляторе.
+ */
+export class NoMoneyWarning {
+  /** $FFC864 — сколько ещё показывать */
+  private display = -1;
+  /** $FFC866 — пауза до следующего показа */
+  private cooldown = -1;
+  /** бит 0 байта $7 спрайта */
+  private armed = false;
+  private shownFrames = 0;
+  visible = false;
+
+  reset(): void {
+    this.display = -1;
+    this.cooldown = -1;
+    this.armed = false;
+    this.visible = false;
+  }
+
+  update(settled: boolean): void {
+    if (!settled) {
+      this.display = 90;
+      this.cooldown = 0;
+      this.armed = true;
+      this.visible = false;
+      return;
+    }
+    if (!this.armed) return;
+    if (this.cooldown >= 0) {
+      this.cooldown--;
+      return;
+    }
+    if (--this.display < 0) {
+      this.cooldown = 900;
+      this.display = 60;
+      this.visible = false;
+    } else {
+      if (!this.visible) this.shownFrames = 0;
+      this.visible = true;
+      this.shownFrames++;
+    }
+  }
+
+  /** С учётом мигания спрайта ($0010B0, счётчик 8). */
+  get drawn(): boolean {
+    return this.visible && this.shownFrames % 9 !== 0;
+  }
+}
+
 export class CreditsTicker {
   /** $FFC058 — последнее досчитанное значение */
   private reached = 0;
@@ -183,17 +249,21 @@ export class CreditsTicker {
   private offset = 0;
   /** то, что выводится цифрами */
   shown = 0;
+  readonly noMoney = new NoMoneyWarning();
 
   /** Режим 2 (начало миссии): счёт с нуля до кредитов дома. */
   reset(credits: number): void {
     this.reached = credits;
     this.old = 0;
     this.offset = 0;
+    this.noMoney.reset();
     this.step(credits);
   }
 
   /** Режим 0 — раз в кадр. */
   tick(credits: number): void {
+    // $011F76: пока досчитанное меньше 50 — надпись «НЕТ ДЕНЕГ»
+    if (this.reached >>> 0 < 50) this.noMoney.update(this.reached === credits);
     if (this.reached === credits || this.old === credits) return;
     this.step(credits);
   }
@@ -220,6 +290,8 @@ export class CreditsTicker {
 /** Холст HUD 64×128 (область x 256…320 экрана MD), масштабируется вместе с картой. */
 export class Hud {
   readonly canvas = document.createElement("canvas");
+  /** «НЕТ ДЕНЕГ» — посреди экрана: x 112…200, y 112 при экране 320×224 */
+  readonly warning = document.createElement("canvas");
   private g: CanvasRenderingContext2D;
   private palette: Uint32Array;
   private key = "";
@@ -232,15 +304,27 @@ export class Hud {
     this.canvas.setAttribute("aria-hidden", "true");
     this.g = this.canvas.getContext("2d")!;
     this.palette = rom.gamePalette();
+    this.warning.className = "hud-warning";
+    this.warning.width = 88;
+    this.warning.height = 8;
+    this.warning.setAttribute("aria-hidden", "true");
+    const px = new Uint32Array(88 * 8);
+    for (let i = 0; i < 11; i++) blitTile(rom.bytes.subarray(HUD_ROM.noMoney), i, this.palette, px, 88, i * 8, 0);
+    this.warning.getContext("2d")!.putImageData(new ImageData(new Uint8ClampedArray(px.buffer), 88, 8), 0, 0);
+    this.warning.hidden = true;
   }
 
   setZoom(zoom: number): void {
     this.canvas.style.width = `${HUD_W * zoom}px`;
     this.canvas.style.height = `${HUD_H * zoom}px`;
+    this.warning.style.width = `${88 * zoom}px`;
+    this.warning.style.height = `${8 * zoom}px`;
+    this.warning.style.marginLeft = `${-48 * zoom}px`;
   }
 
   /** Перерисовать, если что-то поменялось. `state` — null, когда видны только кредиты. */
   draw(state: HudState | null): void {
+    this.warning.hidden = !this.credits.noMoney.drawn;
     const text = String(this.credits.shown).padStart(6, " ");
     const key = `${text}|${JSON.stringify(state)}`;
     if (key === this.key) return;
@@ -260,6 +344,10 @@ export class Hud {
         if (p >= 0) this.bar(px, barPixels(p, b[HUD_ROM.hpColors + (p >> 3) * 4] & 15), 272, 72);
       }
       if (state.order !== null) this.frame(px, state.order, 272, 88);
+      if (state.prohibited) {
+        const tiles = b.subarray(HUD_ROM.prohibited);
+        for (let c = 0; c < 3; c++) for (let r = 0; r < 3; r++) blitTile(tiles, c * 3 + r, this.palette, px, HUD_W, 276 - X0 + c * 8, 88 + r * 8);
+      }
       if (state.bar) {
         const p = barFill(state.bar.value, state.bar.max);
         if (p >= 0) this.bar(px, barPixels(p, state.bar.color), 272, state.bar.y);

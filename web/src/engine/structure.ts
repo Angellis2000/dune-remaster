@@ -959,11 +959,75 @@ export function structureGetBuildable(s: Structure | null): number {
       // MD ($00FFCC): плиты 2×2 строятся всегда
       structureInfo[STRUCTURE.SLAB_2x2].o.available = 1;
       ret |= 1 << STRUCTURE.SLAB_2x2;
+      if (s.o.houseID === G.playerHouseID && structurePoolFull()) {
+        // бит 8 слова $6: построек уже 70 — только плиты и стены ($00FFDC: d3 &= $4002)
+        ret &= (1 << STRUCTURE.SLAB_2x2) | (1 << STRUCTURE.WALL);
+      } else {
+        // $00FFF0: второй дворец и второй космопорт не строятся (счётчики по типам $FF7C9C + дом·$20)
+        if (structureCount(s.o.houseID, STRUCTURE.PALACE)) ret &= ~(1 << STRUCTURE.PALACE);
+        if (structureCount(s.o.houseID, STRUCTURE.STARPORT)) ret &= ~(1 << STRUCTURE.STARPORT);
+      }
+      for (let i = 0; i < STRUCTURE.MAX; i++) if (!(ret & (1 << i)) && structureInfo[i].o.available === 1) structureInfo[i].o.available = 0;
       return ret >>> 0;
     case STRUCTURE.STARPORT:
       return 0xffffffff;
     default:
       return 0;
+  }
+}
+
+/** Зданий дома этого типа, включая строящиеся (MD считает их при создании, $00E5CE). */
+export function structureCount(houseID: number, type: number): number {
+  let n = 0;
+  for (const st of G.structures) if (st.o.flags.used && st.o.houseID === houseID && st.o.type === type) n++;
+  return n;
+}
+
+/**
+ * MD: пул построек $FFBEA2 — 70 мест на всех, плиты и стены мест не занимают (таблица $0204D4).
+ * Место берётся при создании здания ($00E5F4) и возвращается при удалении ($00BA9C).
+ */
+export const STRUCTURE_POOL_MD = 70;
+export function structurePoolFull(): boolean {
+  let n = 0;
+  for (const st of G.structures) {
+    if (!st.o.flags.used) continue;
+    const t = st.o.type;
+    if (t !== STRUCTURE.SLAB_1x1 && t !== STRUCTURE.SLAB_2x2 && t !== STRUCTURE.WALL) n++;
+  }
+  return n >= STRUCTURE_POOL_MD;
+}
+
+/** MD: свободен ли номер юнита в диапазоне пула (воздух 0–10, наземные 25–101, $04337E…$043412). */
+function unitPoolHasFree(first: number, last: number): boolean {
+  for (let i = first; i <= last; i++) if (!G.units[i].o.flags.used) return true;
+  return false;
+}
+export const unitAirSlotFree = () => unitPoolHasFree(0, 10);
+export const unitGroundPoolFull = () => !unitPoolHasFree(25, 101);
+
+/**
+ * Бит 8 слова $6 здания игрока — «упёрлись в предел» ($00DC60…$00DDF2): двор — 70 построек,
+ * заводы юнитов — пул наземных юнитов или предел дома, высокие технологии — нет места для авиации,
+ * дворец Атрейдесов — пул наземных (фримены). У улучшающегося завода бит не ставится.
+ */
+export function structureLimitReached(s: Structure): boolean {
+  const h = G.houses[s.o.houseID];
+  switch (s.o.type) {
+    case STRUCTURE.CONSTRUCTION_YARD:
+      return structurePoolFull();
+    case STRUCTURE.PALACE:
+      return s.o.houseID === HOUSE.ATREIDES && unitGroundPoolFull();
+    case STRUCTURE.LIGHT_VEHICLE:
+    case STRUCTURE.HEAVY_VEHICLE:
+    case STRUCTURE.WOR_TROOPER:
+    case STRUCTURE.BARRACKS:
+    case STRUCTURE.STARPORT:
+      return !s.o.flags.upgrading && (unitGroundPoolFull() || h.unitCount >= h.unitCountMax);
+    case STRUCTURE.HIGH_TECH:
+      return !s.o.flags.upgrading && !unitAirSlotFree();
+    default:
+      return false;
   }
 }
 

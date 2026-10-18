@@ -95,8 +95,8 @@ export class MapView {
   veiledIcon = 0;
   /** постановка здания: размер и годность места (1 — да, <0 — без бетона, 0 — нельзя) */
   placement: { w: number; h: number; valid: number } | null = null;
-  /** значки над зданиями («OK», молоток): таблица ROM.statusIcons и индекс в ней */
-  structureIcons: { s: Structure; table: number; index: number }[] = [];
+  /** значки над зданиями («OK», молоток, молния): описание спрайта ROM */
+  structureIcons: { s: Structure; def: number }[] = [];
   private stripes = new Map<string, CanvasPattern>();
 
   private drawIcon(id: number, x: number, y: number, size: number): void {
@@ -490,8 +490,8 @@ export class MapView {
       ctx.fillRect(0, 0, pl.w * size, pl.h * size);
       ctx.restore();
     }
-    for (const { s, table, index } of this.structureIcons) {
-      const img = this.sprites.statusIcon(table, index);
+    for (const { s, def } of this.structureIcons) {
+      const img = this.sprites.statusDef(def);
       ctx.drawImage(img.canvas, Math.round((s.x * CELL_PX + img.ox) * z) - ox, Math.round((s.y * CELL_PX + img.oy) * z) - oy, img.canvas.width * z, img.canvas.height * z);
     }
 

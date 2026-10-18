@@ -137,7 +137,12 @@ export class SpriteSet {
 
   /** Значок над зданием из таблицы ROM.statusIcons; ox/oy — от левого верхнего угла здания. */
   statusIcon(table: number, index: number): SpriteImage {
-    return this.get({ frame: -1, def: readU32(this.rom.bytes, table + index * 4), flip: 0 }, -1);
+    return this.statusDef(readU32(this.rom.bytes, table + index * 4));
+  }
+
+  /** Значок по описанию спрайта напрямую (молния $0658E8). */
+  statusDef(def: number): SpriteImage {
+    return this.get({ frame: -1, def, flip: 0 }, -1);
   }
 
   get(ref: FrameRef, house: number): SpriteImage {

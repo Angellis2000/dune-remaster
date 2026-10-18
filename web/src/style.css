@@ -428,6 +428,14 @@ button[aria-pressed="true"] {
   white-space: nowrap;
 }
 
+.hud-warning {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
 /* HUD оригинала: область x 256…320, y 0…128 экрана MD, в масштабе карты */
 .hud {
   position: absolute;
