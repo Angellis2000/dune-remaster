@@ -19,8 +19,9 @@ import { Minimap } from "./ui/minimap.ts";
 import { forgetRom, loadStoredRom, storeRom } from "./ui/romstore.ts";
 import { FactoryWindow } from "./ui/factory.ts";
 import { FrontEnd } from "./ui/frontend.ts";
+import { MentatScreen } from "./ui/mentat.ts";
 import { Hud, hudState } from "./ui/hud.ts";
-import { passwordFor, SettingsMenu, type HouseCode } from "./ui/settings.ts";
+import { SettingsMenu, type HouseCode } from "./ui/settings.ts";
 import { MapView } from "./view/mapview.ts";
 
 const style = document.createElement("style");
@@ -182,17 +183,21 @@ async function startGame(rom: DuneRom): Promise<void> {
     updateHud();
   };
   select.addEventListener("change", () => loadMission(select.value));
+  // конец миссии, как $022AB2: ментат с текстом победы (карта следующего уровня) или поражения,
+  // затем брифинг следующей миссии или той же заново
   world.game.onEnd = (result) => {
     const house = current[0] as HouseCode;
-    const next = Number(current.slice(1)) + 1;
-    const password = result === "won" ? passwordFor(house, next) : null;
-    endBanner.textContent =
-      result === "lost"
-        ? "Миссия провалена. Start — меню: начать сначала."
-        : password
-          ? `Миссия выполнена! Пароль следующего уровня: ${password}`
-          : "Миссия выполнена! Арракис ваш.";
-    endBanner.hidden = false;
+    const m = Number(current.slice(1));
+    paused = true;
+    if (result === "won")
+      mentat.open({ house, level: m, text: mentat.text(house, m, 1), buttons: "key" }, () => {
+        if (m < 9) briefing(house, m + 1);
+        else {
+          endBanner.textContent = "Арракис ваш! Финальные титры пока не сделаны.";
+          endBanner.hidden = false;
+        }
+      });
+    else mentat.open({ house, level: m - 1, text: mentat.text(house, m, 2), buttons: "key" }, () => briefing(house, m));
   };
 
   // ---------------------------------------------------------------- Start: настройки
@@ -237,7 +242,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       } else if (r.cheat === "DUNEFINALE") G.onMessage("Финальные титры пока не сделаны");
     },
     toggled: (open) => {
-      paused = open || frontend.isOpen;
+      paused = open || frontend.isOpen || mentat.isOpen;
       pausedBanner.hidden = true;
       // ОПЦИИ из главного меню — по выходу назад в меню
       if (!open && optionsFromTitle) {
@@ -250,9 +255,13 @@ async function startGame(rom: DuneRom): Promise<void> {
   // главное меню и выбор дома — до игры, как в оригинале
   let optionsFromTitle = false;
   const frontend = new FrontEnd(screens, {
+    // $01F346: вступление ментата, ДА — брифинг первой миссии, НЕТ — снова выбор дома
     newGame: (house) => {
-      paused = false;
-      loadMission(`${house}1`);
+      paused = true;
+      mentat.open({ house, level: 0, text: mentat.text(house, null), buttons: "yesno" }, (no) => {
+        if (no) frontend.openHouse();
+        else briefing(house, 1);
+      });
     },
     options: () => {
       optionsFromTitle = true;
@@ -262,6 +271,20 @@ async function startGame(rom: DuneRom): Promise<void> {
     tutorial: () => G.onMessage("Обучение пока не сделано"),
   });
   stage.append(frontend.root);
+  // ментат: брифинг ($01F3EA) — ПРИНЯТЬ начинает миссию, СОВЕТ — совет на том же экране и снова кнопки
+  const mentat = new MentatScreen(rom);
+  stage.append(mentat.root);
+  const briefing = (house: HouseCode, m: number, again = false): void => {
+    paused = true;
+    const text = mentat.text(house, m, again ? 3 : 0);
+    mentat.open({ house, level: m - 1, text, buttons: "accept", again }, (advice) => {
+      if (advice) briefing(house, m, true);
+      else {
+        paused = false;
+        loadMission(`${house}${m}`);
+      }
+    });
+  };
   // окно здания с геймпада — как в оригинале; в режиме мыши остаётся правое меню
   const factory = new FactoryWindow(rom, screens, {
     game: () => world.game,
@@ -536,7 +559,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   pad.onPress((b) => {
     if (!assets.root.hidden) return;
     lastButton = BUTTON_LABEL[b];
-    if (frontend.handlePad(b) || settings.handlePad(b) || factory.handlePad(b)) {
+    if (mentat.handlePad(b) || frontend.handlePad(b) || settings.handlePad(b) || factory.handlePad(b)) {
       updateHud();
       return;
     }
