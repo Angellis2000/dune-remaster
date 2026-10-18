@@ -47,7 +47,13 @@ export class MapView {
   private world: World | null = null;
   camX = 0;
   camY = 0;
+  /** Экранных CSS-пикселей на мировой пиксель, одинаково на обычном и HiDPI-экране. */
   zoom = 2;
+  private pixelRatio = 1;
+  /** Физических пикселей холста на мировой пиксель: HD-графика рисуется в нативном разрешении. */
+  get pixelScale(): number {
+    return this.zoom * this.pixelRatio;
+  }
   showGrid = false;
   mouseMode = false;
   cursorX = 0;
@@ -121,12 +127,12 @@ export class MapView {
 
   /** Масштаб, при котором по вертикали видно около 14 клеток. */
   private defaultZoom(): number {
-    const z = Math.round(this.canvas.height / (14 * CELL_PX));
+    const z = Math.round(this.canvas.height / this.pixelRatio / (14 * CELL_PX));
     return Math.min(Math.max(z, ZOOMS[0]), ZOOMS[ZOOMS.length - 1]);
   }
 
   viewSize(): { w: number; h: number } {
-    return { w: this.canvas.width / this.zoom, h: this.canvas.height / this.zoom };
+    return { w: this.canvas.width / this.pixelScale, h: this.canvas.height / this.pixelScale };
   }
 
   centerOn(wx: number, wy: number): void {
@@ -139,11 +145,11 @@ export class MapView {
   setZoom(z: number, anchorX = this.canvas.width / 2, anchorY = this.canvas.height / 2): void {
     z = Math.min(Math.max(z, ZOOMS[0]), ZOOMS[ZOOMS.length - 1]);
     if (z === this.zoom) return;
-    const wx = this.camX + anchorX / this.zoom;
-    const wy = this.camY + anchorY / this.zoom;
+    const wx = this.camX + anchorX / this.pixelScale;
+    const wy = this.camY + anchorY / this.pixelScale;
     this.zoom = z;
-    this.camX = wx - anchorX / z;
-    this.camY = wy - anchorY / z;
+    this.camX = wx - anchorX / this.pixelScale;
+    this.camY = wy - anchorY / this.pixelScale;
     this.clampCamera();
   }
 
@@ -203,10 +209,11 @@ export class MapView {
     const r = this.canvas.getBoundingClientRect();
     const w = Math.max(1, Math.round(r.width * dpr));
     const h = Math.max(1, Math.round(r.height * dpr));
-    if (w === this.canvas.width && h === this.canvas.height) return;
+    if (w === this.canvas.width && h === this.canvas.height && dpr === this.pixelRatio) return;
     const v = this.viewSize();
     const cx = this.camX + v.w / 2;
     const cy = this.camY + v.h / 2;
+    this.pixelRatio = dpr;
     this.canvas.width = w;
     this.canvas.height = h;
     this.centerOn(cx, cy);
@@ -220,7 +227,7 @@ export class MapView {
   }
 
   private toWorld(x: number, y: number): { x: number; y: number } {
-    return { x: this.camX + x / this.zoom, y: this.camY + y / this.zoom };
+    return { x: this.camX + x / this.pixelScale, y: this.camY + y / this.pixelScale };
   }
 
   private bindMouse(): void {
@@ -229,8 +236,8 @@ export class MapView {
       const p = this.toCanvas(e);
       this.mouse = { x: p.x, y: p.y, inside: true };
       if (this.pan && this.pan.id === e.pointerId) {
-        this.camX = this.pan.cx - (p.x - this.pan.x) / this.zoom;
-        this.camY = this.pan.cy - (p.y - this.pan.y) / this.zoom;
+        this.camX = this.pan.cx - (p.x - this.pan.x) / this.pixelScale;
+        this.camY = this.pan.cy - (p.y - this.pan.y) / this.pixelScale;
         this.clampCamera();
       }
       if (this.box && this.box.id === e.pointerId) {
@@ -303,6 +310,8 @@ export class MapView {
 
   // ------------------------------------------------------------------ цикл
   private tick(t: number): void {
+    // При переносе окна на другой монитор CSS-размер может остаться прежним.
+    if ((window.devicePixelRatio || 1) !== this.pixelRatio) this.resize();
     const dt = this.last ? Math.min((t - this.last) / 1000, 0.1) : 0;
     this.last = t;
     // логика идёт кадрами по 1/60 с, как на приставке
@@ -366,7 +375,7 @@ export class MapView {
     const dx = (this.mouse.x > this.canvas.width - edge ? 1 : 0) - (this.mouse.x < edge ? 1 : 0);
     const dy = (this.mouse.y > this.canvas.height - edge ? 1 : 0) - (this.mouse.y < edge ? 1 : 0);
     if (!dx && !dy) return;
-    const s = (MOUSE_SCROLL * (window.devicePixelRatio || 1) * dt) / this.zoom;
+    const s = MOUSE_SCROLL * dt / this.zoom;
     this.camX += dx * s;
     this.camY += dy * s;
     this.clampCamera();
@@ -377,7 +386,7 @@ export class MapView {
   draw(): void {
     this.dirty = false;
     const ctx = this.ctx;
-    const z = this.zoom;
+    const z = this.pixelScale;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
@@ -548,7 +557,7 @@ export class MapView {
 
   /** Четыре уголка (из оригинального курсора-рамки) по углам прямоугольника. */
   private drawCorners(x: number, y: number, w: number, h: number, ox: number, oy: number): void {
-    const z = this.zoom;
+    const z = this.pixelScale;
     const [tl, tr, bl, br] = this.corners;
     const put = (c: HTMLCanvasElement, wx: number, wy: number) =>
       this.ctx.drawImage(c, Math.round(wx * z) - ox, Math.round(wy * z) - oy, c.width * z, c.height * z);

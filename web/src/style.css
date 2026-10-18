@@ -150,6 +150,7 @@ button[aria-pressed="true"] {
 
 .topbar {
   display: flex;
+  line-height: 1.4;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 14px;
