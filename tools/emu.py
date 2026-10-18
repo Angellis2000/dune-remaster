@@ -69,6 +69,9 @@ class Emu:
                     self._keep.append(s)
                     C.cast(data, C.POINTER(Variable))[0].value = s.value
                     return True
+                # ядро читает переменные в одну структуру: без сброса в неё осталось бы прошлое значение
+                # (например, «disabled» → громкость FM 0)
+                C.cast(data, C.POINTER(Variable))[0].value = None
                 return False
             return False
 
@@ -79,8 +82,16 @@ class Emu:
         def state(port, device, index, id_):
             return 1 if port == 0 and device == 1 and id_ in self.held else 0
 
+        # звук: если self.audio — список, в него дописываются кадры (int16 L, R)
+        self.audio = None
+
+        def batch(d, n):
+            if self.audio is not None:
+                self.audio.append(C.string_at(d, n * 4))
+            return n
+
         self._cbs = [ENV_CB(env), VIDEO_CB(video), AUDIO_CB(lambda l, r: None),
-                     AUDIO_BATCH_CB(lambda d, n: n), POLL_CB(lambda: None), STATE_CB(state)]
+                     AUDIO_BATCH_CB(batch), POLL_CB(lambda: None), STATE_CB(state)]
         L = self.lib
         L.retro_set_environment(self._cbs[0])
         L.retro_init()

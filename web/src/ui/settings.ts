@@ -74,6 +74,11 @@ export interface SettingsHost {
   password(result: Exclude<PasswordResult, null>): void;
   /** меню открылось или закрылось — игра на паузе, пока оно открыто */
   toggled(open: boolean): void;
+  /** звук интерфейса ($02DDB6): $19 — стрелка, $28 — выбор */
+  ui?(seq: number): void;
+  /** «МУЗЫКА»/«СПЕЦЭФФЕКТЫ» по A — секвенция GEMS ($0212A6, $0213C2) */
+  playTrack?(seq: number): void;
+  playSfx?(seq: number): void;
 }
 
 export class SettingsMenu {
@@ -152,8 +157,8 @@ export class SettingsMenu {
 
   private menuPad(b: Button): void {
     const n = ROWS.length;
-    if (b === "up") this.index = (this.index + n - 1) % n;
-    else if (b === "down") this.index = (this.index + 1) % n;
+    if (b === "up") (this.index = (this.index + n - 1) % n), this.host.ui?.(0x19);
+    else if (b === "down") (this.index = (this.index + 1) % n), this.host.ui?.(0x19);
     else if (b === "start") this.close();
     else this.activate(b);
   }
@@ -163,12 +168,19 @@ export class SettingsMenu {
     const step = b === "left" ? -1 : 1;
     const press = b === "a" || b === "b" || b === "c";
     if (!press && b !== "left" && b !== "right") return;
+    if (press && this.index !== ITEM.SFX) this.host.ui?.(0x28);
     switch (this.index) {
       case ITEM.MUSIC: this.host.setMusic(!this.host.music()); break;
       case ITEM.SOUND: this.host.setSound(!this.host.sound()); break;
       case ITEM.RADAR: this.host.setRadar(!this.host.radar()); break;
-      case ITEM.TRACKS: if (!press) this.track = (this.track + step + this.tracks.length) % this.tracks.length; break;
-      case ITEM.SFX: if (!press) this.sfx = (this.sfx + step + this.sounds.length) % this.sounds.length; break;
+      case ITEM.TRACKS:
+        if (!press) this.track = (this.track + step + this.tracks.length) % this.tracks.length;
+        else if (this.tracks[this.track]) this.host.playTrack?.(this.tracks[this.track].id);
+        break;
+      case ITEM.SFX:
+        if (!press) this.sfx = (this.sfx + step + this.sounds.length) % this.sounds.length;
+        else if (this.sounds[this.sfx]) this.host.playSfx?.(this.sounds[this.sfx].id);
+        break;
       case ITEM.PASSWORD: if (press) this.openPassword(); break;
       case ITEM.RESTART: if (press) (this.close(), this.host.restart()); break;
       case ITEM.HOUSE:

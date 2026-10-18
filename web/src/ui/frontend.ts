@@ -18,6 +18,8 @@ const HOUSE_FRAME = { x: 32, step: 88, y: 136 };
 
 export interface FrontEndHost {
   newGame(house: HouseCode): void;
+  /** экран сменился: для музыки (заставка — секвенция 0, выбор дома — мелодия $1C) */
+  screen?(mode: "intro" | "title" | "house"): void;
   options(): void;
   tutorial(): void;
 }
@@ -55,6 +57,7 @@ export class FrontEnd {
     this.mode = "intro";
     this.intro.start();
     this.show();
+    this.host.screen?.("intro");
   }
 
   /** Для автотестов: прогнать n кадров заставки. */
@@ -72,12 +75,14 @@ export class FrontEnd {
     this.mode = "title";
     this.item = 0;
     this.show();
+    this.host.screen?.("title");
   }
 
   openHouse(): void {
     this.mode = "house";
     this.house = 0;
     this.show();
+    this.host.screen?.("house");
   }
 
   private show(): void {

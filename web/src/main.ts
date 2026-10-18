@@ -19,9 +19,10 @@ import { Minimap } from "./ui/minimap.ts";
 import { forgetRom, loadStoredRom, storeRom } from "./ui/romstore.ts";
 import { FactoryWindow } from "./ui/factory.ts";
 import { FrontEnd } from "./ui/frontend.ts";
-import { MentatScreen } from "./ui/mentat.ts";
+import { HOUSE_INDEX, MentatScreen } from "./ui/mentat.ts";
 import { EndPicture, Flyby, FLYBY_FRAMES } from "./ui/endgame.ts";
 import { ScoreScreen, type MissionStats } from "./ui/score.ts";
+import { MUSIC, Sound } from "./sound/sound.ts";
 import { Hud, hudState } from "./ui/hud.ts";
 import { SettingsMenu, type HouseCode } from "./ui/settings.ts";
 import { MapView } from "./view/mapview.ts";
@@ -170,6 +171,16 @@ async function startGame(rom: DuneRom): Promise<void> {
     select.append(group);
   }
   let current = "A1";
+  // звук: драйвер GEMS в AudioWorklet; браузер разрешает звук только после действия игрока
+  const sound = new Sound(rom);
+  const wake = () => void sound.start();
+  window.addEventListener("keydown", wake);
+  window.addEventListener("pointerdown", wake);
+  G.onSound = (id) => sound.sfx(id);
+  G.onFeedback = (id) => sound.feedback(id);
+  /** брифинг включает музыку дома, кроме первого после выбора дома ($FFC194) */
+  let briefingMusic = false;
+  let inMission = false;
   const loadMission = (code: string) => {
     current = code;
     world.load(code[0] as HouseCode, Number(code.slice(1)));
@@ -186,6 +197,9 @@ async function startGame(rom: DuneRom): Promise<void> {
     minimap.canvas.hidden = !prefs.radar;
     hud.credits.reset(world.houses.get(world.player)?.credits ?? 0);
     updateHud();
+    // $021574: случайная боевая мелодия
+    inMission = true;
+    sound.battleMusic();
   };
   select.addEventListener("change", () => loadMission(select.value));
   // конец миссии, как $022AB2: игра идёт ещё 180 кадров, пролетает клин орнитоптеров дома победителя
@@ -217,8 +231,12 @@ async function startGame(rom: DuneRom): Promise<void> {
     minimap.canvas.hidden = true;
     ending = { result, left: FLYBY_FRAMES };
     flyby.start(result === "won" ? world.player : enemyHouse());
+    // $022AD2: победа — мелодия стоп; $026984: мелодия победы или поражения по дому игрока
+    inMission = false;
+    if (result === "won") sound.playMusic(MUSIC.STOP);
+    sound.playMusic((result === "won" ? MUSIC.WIN : MUSIC.LOSE)[world.player] ?? 0);
   };
-  const scoreScreen = new ScoreScreen(rom);
+  const scoreScreen = new ScoreScreen(rom, (id) => sound.sfx(id));
   stage.append(scoreScreen.root);
   /** итоги для экрана $0271E2; при поражении очки делятся на 10 ($022C1A) */
   const missionStats = (won: boolean): MissionStats => {
@@ -244,6 +262,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       if (result === "won")
         mentat.open({ house, level: m, text: mentat.text(house, m, 1), buttons: "key" }, () =>
           scoreScreen.open(stats, () => {
+            briefingMusic = true;
             if (m < 9) briefing(house, m + 1);
             else {
               endBanner.textContent = "Арракис ваш! Финальные титры пока не сделаны.";
@@ -251,7 +270,7 @@ async function startGame(rom: DuneRom): Promise<void> {
             }
           }),
         );
-      else mentat.open({ house, level: m - 1, text: mentat.text(house, m, 2), buttons: "key" }, () => scoreScreen.open(stats, () => briefing(house, m)));
+      else mentat.open({ house, level: m - 1, text: mentat.text(house, m, 2), buttons: "key" }, () => scoreScreen.open(stats, () => ((briefingMusic = true), briefing(house, m))));
     });
   };
 
@@ -270,11 +289,29 @@ async function startGame(rom: DuneRom): Promise<void> {
     }
   };
   const screens = new ScreenGfx(rom);
+  sound.musicOn = prefs.music;
+  sound.soundOn = prefs.sound;
+  let lastTrack = -1;
   const settings = new SettingsMenu(screens, {
     music: () => prefs.music,
-    setMusic: (on) => ((prefs.music = on), savePrefs()),
+    setMusic: (on) => {
+      prefs.music = on;
+      sound.setMusic(on);
+      savePrefs();
+    },
     sound: () => prefs.sound,
-    setSound: (on) => ((prefs.sound = on), savePrefs()),
+    setSound: (on) => {
+      prefs.sound = on;
+      sound.soundOn = on;
+      savePrefs();
+    },
+    ui: (seq) => sound.ui(seq),
+    playTrack: (seq) => {
+      if (lastTrack >= 0) sound.stopSong(lastTrack);
+      lastTrack = -1;
+      if (prefs.music) sound.startSong((lastTrack = seq));
+    },
+    playSfx: (seq) => sound.ui(seq),
     radar: () => prefs.radar,
     setRadar: (on) => {
       prefs.radar = on;
@@ -298,6 +335,15 @@ async function startGame(rom: DuneRom): Promise<void> {
     },
     toggled: (open) => {
       paused = open || frontend.isOpen || mentat.isOpen || endPicture.isOpen || scoreScreen.isOpen;
+      // $020EF4: меню в игре — мелодия стоп и звук 6; по выходу — та же или новая боевая
+      if (inMission && !optionsFromTitle) {
+        if (open) {
+          sound.stopMusic();
+          sound.sfx(6);
+        } else if (sound.battleLeft < 0) sound.battleMusic();
+        else sound.resumeMusic();
+      }
+      if (!open && lastTrack >= 0) (sound.stopSong(lastTrack), (lastTrack = -1));
       pausedBanner.hidden = true;
       // ОПЦИИ из главного меню — по выходу назад в меню
       if (!open && optionsFromTitle) {
@@ -313,6 +359,10 @@ async function startGame(rom: DuneRom): Promise<void> {
     // $01F346: вступление ментата, ДА — брифинг первой миссии, НЕТ — снова выбор дома
     newGame: (house) => {
       paused = true;
+      inMission = false;
+      // $01F386: музыка ментата по дому
+      sound.playMusic(MUSIC.MENTAT[HOUSE_INDEX[house]]);
+      briefingMusic = false;
       mentat.open({ house, level: 0, text: mentat.text(house, null), buttons: "yesno" }, (no) => {
         if (no) frontend.openHouse();
         else briefing(house, 1);
@@ -324,13 +374,23 @@ async function startGame(rom: DuneRom): Promise<void> {
       settings.open();
     },
     tutorial: () => G.onMessage("Обучение пока не сделано"),
+    // $017418: заставка — секвенция 0 (если музыка включена); $026BBA: выбор дома — мелодия $1C
+    screen: (mode) => {
+      inMission = false;
+      if (mode === "intro" && prefs.music) sound.play(0);
+      else if (mode === "house") sound.playMusic(MUSIC.HOUSE_SELECT);
+    },
   });
   stage.append(frontend.root);
   // ментат: брифинг ($01F3EA) — ПРИНЯТЬ начинает миссию, СОВЕТ — совет на том же экране и снова кнопки
-  const mentat = new MentatScreen(rom);
+  const mentat = new MentatScreen(rom, sound);
   stage.append(mentat.root);
   const briefing = (house: HouseCode, m: number, again = false): void => {
     paused = true;
+    inMission = false;
+    // $01F3F2: после итогов — снова музыка ментата
+    if (briefingMusic && !again) sound.playMusic(MUSIC.MENTAT[HOUSE_INDEX[house]]);
+    briefingMusic = false;
     const text = mentat.text(house, m, again ? 3 : 0);
     mentat.open({ house, level: m - 1, text, buttons: "accept", again, leave: true }, (advice) => {
       if (advice) briefing(house, m, true);
@@ -347,6 +407,9 @@ async function startGame(rom: DuneRom): Promise<void> {
     toggled: (open) => {
       paused = open;
       pausedBanner.hidden = true;
+      // $0287DC: окно — звук $2C; по выходу истёкшая боевая мелодия сменяется ($02890A)
+      if (open) sound.ui(0x2c);
+      else sound.windowClosed();
       updateHud();
     },
     placing: () => updateHud(),
@@ -500,6 +563,9 @@ async function startGame(rom: DuneRom): Promise<void> {
   };
   view.onFrame = () => {
     frame++;
+    // звуки, отложенные до кадра ($00182E); время боевой мелодии ($004668)
+    sound.frame();
+    if (inMission) sound.battleLeft--;
     // окно игрока — для скриптов (юниты вне окна думают медленнее, как в оригинале)
     const v = view.viewSize();
     G.viewportPacked = World.packAt(Math.max(0, view.camX), Math.max(0, view.camY));
@@ -707,7 +773,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   }
   canvas.focus();
   // для автотестов: ?debug открывает мир и вид из консоли
-  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat, endPicture, scoreScreen, frontend } });
+  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat, endPicture, scoreScreen, frontend, sound } });
 }
 
 showRomScreen();

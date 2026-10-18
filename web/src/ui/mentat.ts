@@ -15,6 +15,7 @@ import { SCREEN_H, SCREEN_W } from "../gfx/screens.ts";
 import type { DuneRom } from "../rom/dune.ts";
 import type { Button } from "../input/pad.ts";
 import type { HouseCode } from "./settings.ts";
+import { MUSIC, type Sound } from "../sound/sound.ts";
 
 /** Номер дома в таблицах ROM: 0 Харконнены, 1 Атрейдесы, 2 Ордосы. */
 export const HOUSE_INDEX: Record<HouseCode, number> = { H: 0, A: 1, O: 2 };
@@ -35,8 +36,6 @@ export interface MentatScene {
   leave?: boolean;
 }
 
-/** Звуки оригинала ($02DDB6): $19 — рамка кнопок, $28 — выбор. */
-export type MentatSound = 0x19 | 0x28;
 
 const FADE_FRAMES = 3;
 const CYCLE_FRAMES = 8;
@@ -153,7 +152,7 @@ export class MentatScreen {
 
   constructor(
     rom: DuneRom,
-    private sound: (id: MentatSound) => void = () => {},
+    private sound: Sound | null = null,
   ) {
     this.gfx = new MentatGfx(rom);
     this.root = document.createElement("section");
@@ -355,8 +354,11 @@ export class MentatScreen {
     const wait = function* (n: number): Generator<void, void, void> {
       for (let i = 0; i < n; i++) yield;
     };
-    // звук $26, 60 кадров, музыка $1D, 100 кадров
-    yield* wait(160);
+    // звук $26, 60 кадров, музыка $1D, 100 кадров ($01F4B6)
+    this.sound?.sfx(0x26);
+    yield* wait(60);
+    this.sound?.playMusic(MUSIC.ACCEPT);
+    yield* wait(100);
     // $025DB2: текст стёрт, 24 кадра портрет едет влево по 4 точки, карта — по 1; строка 3 гаснет в последние 9
     this.page = [];
     const line3 = this.cram.slice(48, 64);
@@ -432,6 +434,8 @@ export class MentatScreen {
     const bufB = new Uint8Array(W);
     zoomTiles(bmp, bufA, 0x10000, 14, 10);
     yield* wait(19);
+    // $026476: команда GEMS $17 (7, 2, 1) перед приближением, после него — стоп секвенции 7
+    this.sound?.command(0x17, 7, 2, 1);
     // картинка на плоскости, спрайты убраны; VBlank $024816: палитра гаснет раз в 5 кадров после первых 40
     this.zoomImg = bufA;
     this.slots = [null, null, null, null];
@@ -458,6 +462,7 @@ export class MentatScreen {
       }
       this.zoomImg = this.zoomRender(bmp, steps[k], k % 2 ? bufA : bufB);
     }
+    this.sound?.stopSong(7);
   }
 
   /** Картинка шага (буферы не очищаются между шагами, как в оригинале). */
@@ -555,11 +560,11 @@ export class MentatScreen {
   private buttons(pressed: boolean): void {
     if (this.buttonMove) {
       this.buttonY += this.buttonStep;
-      if (--this.buttonMove === 0) this.sound(0x19);
+      if (--this.buttonMove === 0) this.sound?.ui(0x19);
       return;
     }
     if (!pressed) return;
-    this.sound(0x28);
+    this.sound?.ui(0x28);
     // после выбора тайлы $B120…$B89F очищаются, глаза и рот возвращаются пустыми
     this.vram.fill(0, 0xb120, 0xb120 + 0x780);
     this.faceHidden = false;
