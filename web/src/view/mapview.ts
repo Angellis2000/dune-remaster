@@ -469,10 +469,9 @@ export class MapView {
         }
       }
       if (u.dust >= 0) {
-        // пыль из-под харвестера (кадры 223–225), сбоку по направлению
-        const DUST = [[0, 7], [-7, 6], [-14, 1], [-9, -6], [0, -9], [9, -6], [14, 1], [7, 6]];
-        const [ddx, ddy] = DUST[((u.orientation + 16) & 0xff) >> 5];
-        drawEffect(223 + u.dust, u.x + ddx * 2, u.y + ddy * 2);
+        // пыль из-под харвестера ($012338 → $00967C): направление ((ориентация + 16) & $E0) >> 5
+        const img = this.sprites.harvestDust(((u.orientation + 16) & 0xff) >> 5, u.dust);
+        ctx.drawImage(img.canvas, Math.round((u.x + img.ox) * z) - ox, Math.round((u.y + img.oy) * z) - oy, img.canvas.width * z, img.canvas.height * z);
       }
       if (u.smoke >= 0) drawEffect(180 + u.smoke, u.x, u.y - 14);
     }

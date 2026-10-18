@@ -140,6 +140,14 @@ export class SpriteSet {
     return this.statusDef(readU32(this.rom.bytes, table + index * 4));
   }
 
+  /**
+   * Пыль из-под харвестера ($00967C): отдельный спрайт, описание из таблицы $0641EE — 3 кадра × 8 направлений;
+   * смещение от харвестера заложено в самом описании.
+   */
+  harvestDust(dir: number, frame: number): SpriteImage {
+    return this.statusDef(readU32(this.rom.bytes, 0x0641ee + frame * 32 + (dir & 7) * 4));
+  }
+
   /** Значок по описанию спрайта напрямую (молния $0658E8). */
   statusDef(def: number): SpriteImage {
     return this.get({ frame: -1, def, flip: 0 }, -1);
