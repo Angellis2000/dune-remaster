@@ -53,4 +53,24 @@ const got: [number, number][] = trace.map(([c]) => (ticker.tick(c), [t.old, t.of
 const okT = got.every(([o, f], i) => o === trace[i][1] && f === trace[i][2]);
 if (!okT) bad++;
 console.log(okT ? "ok  " : "FAIL", "счётчик кредитов", okT ? "" : JSON.stringify(got));
+
+// Вызовы $00A7DC в Genesis Plus GX: каждый четвёртый шаг, $35 при расходе, $34 при приходе.
+for (const [start, target, sound] of [[990, 965, 0x35], [965, 990, 0x34]]) {
+  const t = new CreditsTicker();
+  Object.assign(t, { old: start, reached: start });
+  const events: number[][] = [];
+  let frame = 0;
+  t.onSound = (id) => events.push([frame, id]);
+  for (; frame < 9; frame++) t.tick(target);
+  const ok = JSON.stringify(events) === JSON.stringify([[0, sound], [4, sound], [8, sound]]);
+  if (!ok) bad++;
+  console.log(ok ? "ok  " : "FAIL", `щелчки ${start} → ${target}`, ok ? "" : JSON.stringify(events));
+  for (; frame < 1000; frame++) t.tick(target);
+  const settled = events.length;
+  for (; frame < 1100; frame++) t.tick(target);
+  if (events.length !== settled) {
+    bad++;
+    console.log("FAIL щелчки после остановки счётчика");
+  }
+}
 process.exit(bad ? 1 : 0);

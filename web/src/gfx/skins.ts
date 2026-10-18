@@ -4,8 +4,9 @@
  *   structure:T   — здание типа T целиком, на всю раскладку (2×2, 3×3 и т. д.);
  *   unit:T:кадр   — кадр юнита типа T (кадр — имя файла из набора: d3, d3_f1, d2_t5, d2_t5_r — отдача).
  * Картинка любого размера: под каждый масштаб она заранее уменьшается со сглаживанием.
- * Хранится только в браузере (IndexedDB).
+ * Пользовательские замены хранятся в браузере (IndexedDB) и перекрывают встроенную графику.
  */
+import constructionYardUrl from "./assets/construction-yard.png?url";
 import { loadSkinFiles, storeSkinFile } from "../ui/romstore.ts";
 
 interface Skin {
@@ -15,11 +16,21 @@ interface Skin {
 
 export class Skins {
   private skins = new Map<string, Skin>();
+  private defaults = new Map<string, Skin>();
   /** клетки карты, у которых есть своя картинка (быстрая проверка при отрисовке) */
   readonly iconOverridden = new Uint8Array(512);
   onChange: () => void = () => {};
 
   async load(): Promise<void> {
+    // Готовый строительный двор целиком; стройка и развалины остаются кадрами ROM.
+    try {
+      const response = await fetch(constructionYardUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const image = await createImageBitmap(await response.blob());
+      this.defaults.set("structure:8", { image, scaled: new Map() });
+    } catch (error) {
+      console.warn("Не удалось загрузить графику строительного двора", error);
+    }
     for (const [k, blob] of await loadSkinFiles()) {
       try {
         this.put(k, await createImageBitmap(blob));
@@ -70,7 +81,7 @@ export class Skins {
 
   /** Картинка, уменьшенная ровно до w×h экранных пикселей. */
   scaled(key: string, w: number, h: number): HTMLCanvasElement | null {
-    const s = this.skins.get(key);
+    const s = this.skins.get(key) ?? this.defaults.get(key);
     if (!s) return null;
     w = Math.max(1, Math.round(w));
     h = Math.max(1, Math.round(h));

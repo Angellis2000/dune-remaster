@@ -1107,6 +1107,8 @@ export function unitEnterStructure(unit: Unit | null, s: Structure | null): void
     if (s.o.type === STRUCTURE.REPAIR) {
       const countDown = u16(idiv(idiv((ui.o.hitpoints - unit.o.hitpoints) * 256, ui.o.hitpoints) * (ui.o.buildTime << 6), 256));
       s.countDown = countDown > 1 ? countDown : 1;
+      // $048926: сохранить начальное время до восстановления hitpoints — максимум полосы HUD.
+      unit.repairTime = s.countDown;
       unit.o.hitpoints = ui.o.hitpoints;
       unit.o.flags.isSmoking = false;
       unit.spriteOffset = 0;

@@ -110,8 +110,10 @@ export function hudState(rom: DuneRom, s: Structure | null, u: Unit | null): Hud
       return out;
     }
     if (t === STRUCTURE.REPAIR && s.o.linkedID !== 0xff) {
-      // $029740: иконка ремонтируемого юнита; полосу считает поле юнита $5A (не опознано) — пока без неё
-      out.order = frameOf(uInfo(G.units[s.o.linkedID].o.type));
+      // $029740–$029780: поле юнита $5A — начальное время ремонта, $56 здания — остаток.
+      const unit = G.units[s.o.linkedID];
+      out.order = frameOf(uInfo(unit.o.type));
+      out.bar = { value: unit.repairTime - s.countDown, max: unit.repairTime, color: 7, y: BAR_LOW };
       return out;
     }
     if (t === STRUCTURE.PALACE) {
@@ -185,10 +187,6 @@ export function barPixels(p: number, color: number): Uint8Array {
 }
 
 /**
- * Счётчик кредитов $011F38 (режим 0): показанное число догоняет кредиты дома
- * шагом до 16 в кадр (сдвиг копится по 1/8), как в оригинале. Звуки щелчков (0x34/0x35) — пока без звука.
- */
-/**
  * Надпись «НЕТ ДЕНЕГ» ($0099AC): зовётся счётчиком кредитов, пока показано меньше 50.
  * Пока число меняется — взвод (90 кадров показа, без паузы). Когда досчитало — показ 90 кадров,
  * затем пауза 900 и показ по 60. Спрайт мигает сам: 8 кадров виден, 1 скрыт. Сверено в эмуляторе.
@@ -240,6 +238,7 @@ export class NoMoneyWarning {
   }
 }
 
+/** Счётчик кредитов $011F38: число догоняет кредиты дома, щелчок — каждый четвёртый шаг. */
 export class CreditsTicker {
   /** $FFC058 — последнее досчитанное значение */
   private reached = 0;
@@ -247,6 +246,9 @@ export class CreditsTicker {
   private old = 0;
   /** $FFD6BC — накопленный сдвиг */
   private offset = 0;
+  /** $FFD6B4: число обновлений счётчика; сохраняется и между миссиями. */
+  private soundTicks = 0;
+  onSound: (id: number) => void = () => {};
   /** то, что выводится цифрами */
   shown = 0;
   readonly noMoney = new NoMoneyWarning();
@@ -284,6 +286,8 @@ export class CreditsTicker {
     if (this.old < 0) this.old = 0;
     this.reached = this.offset < 0 ? Math.max(0, this.old - 1) : this.old;
     this.shown = this.offset > 0 ? this.old + 1 : this.old;
+    // $012118: считаются шаги, а не все кадры; $34 — приход, $35 — расход.
+    if ((this.soundTicks++ & 3) === 0) this.onSound(diff > 0 ? 0x34 : 0x35);
   }
 }
 

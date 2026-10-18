@@ -409,7 +409,17 @@ export class MapView {
       if (!st.built) continue;
       if (st.x > x1 || st.y > y1 || st.x + st.w <= x0 || st.y + st.h <= y0) continue;
       const img = this.skins.structure(st.type, st.w * size, st.h * size);
-      if (img) ctx.drawImage(img, st.x * size - ox, st.y * size - oy);
+      if (!img) continue;
+      // Подмена не должна открывать здание под туманом или перекрывать его края.
+      for (let row = 0; row < st.h; row++) for (let col = 0; col < st.w; col++) {
+        const x = st.x + col;
+        const y = st.y + row;
+        if (x < x0 || x > x1 || y < y0 || y > y1 || !map.inBounds(x, y)) continue;
+        const ov = map.overlay[(y << 6) | x];
+        if (ov === this.veiledIcon && this.veiledIcon !== 0) continue;
+        ctx.drawImage(img, col * size, row * size, size, size, x * size - ox, y * size - oy, size, size);
+        if (ov !== 0) this.drawIcon(ov, x * size - ox, y * size - oy, size);
+      }
     }
     if (this.showGrid) this.drawGrid(x0, y0, x1, y1, size, ox, oy);
 

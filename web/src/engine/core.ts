@@ -159,6 +159,8 @@ export interface Unit {
   o: GObject;
   currentDestination: Tile32;
   originEncoded: number;
+  /** MD $5A при ремонте: начальное время ремонта, максимум полосы HUD ($048926). */
+  repairTime: number;
   actionID: number;
   nextActionID: number;
   fireDelay: number;
@@ -262,7 +264,7 @@ function newObject(): GObject {
 
 export function newUnit(): Unit {
   return {
-    o: newObject(), currentDestination: { x: 0, y: 0 }, originEncoded: 0, actionID: 0, nextActionID: 0, fireDelay: 0,
+    o: newObject(), currentDestination: { x: 0, y: 0 }, originEncoded: 0, repairTime: 0, actionID: 0, nextActionID: 0, fireDelay: 0,
     distanceToDestination: 0, targetAttack: 0, targetMove: 0, amount: 0, deviated: 0, deviatedHouse: 0,
     targetLast: { x: 0, y: 0 }, targetPreLast: { x: 0, y: 0 },
     orientation: [{ speed: 0, target: 0, current: 0 }, { speed: 0, target: 0, current: 0 }],

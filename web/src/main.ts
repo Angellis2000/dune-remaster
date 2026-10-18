@@ -180,6 +180,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   window.addEventListener("pointerdown", wake);
   G.onSound = (id) => sound.sfx(id);
   G.onFeedback = (id) => sound.feedback(id);
+  hud.credits.onSound = (id) => sound.sfx(id);
   /** брифинг включает музыку дома, кроме первого после выбора дома ($FFC194) */
   let briefingMusic = false;
   let inMission = false;
