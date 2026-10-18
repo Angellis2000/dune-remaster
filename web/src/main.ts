@@ -20,6 +20,7 @@ import { forgetRom, loadStoredRom, storeRom } from "./ui/romstore.ts";
 import { FactoryWindow } from "./ui/factory.ts";
 import { FrontEnd } from "./ui/frontend.ts";
 import { MentatScreen } from "./ui/mentat.ts";
+import { EndPicture, Flyby, FLYBY_FRAMES } from "./ui/endgame.ts";
 import { Hud, hudState } from "./ui/hud.ts";
 import { SettingsMenu, type HouseCode } from "./ui/settings.ts";
 import { MapView } from "./view/mapview.ts";
@@ -179,25 +180,58 @@ async function startGame(rom: DuneRom): Promise<void> {
     pausedBanner.hidden = true;
     endBanner.hidden = true;
     message.hidden = true;
+    ending = null;
+    flyby.stop();
+    minimap.canvas.hidden = !prefs.radar;
     hud.credits.reset(world.houses.get(world.player)?.credits ?? 0);
     updateHud();
   };
   select.addEventListener("change", () => loadMission(select.value));
-  // конец миссии, как $022AB2: ментат с текстом победы (карта следующего уровня) или поражения,
-  // затем брифинг следующей миссии или той же заново
+  // конец миссии, как $022AB2: игра идёт ещё 180 кадров, пролетает клин орнитоптеров дома победителя
+  // ($026984), затем картинка победы или поражения, текст ментата (на победе — карта следующего уровня)
+  // и брифинг следующей миссии или той же заново
+  const flyby = new Flyby(rom);
+  const endPicture = new EndPicture(rom);
+  stage.append(flyby.canvas, endPicture.root);
+  let ending: { result: "won" | "lost"; left: number } | null = null;
+  /**
+   * Главный враг ($FFC27C): последний дом сценария не под управлением игрока ($016646). В миссии 8, если у него
+   * не осталось боевых юнитов, — третий дом ($026A9A).
+   */
+  const enemyHouse = (): number => {
+    const ai = world.scenario.houses.filter((h) => h.brain !== "human");
+    let enemy = ai.length ? ai[ai.length - 1].id : (world.player + 1) % 3;
+    if (Number(current.slice(1)) === 8 && !world.units.some((u) => u.house === enemy && ![0, 1, 14, 15, 16].includes(u.type))) {
+      const p = world.player;
+      if (enemy === 0 && p === 2) enemy = 1;
+      else if (enemy === 1 && p === 0) enemy = 2;
+      else if (enemy === 2 && p === 1) enemy = 0;
+    }
+    return enemy;
+  };
   world.game.onEnd = (result) => {
+    message.hidden = true;
+    clearSelection();
+    world.game.afterEnd = FLYBY_FRAMES;
+    minimap.canvas.hidden = true;
+    ending = { result, left: FLYBY_FRAMES };
+    flyby.start(result === "won" ? world.player : enemyHouse());
+  };
+  const afterEnding = (result: "won" | "lost"): void => {
     const house = current[0] as HouseCode;
     const m = Number(current.slice(1));
     paused = true;
-    if (result === "won")
-      mentat.open({ house, level: m, text: mentat.text(house, m, 1), buttons: "key" }, () => {
-        if (m < 9) briefing(house, m + 1);
-        else {
-          endBanner.textContent = "Арракис ваш! Финальные титры пока не сделаны.";
-          endBanner.hidden = false;
-        }
-      });
-    else mentat.open({ house, level: m - 1, text: mentat.text(house, m, 2), buttons: "key" }, () => briefing(house, m));
+    endPicture.open(result, () => {
+      if (result === "won")
+        mentat.open({ house, level: m, text: mentat.text(house, m, 1), buttons: "key" }, () => {
+          if (m < 9) briefing(house, m + 1);
+          else {
+            endBanner.textContent = "Арракис ваш! Финальные титры пока не сделаны.";
+            endBanner.hidden = false;
+          }
+        });
+      else mentat.open({ house, level: m - 1, text: mentat.text(house, m, 2), buttons: "key" }, () => briefing(house, m));
+    });
   };
 
   // ---------------------------------------------------------------- Start: настройки
@@ -242,7 +276,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       } else if (r.cheat === "DUNEFINALE") G.onMessage("Финальные титры пока не сделаны");
     },
     toggled: (open) => {
-      paused = open || frontend.isOpen || mentat.isOpen;
+      paused = open || frontend.isOpen || mentat.isOpen || endPicture.isOpen;
       pausedBanner.hidden = true;
       // ОПЦИИ из главного меню — по выходу назад в меню
       if (!open && optionsFromTitle) {
@@ -450,6 +484,16 @@ async function startGame(rom: DuneRom): Promise<void> {
     G.viewportPacked = World.packAt(Math.max(0, view.camX), Math.max(0, view.camY));
     G.viewportTilesW = Math.ceil(v.w / CELL_PX);
     G.viewportTilesH = Math.ceil(v.h / CELL_PX);
+    if (ending && !paused) {
+      const v = view.viewSize();
+      flyby.tick(v.w, v.h, view.zoom);
+      if (--ending.left === 0) {
+        const r = ending.result;
+        ending = null;
+        flyby.stop();
+        afterEnding(r);
+      }
+    }
     if (!paused) {
       world.step();
       world.sync();
@@ -559,7 +603,8 @@ async function startGame(rom: DuneRom): Promise<void> {
   pad.onPress((b) => {
     if (!assets.root.hidden) return;
     lastButton = BUTTON_LABEL[b];
-    if (mentat.handlePad(b) || frontend.handlePad(b) || settings.handlePad(b) || factory.handlePad(b)) {
+    if (ending) return;
+    if (endPicture.handlePad(b) || mentat.handlePad(b) || frontend.handlePad(b) || settings.handlePad(b) || factory.handlePad(b)) {
       updateHud();
       return;
     }
@@ -639,7 +684,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   }
   canvas.focus();
   // для автотестов: ?debug открывает мир и вид из консоли
-  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat } });
+  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat, endPicture } });
 }
 
 showRomScreen();

@@ -646,3 +646,12 @@ button[aria-pressed="true"] {
   image-rendering: pixelated;
   cursor: pointer;
 }
+
+/* пролёт орнитоптеров в конце миссии: экран MD по центру вида */
+.flyby {
+  position: absolute;
+  left: 0;
+  top: 0;
+  image-rendering: pixelated;
+  pointer-events: none;
+}

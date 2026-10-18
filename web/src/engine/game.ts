@@ -70,6 +70,8 @@ export class Game {
   mission = 1;
   houseCode: "A" | "O" | "H" = "A";
   ended: MissionEnd | null = null;
+  /** кадров, которые игра ещё идёт после конца миссии (пролёт орнитоптеров, $026984) */
+  afterEnd = 0;
   onEnd: (result: MissionEnd) => void = () => {};
   /** выбранное здание (клетка g_selectionPosition) */
   selectedStructure: Structure | null = null;
@@ -306,7 +308,10 @@ export class Game {
   tick(): void {
     G.timerGUI++;
     G.timerGame++;
-    if (this.ended) return;
+    if (this.ended) {
+      if (this.afterEnd <= 0) return;
+      this.afterEnd--;
+    }
     gameLoopTeam();
     gameLoopUnit();
     gameLoopStructure();
@@ -315,7 +320,7 @@ export class Game {
     animationTick();
     unitSort();
     G.playerCredits = this.player?.credits ?? 0;
-    this.levelEnd();
+    if (!this.ended) this.levelEnd();
   }
 
   // ------------------------------------------------------------------ конец миссии (opendune.c)

@@ -45,8 +45,8 @@ await page.waitForTimeout(1500);
 await shot("mt7_advice");
 await skip();
 await shot("mt8_buttons_again");
-await key("Digit1"); // ПРИНЯТЬ (рамка снова наверху)
-await page.waitForTimeout(1500);
+await key("Digit1"); // ПРИНЯТЬ (рамка снова наверху): дальше уход с экрана, ~11 с
+await page.waitForFunction(() => document.querySelector(".mentat").hidden, { timeout: 20000 });
 console.log("ментат закрыт:", await page.isHidden(".mentat"), "миссия:", await page.inputValue("#mission-select"));
 console.log("errors:", errors);
 await browser.close();
