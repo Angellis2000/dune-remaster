@@ -386,7 +386,8 @@ const unitDie: ScriptFunction = () => {
     const credits = Math.max(idiv(ui.o.buildCredits, 100), 1);
     if (u.o.houseID === G.playerHouseID) {
       G.scenario.killedAllied++;
-      G.scenario.score -= credits;
+      // MD $044662: очков не меньше нуля
+      G.scenario.score -= Math.min(credits, Math.max(0, G.scenario.score));
     } else {
       G.scenario.killedEnemy++;
       G.scenario.score += credits;

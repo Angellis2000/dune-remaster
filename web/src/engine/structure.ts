@@ -534,7 +534,8 @@ export function structureDamage(s: Structure | null, damage: number, range: numb
     const score = Math.max(idiv(si.o.buildCredits, 100), 1);
     if (houseAreAllied(G.playerHouseID, s.o.houseID)) {
       G.scenario.destroyedAllied++;
-      G.scenario.score -= score;
+      // MD $00F980: очков не меньше нуля
+      G.scenario.score -= Math.min(score, Math.max(0, G.scenario.score));
     } else {
       G.scenario.destroyedEnemy++;
       G.scenario.score += score;

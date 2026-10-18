@@ -21,6 +21,7 @@ import { FactoryWindow } from "./ui/factory.ts";
 import { FrontEnd } from "./ui/frontend.ts";
 import { MentatScreen } from "./ui/mentat.ts";
 import { EndPicture, Flyby, FLYBY_FRAMES } from "./ui/endgame.ts";
+import { ScoreScreen, type MissionStats } from "./ui/score.ts";
 import { Hud, hudState } from "./ui/hud.ts";
 import { SettingsMenu, type HouseCode } from "./ui/settings.ts";
 import { MapView } from "./view/mapview.ts";
@@ -217,20 +218,40 @@ async function startGame(rom: DuneRom): Promise<void> {
     ending = { result, left: FLYBY_FRAMES };
     flyby.start(result === "won" ? world.player : enemyHouse());
   };
+  const scoreScreen = new ScoreScreen(rom);
+  stage.append(scoreScreen.root);
+  /** итоги для экрана $0271E2; при поражении очки делятся на 10 ($022C1A) */
+  const missionStats = (won: boolean): MissionStats => {
+    const sc = G.scenario;
+    const score = Math.max(0, sc.score);
+    return {
+      mission: Number(current.slice(1)),
+      house: world.player,
+      won,
+      score: won ? score : Math.trunc(score / 10),
+      time: G.timerGame - G.tickScenarioStart,
+      spice: [sc.harvestedAllied, sc.harvestedEnemy],
+      units: [sc.killedEnemy, sc.killedAllied],
+      structures: [sc.destroyedEnemy, sc.destroyedAllied],
+    };
+  };
   const afterEnding = (result: "won" | "lost"): void => {
     const house = current[0] as HouseCode;
     const m = Number(current.slice(1));
+    const stats = missionStats(result === "won");
     paused = true;
     endPicture.open(result, () => {
       if (result === "won")
-        mentat.open({ house, level: m, text: mentat.text(house, m, 1), buttons: "key" }, () => {
-          if (m < 9) briefing(house, m + 1);
-          else {
-            endBanner.textContent = "Арракис ваш! Финальные титры пока не сделаны.";
-            endBanner.hidden = false;
-          }
-        });
-      else mentat.open({ house, level: m - 1, text: mentat.text(house, m, 2), buttons: "key" }, () => briefing(house, m));
+        mentat.open({ house, level: m, text: mentat.text(house, m, 1), buttons: "key" }, () =>
+          scoreScreen.open(stats, () => {
+            if (m < 9) briefing(house, m + 1);
+            else {
+              endBanner.textContent = "Арракис ваш! Финальные титры пока не сделаны.";
+              endBanner.hidden = false;
+            }
+          }),
+        );
+      else mentat.open({ house, level: m - 1, text: mentat.text(house, m, 2), buttons: "key" }, () => scoreScreen.open(stats, () => briefing(house, m)));
     });
   };
 
@@ -276,7 +297,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       } else if (r.cheat === "DUNEFINALE") G.onMessage("Финальные титры пока не сделаны");
     },
     toggled: (open) => {
-      paused = open || frontend.isOpen || mentat.isOpen || endPicture.isOpen;
+      paused = open || frontend.isOpen || mentat.isOpen || endPicture.isOpen || scoreScreen.isOpen;
       pausedBanner.hidden = true;
       // ОПЦИИ из главного меню — по выходу назад в меню
       if (!open && optionsFromTitle) {
@@ -604,7 +625,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     if (!assets.root.hidden) return;
     lastButton = BUTTON_LABEL[b];
     if (ending) return;
-    if (endPicture.handlePad(b) || mentat.handlePad(b) || frontend.handlePad(b) || settings.handlePad(b) || factory.handlePad(b)) {
+    if (scoreScreen.handlePad(b) || endPicture.handlePad(b) || mentat.handlePad(b) || frontend.handlePad(b) || settings.handlePad(b) || factory.handlePad(b)) {
       updateHud();
       return;
     }
@@ -684,7 +705,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   }
   canvas.focus();
   // для автотестов: ?debug открывает мир и вид из консоли
-  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat, endPicture } });
+  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat, endPicture, scoreScreen } });
 }
 
 showRomScreen();
