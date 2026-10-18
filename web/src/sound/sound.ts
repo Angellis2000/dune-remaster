@@ -11,7 +11,7 @@
  * Музыка и звуки выключаются в настройках ($FFDC50, $FFDC51).
  */
 import workletUrl from "./worklet.ts?worker&url";
-import { GEMS } from "./gems.ts";
+import { GEMS, type SoundBank } from "./gems.ts";
 import type { DuneRom } from "../rom/dune.ts";
 import { readU16 } from "../rom/md.ts";
 
@@ -40,15 +40,18 @@ export class Sound {
   private ctx: AudioContext | null = null;
   private node: AudioWorkletNode | null = null;
   private analyser: AnalyserNode | null = null;
-  private queue: { cmd: number; args: number[] }[] = [];
+  private queue: { cmd: number; args: number[]; at: number }[] = [];
   private starting = false;
   musicOn = true;
   soundOn = true;
   /** $FFC8BC — текущая секвенция мелодии, $FFC8B4 — голоса, $FFC8B8 — последняя боевая */
-  private music = 0;
+  private music: number | null = null;
+  private preview: number | null = null;
+  private musicPaused = false;
+  private currentBank: SoundBank = "game";
   private voice = -1;
   private lastBattle = -1;
-  /** $FFC574 — сколько кадров ещё играть боевой мелодии (<0 — сменить при выходе из окна) */
+  /** $FFC574 — сколько кадров ещё играть боевой мелодии (<0 — сменить в основном цикле или при выходе из окна). */
   battleLeft = -1;
   /** звук, отложенный до кадра ($F800) */
   private deferred: number[] = [];
@@ -71,11 +74,16 @@ export class Sound {
       node.connect(ctx.destination);
       this.analyser = ctx.createAnalyser();
       node.connect(this.analyser);
-      node.port.postMessage({ rom: this.rom.bytes.slice().buffer });
-      for (const c of this.queue) node.port.postMessage(c);
+      node.port.postMessage({ rom: this.rom.bytes.slice().buffer, bank: this.currentBank });
+      const song = this.audibleMusic();
+      for (const c of this.queue) {
+        // Короткие эффекты до разрешения AudioContext уже прошли; музыка должна быть текущей.
+        if (performance.now() - c.at <= 250 && !(c.cmd === GEMS.START && c.args[0] === song)) node.port.postMessage(c);
+      }
       this.queue = [];
       this.ctx = ctx;
       this.node = node;
+      if (song !== null) this.startSong(song);
       if (ctx.state === "suspended") await ctx.resume();
     } catch (e) {
       console.warn("звук недоступен", e);
@@ -98,11 +106,34 @@ export class Sound {
     return this.ctx?.state === "running";
   }
 
+  get bank(): SoundBank { return this.currentBank; }
+
+  /** $02DCF0 / $02DCA0: драйвер перезагружается с банками заставки или игры. */
+  useBank(bank: SoundBank): void {
+    if (bank === this.currentBank) return;
+    this.currentBank = bank;
+    this.music = this.preview = null;
+    this.musicPaused = false;
+    this.voice = this.lastUi = -1;
+    this.battleLeft = -1;
+    this.queue = [];
+    this.deferred = [];
+    this.node?.port.postMessage({ bank });
+  }
+
+  private audibleMusic(): number | null {
+    if (!this.musicOn) return null;
+    return this.preview ?? (this.musicPaused ? null : this.music);
+  }
+
   /** Команда GEMS. */
   command(cmd: number, ...args: number[]): void {
     const m = { cmd, args };
     if (this.node) this.node.port.postMessage(m);
-    else if (this.queue.length < 64) this.queue.push(m);
+    else {
+      if (this.queue.length >= 64) this.queue.shift();
+      this.queue.push({ ...m, at: performance.now() });
+    }
   }
 
   startSong(seq: number): void {
@@ -152,7 +183,8 @@ export class Sound {
     this.command(GEMS.STOP_ALL);
     this.voice = -1;
     this.deferred = [];
-    if (this.musicOn && this.music) this.startSong(this.music);
+    const song = this.audibleMusic();
+    if (song !== null) this.startSong(song);
   }
 
   /** $00A8E2 */
@@ -170,16 +202,9 @@ export class Sound {
   /** $00A80A */
   playMusic(id: number): void {
     if (id === MUSIC.STOP) {
-      this.stopSong(this.music);
-      this.music = 0;
-      return;
-    }
-    if (!this.musicOn) {
-      if (this.battleLeft >= 0) {
-        this.stopSong(this.music);
-        this.music = 0;
-        this.battleLeft = -1;
-      }
+      if (this.music !== null) this.stopSong(this.music);
+      this.music = null;
+      this.battleLeft = -1;
       return;
     }
     if (id >= 8 && id <= 12) {
@@ -189,10 +214,35 @@ export class Sound {
     const entry = SOUND_ROM.music + id * 4;
     const seq = (readU16(this.rom.bytes, entry) << 16) >> 16;
     if (seq < 0) return;
-    this.stopSong(this.music);
+    this.playMusicSequence(seq, (readU16(this.rom.bytes, entry + 2) << 16) >> 16);
+  }
+
+  /** Музыка по прямому номеру GEMS (заставка, обучение), включая допустимую секвенцию 0. */
+  playMusicSequence(seq: number, duration = -1, restart = true): void {
+    if (!restart && seq === this.music && !this.musicPaused && this.preview === null) return;
+    if (this.preview !== null) this.stopSong(this.preview);
+    this.preview = null;
+    if (this.music !== null) this.stopSong(this.music);
     this.music = seq;
-    this.battleLeft = (readU16(this.rom.bytes, entry + 2) << 16) >> 16;
-    this.play(seq);
+    this.musicPaused = false;
+    this.battleLeft = duration;
+    if (this.musicOn) this.startSong(seq);
+  }
+
+  /** Фонотека временно заменяет текущую мелодию, а не играет одновременно с ней. */
+  previewMusic(seq: number): void {
+    if (this.preview !== null) this.stopSong(this.preview);
+    if (this.music !== null) this.stopSong(this.music);
+    this.preview = seq;
+    if (this.musicOn) this.startSong(seq);
+  }
+
+  endPreview(): void {
+    if (this.preview === null) return;
+    this.stopSong(this.preview);
+    this.preview = null;
+    const song = this.audibleMusic();
+    if (song !== null) this.startSong(song);
   }
 
   /** Случайная боевая мелодия ($021574: 8 + случайное 0…4). */
@@ -207,19 +257,23 @@ export class Sound {
 
   /** Музыка выключена в настройках — остановить. */
   setMusic(on: boolean): void {
+    if (on === this.musicOn) return;
+    const song = this.audibleMusic();
     this.musicOn = on;
-    if (!on) {
-      this.stopSong(this.music);
-      this.music = 0;
-    }
+    if (!on && song !== null) this.stopSong(song);
+    const resume = this.audibleMusic();
+    if (on && resume !== null) this.startSong(resume);
   }
 
   /** Текущая мелодия заново (после паузы-меню). */
   resumeMusic(): void {
-    if (this.musicOn && this.music) this.startSong(this.music);
+    this.musicPaused = false;
+    const song = this.audibleMusic();
+    if (song !== null) this.startSong(song);
   }
 
   stopMusic(): void {
-    this.stopSong(this.music);
+    this.musicPaused = true;
+    if (this.music !== null) this.stopSong(this.music);
   }
 }

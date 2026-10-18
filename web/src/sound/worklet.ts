@@ -1,8 +1,9 @@
 /**
  * AudioWorklet: звуковая часть MD (Z80 с драйвером GEMS, YM2612, PSG) в отдельном потоке.
- * Сообщения: { rom: ArrayBuffer } — запуск; { cmd, args } — команда GEMS; { volume } — громкость.
+ * Сообщения: { rom: ArrayBuffer, bank } — запуск; { bank } — смена банков с перезапуском драйвера;
+ * { cmd, args } — команда GEMS; { volume } — громкость.
  */
-import { SoundMachine } from "./gems.ts";
+import { SoundMachine, type SoundBank } from "./gems.ts";
 
 declare const sampleRate: number;
 declare class AudioWorkletProcessor {
@@ -13,14 +14,22 @@ declare function registerProcessor(name: string, ctor: unknown): void;
 class GemsProcessor extends AudioWorkletProcessor {
   private machine: SoundMachine | null = null;
   private pending: { cmd: number; args: number[] }[] = [];
+  private rom: Uint8Array | null = null;
+  private bank: SoundBank = "game";
 
   constructor() {
     super();
     this.port.onmessage = (e: MessageEvent) => {
       const d = e.data;
       if (d.rom) {
-        this.machine = new SoundMachine(new Uint8Array(d.rom));
+        this.rom = new Uint8Array(d.rom);
+        this.bank = d.bank === "intro" ? "intro" : "game";
+        this.machine = new SoundMachine(this.rom, this.bank);
         for (const c of this.pending) this.machine.command(c.cmd, ...c.args);
+        this.pending = [];
+      } else if (d.bank === "intro" || d.bank === "game") {
+        this.bank = d.bank;
+        if (this.rom) this.machine = new SoundMachine(this.rom, this.bank);
         this.pending = [];
       } else if (typeof d.cmd === "number") {
         if (this.machine) this.machine.command(d.cmd, ...(d.args ?? []));

@@ -428,7 +428,7 @@ export class TutorialScreen {
   private *run(): Step {
     // $03071C: геймпад и его тайлы; секвенция 5 — музыка обучения
     this.loadTiles(TUTORIAL_ROM.padTiles, TUTORIAL_ROM.padVram);
-    if (this.sound?.musicOn) this.sound.play(5);
+    this.sound?.playMusicSequence(5);
     for (const s of TUTORIAL_ROM.scripts) if (yield* this.script(s)) break;
     yield* this.fade(null);
   }

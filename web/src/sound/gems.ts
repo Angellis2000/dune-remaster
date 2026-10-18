@@ -4,7 +4,7 @@
  * раз в кадр. Команды кладутся в очередь Z80 ($1B40, 64 байта, индекс записи — байт $0036) так же,
  * как это делает код 68000 ($0015DE: $FF и номер команды, $0015EA: байт аргумента).
  * Инициализация — как $001624: копия драйвера, сброс Z80, команда $0B с адресами четырёх банков
- * (патчи, огибающие, секвенции, сэмплы — $02DD04).
+ * (патчи, огибающие, секвенции, сэмплы — $02DD04 для заставки, $02DCB8 для игры).
  */
 import { PSG } from "./psg.ts";
 import { YM2612 } from "./ym2612.ts";
@@ -17,8 +17,13 @@ export const GEMS_ROM = {
   writeIndex: 0x0036,
   /** индекс чтения драйвера: сколько байтов очереди он уже забрал */
   readIndex: 0x0037,
+  /** $02DCF0: заставка и её главное меню. */
   banks: { patches: 0x0d02ae, envelopes: 0x0d0251, sequences: 0x0cf970, samples: 0x0c8160 },
+  /** $02DCA0: выбор дома, настройки, обучение и миссии. */
+  gameBanks: { patches: 0x0fe2b6, envelopes: 0x0fe185, sequences: 0x0f6363, samples: 0x0d06bf },
 } as const;
+
+export type SoundBank = "intro" | "game";
 
 /** Команды GEMS, которые шлёт код игры. */
 export const GEMS = {
@@ -60,7 +65,7 @@ export class SoundMachine implements Z80Bus {
   /** общий множитель: у MD выход тихий (сверено по Genesis Plus GX), баланс FM и PSG не меняется */
   volume = 2.5;
 
-  constructor(private rom: Uint8Array) {
+  constructor(private rom: Uint8Array, readonly soundBank: SoundBank = "game") {
     this.reset();
   }
 
@@ -71,7 +76,7 @@ export class SoundMachine implements Z80Bus {
     this.bank = 0;
     this.out = [];
     this.held = [];
-    const b = GEMS_ROM.banks;
+    const b = this.soundBank === "intro" ? GEMS_ROM.banks : GEMS_ROM.gameBanks;
     const addr = (a: number) => [a & 0xff, (a >> 8) & 0xff, (a >> 16) & 0xff];
     // $001624: байт $FF, затем $0B (без префикса) и четыре адреса по 3 байта
     this.push(0xff);
@@ -92,6 +97,10 @@ export class SoundMachine implements Z80Bus {
    * в оригинале до первой команды проходят кадры.
    */
   command(cmd: number, ...args: number[]): void {
+    // У банков разное число секвенций (13/84). Недопустимый номер запускает данные вне таблицы как код GEMS.
+    const sequences = this.soundBank === "intro" ? GEMS_ROM.banks.sequences : GEMS_ROM.gameBanks.sequences;
+    const count = (this.rom[sequences] | this.rom[sequences + 1] << 8) / 2;
+    if ((cmd === GEMS.START || cmd === GEMS.STOP) && (!Number.isInteger(args[0]) || args[0] < 0 || args[0] >= count)) return;
     if (this.booting > 0) {
       this.held.push([cmd, ...args]);
       return;
@@ -137,10 +146,6 @@ export class SoundMachine implements Z80Bus {
   /** Один отсчёт синтезатора: Z80 на свою долю тактов, затем такт YM2612. */
   private nativeSample(): void {
     if (this.booting > 0 && --this.booting === 0) {
-      // в оригинале при включении всегда запускается секвенция 0 (музыка заставки, $017418); без этого
-      // драйвер не берёт каналы под звуки — повторяем запуск и сразу стоп
-      this.command(GEMS.START, 0);
-      this.command(GEMS.STOP, 0);
       for (const [cmd, ...args] of this.held) this.command(cmd, ...args);
       this.held = [];
     }

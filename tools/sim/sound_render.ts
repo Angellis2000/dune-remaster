@@ -5,7 +5,7 @@ import { GEMS, SoundMachine } from "../../web/src/sound/gems.ts";
 
 const rom = new Uint8Array(readFileSync(new URL("../../rom/dune_usa.gen", import.meta.url)));
 const [seq = "0", secs = "10", out = "out/snd.wav"] = process.argv.slice(2);
-const m = new SoundMachine(rom);
+const m = new SoundMachine(rom, process.env.BANK === "intro" ? "intro" : "game");
 const rate = 44100;
 const n = Math.round(Number(secs) * rate);
 const L = new Float32Array(n);

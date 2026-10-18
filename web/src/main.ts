@@ -185,6 +185,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   let briefingMusic = false;
   let inMission = false;
   const loadMission = (code: string) => {
+    sound.useBank("game");
     current = code;
     world.load(code[0] as HouseCode, Number(code.slice(1)));
     const c = world.scenario.cursor;
@@ -293,7 +294,6 @@ async function startGame(rom: DuneRom): Promise<void> {
   await screens.art.load();
   sound.musicOn = prefs.music;
   sound.soundOn = prefs.sound;
-  let lastTrack = -1;
   const settings = new SettingsMenu(screens, {
     music: () => prefs.music,
     setMusic: (on) => {
@@ -309,9 +309,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     },
     ui: (seq) => sound.menuUi(seq),
     playTrack: (seq) => {
-      if (lastTrack >= 0) sound.stopSong(lastTrack);
-      lastTrack = -1;
-      if (prefs.music) sound.startSong((lastTrack = seq));
+      if (prefs.music) sound.previewMusic(seq);
     },
     playSfx: (seq) => sound.menuUi(seq),
     radar: () => prefs.radar,
@@ -342,6 +340,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       }
     },
     toggled: (open) => {
+      if (!open) sound.endPreview();
       paused = open || frontend.isOpen || mentat.isOpen || endPicture.isOpen || scoreScreen.isOpen || finale.isOpen;
       // $020EF4: меню в игре — мелодия стоп и звук 6; по выходу — та же или новая боевая
       if (inMission && !optionsFromTitle) {
@@ -351,7 +350,6 @@ async function startGame(rom: DuneRom): Promise<void> {
         } else if (sound.battleLeft < 0) sound.battleMusic();
         else sound.resumeMusic();
       }
-      if (!open && lastTrack >= 0) (sound.stopSong(lastTrack), (lastTrack = -1));
       pausedBanner.hidden = true;
       // ОПЦИИ из главного меню — по выходу назад в меню
       if (!open && optionsFromTitle) {
@@ -377,12 +375,14 @@ async function startGame(rom: DuneRom): Promise<void> {
       });
     },
     options: () => {
+      sound.useBank("game");
       optionsFromTitle = true;
       frontend.close();
       settings.open();
     },
     // $03067C: ролик обучения, по концу или Start — снова главное меню
     tutorial: () => {
+      sound.useBank("game");
       frontend.close();
       tutorial.open(() => frontend.openTitle());
     },
@@ -396,8 +396,9 @@ async function startGame(rom: DuneRom): Promise<void> {
     },
     screen: (mode) => {
       inMission = false;
-      if (mode === "intro" && prefs.music) sound.play(0);
-      else if (mode === "house") sound.playMusic(MUSIC.HOUSE_SELECT);
+      sound.useBank(mode === "house" ? "game" : "intro");
+      if (mode === "intro" || mode === "title") sound.playMusicSequence(0, -1, mode === "intro");
+      else sound.playMusic(MUSIC.HOUSE_SELECT);
     },
   });
   stage.append(frontend.root);
@@ -589,7 +590,11 @@ async function startGame(rom: DuneRom): Promise<void> {
     frame++;
     // звуки, отложенные до кадра ($00182E); время боевой мелодии ($004668)
     sound.frame();
-    if (inMission) sound.battleLeft--;
+    if (inMission) {
+      sound.battleLeft--;
+      // $01253E: в основном цикле игры истёкшая боевая мелодия сразу заменяется следующей.
+      if (!paused && sound.musicOn && sound.battleLeft < 0) sound.battleMusic();
+    }
     // окно игрока — для скриптов (юниты вне окна думают медленнее, как в оригинале)
     const v = view.viewSize();
     G.viewportPacked = World.packAt(Math.max(0, view.camX), Math.max(0, view.camY));
