@@ -3,14 +3,15 @@
 
 Run npm run build in web first, then python3 tools/build_html.py [out/onboarding/Dune.html].
 """
+import argparse
 import base64
+from io import BytesIO
 import json
 from pathlib import Path
 import re
-import sys
 
 
-def bundle(destination: Path) -> None:
+def bundle(destination: Path, lossless_webp: bool = False) -> None:
     root = Path(__file__).resolve().parents[1] / "web" / "dist"
     html = (root / "index.html").read_text()
     tag = re.search(r'<script\b[^>]*src="([^"]+)"[^>]*></script>', html)
@@ -25,7 +26,20 @@ def bundle(destination: Path) -> None:
         mime = {".png": "image/png", ".js": "text/javascript", ".woff2": "font/woff2"}.get(asset.suffix)
         if not mime:
             raise ValueError(f"Unsupported asset: {name}")
-        uri = f"data:{mime};base64," + base64.b64encode(asset.read_bytes()).decode()
+        data = asset.read_bytes()
+        if lossless_webp and asset.suffix == ".png":
+            from PIL import Image
+            # Только упаковка: каждый декодированный RGBA-пиксель должен остаться неизменным.
+            image = Image.open(BytesIO(data)).convert("RGBA")
+            buffer = BytesIO()
+            image.save(buffer, format="WEBP", lossless=True, exact=True, quality=60, method=3)
+            compressed = buffer.getvalue()
+            decoded = Image.open(BytesIO(compressed)).convert("RGBA")
+            if decoded.size != image.size or decoded.tobytes() != image.tobytes():
+                raise ValueError(f"Pixel mismatch after lossless conversion: {name}")
+            if len(compressed) < len(data):
+                data, mime = compressed, "image/webp"
+        uri = f"data:{mime};base64," + base64.b64encode(data).decode()
         return json.dumps(uri)
 
     js = re.sub(r'new URL\("([^\"]+)",import.meta.url\)\.href', inline, js)
@@ -41,4 +55,8 @@ def bundle(destination: Path) -> None:
 
 
 if __name__ == "__main__":
-    bundle(Path(sys.argv[1] if len(sys.argv) > 1 else "out/onboarding/Dune.html"))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("destination", type=Path, nargs="?", default=Path("out/onboarding/Dune.html"))
+    parser.add_argument("--lossless-webp", action="store_true", help="Smaller embedded images with identical pixels (requires Pillow)")
+    args = parser.parse_args()
+    bundle(args.destination, args.lossless_webp)
