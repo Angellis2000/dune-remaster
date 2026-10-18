@@ -385,6 +385,9 @@ async function startGame(rom: DuneRom): Promise<void> {
       tutorial.open(() => frontend.openTitle());
     },
     // $017418: заставка — секвенция 0 (если музыка включена); $026BBA: выбор дома — мелодия $1C
+    introSound: (seq) => {
+      if (prefs.music) sound.play(seq);
+    },
     screen: (mode) => {
       inMission = false;
       if (mode === "intro" && prefs.music) sound.play(0);

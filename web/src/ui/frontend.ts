@@ -20,6 +20,8 @@ export interface FrontEndHost {
   newGame(house: HouseCode): void;
   /** экран сменился: для музыки (заставка — секвенция 0, выбор дома — мелодия $1C) */
   screen?(mode: "intro" | "title" | "house"): void;
+  /** звук заставки ($02DD26) */
+  introSound?(seq: number): void;
   options(): void;
   tutorial(): void;
 }
@@ -49,7 +51,7 @@ export class FrontEnd {
     this.ctx = this.canvas.getContext("2d")!;
     this.root.append(this.canvas);
     this.canvas.addEventListener("click", (e) => this.onClick(e));
-    this.intro = new Intro(gfx);
+    this.intro = new Intro(gfx, (seq) => this.host.introSound?.(seq));
   }
 
   /** Заставка при включении; кончится или любая кнопка — главное меню. */

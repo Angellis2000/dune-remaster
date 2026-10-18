@@ -11,12 +11,12 @@ await page.goto("http://localhost:4173/?debug&intro");
 await page.setInputFiles("#rom-file", process.argv[2]);
 await page.waitForFunction(() => window.dune?.frontend, { timeout: 20000 });
 let at = 0;
-for (const f of [100, 300, 500, 700, 900, 1100, 1300, 1500, 1700, 1900]) {
+for (const f of [100, 300, 500, 700, 900, 1100, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2100, 2300]) {
   await page.evaluate((n) => window.dune.frontend.stepIntro(n), f - at);
   at = f;
   await (await page.$(".frontend canvas")).screenshot({ path: `${OUT}/intro_${String(f).padStart(4, "0")}.png` });
 }
-await page.evaluate(() => window.dune.frontend.stepIntro(2000));
+await page.evaluate(() => window.dune.frontend.stepIntro(3000));
 console.log("режим:", await page.evaluate(() => window.dune.frontend.mode));
 console.log("errors:", errors);
 await browser.close();

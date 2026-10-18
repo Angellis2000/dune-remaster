@@ -5,12 +5,16 @@
  *   по кругу от 0 до −320; логотипы Virgin/Westwood на плоскости A проявляются (строки 1–3 палитры,
  *   шаг раз в 3 кадра), 300 кадров держатся и гаснут; затем звёзды тормозят до −704 — к планете;
  * - главное меню: плоскость A с −512 («DUNE»), строки 1–3 проявляются.
- * Сценки с кораблями после подлёта ($017DC8, $019A52) пока не перенесены.
+ * - $017636: строки 1–3 палитры — $0A6E98, 61 кадр, тайлы кораблей $017F2E в VRAM $6200; три сценки ($017DC8:
+ *   1, 0, 2) — корабль по точкам $01963A (1 x y — точка и 3 кадра, 2 — следующий кадр спрайта $01957A);
+ *   перед каждой — секвенция 10; затем строки 1–3 чёрные и 180 кадров пауза.
  * Любая кнопка — сразу главное меню ($017D1A, $00471A).
  */
 import type { ScreenGfx } from "../gfx/screens.ts";
 import { SCREEN_H, SCREEN_W } from "../gfx/screens.ts";
-import { blitTile, cramToRGBA, readU16 } from "../rom/md.ts";
+import { blitTile, cramToRGBA, readU16, readU32 } from "../rom/md.ts";
+import { drawObjSprite, objectDef, type ObjSprite } from "./endgame.ts";
+import { loadTileList } from "./tutorial.ts";
 
 type Step = Generator<void, void, void>;
 
@@ -47,11 +51,18 @@ export class Intro {
   private loopAgain = true;
   private braking = false;
   private readonly target = -704 * 0x10000;
+  /** корабль сценки: координаты экрана и спрайты кадра */
+  private ship: { x: number; y: number; sprites: ObjSprite[] } | null = null;
+  private vram: Uint8Array;
 
-  constructor(private gfx: ScreenGfx) {
+  constructor(
+    private gfx: ScreenGfx,
+    private play: (seq: number) => void = () => {},
+  ) {
     this.sega = gfx.segaData();
     this.title = gfx.titleData(false);
     this.titleMenu = gfx.titleData(true);
+    this.vram = this.title.vram.slice();
   }
 
   start(): void {
@@ -79,6 +90,28 @@ export class Intro {
       yield* this.wait(3);
       if (same === to - from) return;
     }
+  }
+
+  /** $017DC8: сценка n — корабль по точкам. */
+  private *cutscene(n: number): Step {
+    const b = this.gfx.romBytes;
+    const frames = readU32(b, 0x01957a + n * 4);
+    let frame = 0;
+    this.ship = { x: 0, y: 0, sprites: objectDef(b, readU32(b, frames)) };
+    for (let p = readU32(b, 0x01963a + n * 4); ; ) {
+      const cmd = readU16(b, p);
+      p += 2;
+      if (cmd === 1) {
+        this.ship.x = (readU16(b, p) << 16) >> 16;
+        this.ship.y = (readU16(b, p + 2) << 16) >> 16;
+        p += 4;
+        yield* this.wait(3);
+      } else if (cmd === 2) {
+        frame++;
+        this.ship = { x: 40, y: 40, sprites: objectDef(b, readU32(b, frames + frame * 4)) };
+      } else break;
+    }
+    this.ship = null;
   }
 
   /** $017C36: шаг прокрутки звёзд. */
@@ -140,6 +173,19 @@ export class Intro {
     // $017D48: звёзды больше не по кругу — тормозят к планете
     this.loopAgain = false;
     while (this.scrolling) yield;
+    // $017636: сценки с кораблями
+    // $0044C4(1, 0, $30, $0A6E98): строки 1–3 сразу из $0A6E98
+    for (let i = 0; i < 48; i++) this.cram[16 + i] = readU16(b, 0x0a6e98 + i * 2);
+    yield* this.wait(61);
+    loadTileList(b, this.vram, 0x017f2e, 0x6200);
+    for (const n of [1, 0, 2]) {
+      this.play(10);
+      yield* this.cutscene(n);
+    }
+    this.cram.fill(0, 16, 64);
+    yield* this.wait(180);
+    // $01777A: кадр 13 заново — тайлы меню поверх тайлов кораблей
+    this.vram = this.title.vram.slice();
     // главное меню
     this.showA = true;
     this.menu = true;
@@ -158,7 +204,7 @@ export class Intro {
         const word = readU16(maps, base + (cy * 128 + cx) * 2);
         if (!(word & 0x7ff)) continue;
         tile.fill(0);
-        blitTile(this.title.vram, word, pal, tile, 8, 0, 0);
+        blitTile(this.vram, word, pal, tile, 8, 0, 0);
         for (let r = 0; r < 8; r++)
           for (let c = 0; c < 8; c++) {
             const x = sx + c;
@@ -179,6 +225,8 @@ export class Intro {
     } else if (this.mode === "title") {
       this.plane(this.title.maps, 0xe000, this.hsB, pal);
       if (this.showA) this.plane((this.menu ? this.titleMenu : this.title).maps, 0xc000, this.hsA, pal);
+      const s = this.ship;
+      if (s) for (let i = s.sprites.length - 1; i >= 0; i--) drawObjSprite(px, SCREEN_W, SCREEN_H, this.vram, 0, s.sprites[i], s.x + s.sprites[i].x, s.y + s.sprites[i].y, pal);
     }
     ctx.putImageData(new ImageData(new Uint8ClampedArray(px.buffer.slice(0)), SCREEN_W, SCREEN_H), 0, 0);
   }
