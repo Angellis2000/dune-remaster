@@ -699,13 +699,15 @@ async function startGame(rom: DuneRom): Promise<void> {
   loadMission("A1");
   // ?debug — сразу в игру (для автотестов), иначе — главное меню
   const q = new URLSearchParams(location.search);
-  if (!q.has("debug") || q.has("title")) {
+  if (!q.has("debug") || q.has("title") || q.has("intro")) {
     paused = true;
-    frontend.openTitle();
+    // заставка при включении, как на MD; ?debug&title — сразу меню
+    if (q.has("title")) frontend.openTitle();
+    else frontend.openIntro();
   }
   canvas.focus();
   // для автотестов: ?debug открывает мир и вид из консоли
-  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat, endPicture, scoreScreen } });
+  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat, endPicture, scoreScreen, frontend } });
 }
 
 showRomScreen();

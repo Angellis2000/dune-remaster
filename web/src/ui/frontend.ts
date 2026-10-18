@@ -8,6 +8,7 @@ import type { ScreenGfx } from "../gfx/screens.ts";
 import { SCREEN_H, SCREEN_W } from "../gfx/screens.ts";
 import type { Button } from "../input/pad.ts";
 import type { HouseCode } from "./settings.ts";
+import { Intro } from "./intro.ts";
 
 const MENU_ITEMS = 3;
 const ARROW = { x: 120, y: 160, step: 8 };
@@ -25,7 +26,8 @@ export class FrontEnd {
   readonly root: HTMLElement;
   private canvas = document.createElement("canvas");
   private ctx: CanvasRenderingContext2D;
-  private mode: "title" | "house" = "title";
+  private mode: "intro" | "title" | "house" = "title";
+  private intro: Intro;
   private item = 0;
   private house = 0;
   private frame = 0;
@@ -45,6 +47,21 @@ export class FrontEnd {
     this.ctx = this.canvas.getContext("2d")!;
     this.root.append(this.canvas);
     this.canvas.addEventListener("click", (e) => this.onClick(e));
+    this.intro = new Intro(gfx);
+  }
+
+  /** Заставка при включении; кончится или любая кнопка — главное меню. */
+  openIntro(): void {
+    this.mode = "intro";
+    this.intro.start();
+    this.show();
+  }
+
+  /** Для автотестов: прогнать n кадров заставки. */
+  stepIntro(n: number): void {
+    cancelAnimationFrame(this.raf);
+    for (let i = 0; i < n && this.mode === "intro"; i++) if (!this.intro.tick()) this.openTitle();
+    this.draw();
   }
 
   get isOpen(): boolean {
@@ -78,6 +95,10 @@ export class FrontEnd {
   /** Кнопка геймпада, пока экран открыт. true — обработана. */
   handlePad(b: Button): boolean {
     if (this.root.hidden) return false;
+    if (this.mode === "intro") {
+      this.openTitle();
+      return true;
+    }
     if (this.mode === "title") {
       if (b === "up") this.item = (this.item + MENU_ITEMS - 1) % MENU_ITEMS;
       else if (b === "down") this.item = (this.item + 1) % MENU_ITEMS;
@@ -103,7 +124,8 @@ export class FrontEnd {
     const r = this.canvas.getBoundingClientRect();
     const x = ((e.clientX - r.left) / r.width) * SCREEN_W;
     const y = ((e.clientY - r.top) / r.height) * SCREEN_H;
-    if (this.mode === "title") {
+    if (this.mode === "intro") this.openTitle();
+    else if (this.mode === "title") {
       const i = Math.floor((y - ARROW.y) / ARROW.step);
       if (i >= 0 && i < MENU_ITEMS && x >= ARROW.x) {
         this.item = i;
@@ -121,13 +143,15 @@ export class FrontEnd {
 
   private loop(): void {
     this.frame++;
+    if (this.mode === "intro" && !this.intro.tick()) this.openTitle();
     this.draw();
     if (!this.root.hidden) this.raf = requestAnimationFrame(() => this.loop());
   }
 
   private draw(): void {
     const g = this.ctx;
-    if (this.mode === "title") {
+    if (this.mode === "intro") this.intro.draw(g);
+    else if (this.mode === "title") {
       g.drawImage(this.gfx.titleScreen(), 0, 0);
       // стрелка: цвет меняется раз в 6 кадров
       g.drawImage(this.gfx.titleArrow(Math.floor(this.frame / 6)), ARROW.x, ARROW.y + this.item * ARROW.step);

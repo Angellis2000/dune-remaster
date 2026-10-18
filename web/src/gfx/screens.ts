@@ -126,6 +126,10 @@ export class ScreenGfx {
   readonly palette: Uint32Array;
   private cache = new Map<string, HTMLCanvasElement>();
 
+  get romBytes(): Uint8Array {
+    return this.rom.bytes;
+  }
+
   constructor(private rom: DuneRom) {
     this.palette = rom.readPalette(MENU_ROM.palette, 4);
   }
@@ -227,12 +231,16 @@ export class ScreenGfx {
   }
 
   /** Главное меню целиком (320×224): плоскость B, поверх A, с прокруткой как у оригинала. */
-  titleScreen(): HTMLCanvasElement {
-    return this.memo("title", () => {
-      const t = MENU_ROM.title;
-      const vram = this.vramFrom(t.tiles);
-      const maps = this.vramFrom([...t.planeA, ...t.planeB]).slice();
-      const b = this.rom.bytes;
+  /**
+   * Данные главного меню для заставки: VRAM тайлов, карты плоскостей (A с $C000, B с $E000, 128 клеток в строке;
+   * menu — с пунктами меню) и палитра словами CRAM с правками.
+   */
+  titleData(menu = true): { vram: Uint8Array; maps: Uint8Array; palette: Uint16Array } {
+    const t = MENU_ROM.title;
+    const vram = this.vramFrom(t.tiles);
+    const maps = this.vramFrom([...t.planeA, ...t.planeB]).slice();
+    const b = this.rom.bytes;
+    if (menu)
       for (const [call, offset] of t.items) {
         if (readU16(b, call) !== 0x487a) continue; // pea (d16,pc)
         const str = call + 2 + ((readU16(b, call + 2) << 16) >> 16);
@@ -243,6 +251,32 @@ export class ScreenGfx {
           maps[at + 1] = word & 0xff;
         }
       }
+    const palette = new Uint16Array(64);
+    t.palettes.forEach((a, line) => {
+      for (let i = 0; i < 16; i++) palette[line * 16 + i] = readU16(b, a + i * 2);
+    });
+    for (const [i, w] of t.paletteFix) palette[i] = w;
+    return { vram, maps, palette };
+  }
+
+  /**
+   * Экран «SEGA» при включении ($001864): 49 тайлов LCW $001914 с VRAM 0, плоскость (64 клетки) — LCW $001D2A,
+   * строка 0 палитры — $001DA4; цвета 2–12 переливаются по таблице $0018D6.
+   */
+  segaData(): { vram: Uint8Array; map: Uint8Array; palette: Uint16Array; cycle: number } {
+    const b = this.rom.bytes;
+    const vram = new Uint8Array(0x10000);
+    vram.set(lcwDecompress(b, 0x001914).data.subarray(0, 0x31 * 32), 0);
+    const map = lcwDecompress(b, 0x001d2a).data;
+    const palette = new Uint16Array(64);
+    for (let i = 0; i < 16; i++) palette[i] = readU16(b, 0x001da4 + i * 2);
+    return { vram, map, palette, cycle: 0x0018d6 };
+  }
+
+  titleScreen(): HTMLCanvasElement {
+    return this.memo("title", () => {
+      const t = MENU_ROM.title;
+      const { vram, maps } = this.titleData();
       const pal = this.paletteOf(t.palettes, t.paletteFix);
       const px = new Uint32Array(SCREEN_W * SCREEN_H).fill(pal[0]);
       const plane = (base: number, scroll: number) => {
