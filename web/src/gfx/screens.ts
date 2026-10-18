@@ -101,15 +101,42 @@ export class ScreenGfx {
     return this.memo(`bg:${which}`, () => this.tilemapScreen(MENU_ROM[which].tiles, MENU_ROM[which].map, this.palette));
   }
 
+  /** Тайлы экрана: LCW-потоки подряд с VRAM 0. */
+  private tileVram(tiles: readonly number[]): Uint8Array {
+    const key = tiles.join(",");
+    let vram = this.vrams.get(key);
+    if (!vram) {
+      vram = new Uint8Array(0x10000);
+      let dst = 0;
+      for (const src of tiles) {
+        const data = lcwDecompress(this.rom.bytes, src).data;
+        vram.set(data.subarray(0, Math.min(data.length, vram.length - dst)), dst);
+        dst += data.length;
+      }
+      this.vrams.set(key, vram);
+    }
+    return vram;
+  }
+  private vrams = new Map<string, Uint8Array>();
+
+  /**
+   * Огоньки рамки окна: n слов карты Window из таблицы ROM (`table` + кадр·n·2), как их шлёт DMA
+   * ($007F90 у окна здания, $00899A у космопорта). Возвращает полоску тайлов n×1.
+   */
+  windowLight(which: "factory" | "starport", table: number, n: number, frame: number): HTMLCanvasElement {
+    return this.memo(`light:${which}:${table}:${frame}`, () => {
+      const cfg = which === "factory" ? MENU_ROM.factory : MENU_ROM.starport;
+      const vram = this.tileVram(cfg.tiles);
+      const pal = which === "factory" ? this.factoryPalette() : this.starportPalette();
+      const px = new Uint32Array(n * 64).fill(pal[0]);
+      for (let i = 0; i < n; i++) blitTile(vram, readU16(this.rom.bytes, table + (frame * n + i) * 2), pal, px, n * 8, i * 8, 0);
+      return toCanvas(px, n * 8, 8);
+    });
+  }
+
   /** Экран 40×28 тайлов: тайлы из LCW-потоков подряд с VRAM 0, карта — LCW, 64 слова в строке. */
   private tilemapScreen(tiles: readonly number[], mapAddr: number, palette: Uint32Array): HTMLCanvasElement {
-    const vram = new Uint8Array(0x10000);
-    let dst = 0;
-    for (const src of tiles) {
-      const data = lcwDecompress(this.rom.bytes, src).data;
-      vram.set(data.subarray(0, Math.min(data.length, vram.length - dst)), dst);
-      dst += data.length;
-    }
+    const vram = this.tileVram(tiles);
     const map = lcwDecompress(this.rom.bytes, mapAddr).data;
     const px = new Uint32Array(SCREEN_W * SCREEN_H).fill(palette[0]);
     for (let cy = 0; cy < 28; cy++)

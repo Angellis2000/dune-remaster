@@ -53,6 +53,30 @@ interface Order {
   upgrade?: number;
 }
 
+/**
+ * Огоньки рамки: место (клетка карты Window), таблица ROM, слов на кадр, число кадров и случайная пауза
+ * между сменами (random(min..max) кадров), как в $007F90 (окно здания) и $00899A (космопорт).
+ */
+interface Light {
+  col: number;
+  row: number;
+  table: number;
+  words: number;
+  frames: number;
+  min: number;
+  max: number;
+}
+const FACTORY_LIGHTS: Light[] = [
+  { col: 15, row: 1, table: 0x007fcc, words: 8, frames: 4, min: 7, max: 27 },
+  { col: 22, row: 3, table: 0x008048, words: 1, frames: 2, min: 4, max: 11 },
+  { col: 34, row: 7, table: 0x008088, words: 1, frames: 2, min: 7, max: 17 },
+];
+const STARPORT_LIGHTS: Light[] = [
+  { col: 33, row: 16, table: 0x0089d6, words: 4, frames: 4, min: 7, max: 27 },
+  { col: 13, row: 1, table: 0x008a36, words: 3, frames: 16, min: 4, max: 11 },
+];
+const rnd = (min: number, max: number) => min + Math.floor(Math.random() * (max - min + 1));
+
 /** Иконка пункта улучшения (гаечный ключ): номер 19 в таблице зданий, 27 — юнитов (обе $06E890). */
 const UPGRADE_ICON = { structures: 19, units: 27 };
 /** Имя пункта улучшения — строка ROM, которую копирует код окна ($0276FA). */
@@ -69,6 +93,8 @@ export class FactoryWindow {
   private pictures = new Map<string, HTMLCanvasElement | null>();
   private frame = 0;
   private raf = 0;
+  /** огоньки: таймер и текущий кадр */
+  private lights: { timer: number; frame: number }[] = [];
 
   constructor(
     private rom: DuneRom,
@@ -105,6 +131,7 @@ export class FactoryWindow {
   open(s: Structure): void {
     this.s = s;
     this.cursor = -3;
+    this.lights = [];
     this.refresh();
     this.root.hidden = false;
     this.host.toggled(true);
@@ -185,6 +212,8 @@ export class FactoryWindow {
       this.close();
       return;
     }
+    // $0288BC: хайтек не заказывает авиацию, если для неё нет места ($FFC728), — звук ошибки 0x2F
+    if (s.o.type === STRUCTURE.HIGH_TECH && (order.type === UNIT.CARRYALL || order.type === UNIT.ORNITHOPTER) && !unitAirSlotFree()) return;
     const prod = game.production(s);
     if (prod && prod.type === order.type) {
       // готовое здание — сразу постановка; заказ в работе — просто назад на карту
@@ -230,6 +259,16 @@ export class FactoryWindow {
     g.fillStyle = "#000";
     g.fillRect(0, 0, SCREEN_W, SCREEN_H);
     g.drawImage(this.starport ? gfx.starportBackground() : gfx.factoryBackground(), 0, 0);
+    // огоньки: таймер уходит в минус — новая пауза и случайный кадр
+    const lights = this.starport ? STARPORT_LIGHTS : FACTORY_LIGHTS;
+    lights.forEach((l, i) => {
+      const st = (this.lights[i] ??= { timer: 0, frame: -1 });
+      if (--st.timer < 0) {
+        st.timer = rnd(l.min, l.max);
+        st.frame = rnd(0, l.frames - 1);
+      }
+      g.drawImage(gfx.windowLight(this.starport ? "starport" : "factory", l.table, l.words, st.frame), l.col * 8, l.row * 8);
+    });
 
     // кнопки: светлая — можно нажать, тёмная — нечего
     const prod = game.production(s);

@@ -30,6 +30,7 @@ def regs():
     return (C.c_uint32 * 16).from_address(base + M68K_DAR_OFF)
 TRACE = []
 tracing = [False]
+FRAME = [0]
 force_up = [False]
 def unlock_hook(t, w, a, v):
     # список двора $00FECC: d5 = постройки дома — открыть всё
@@ -40,11 +41,12 @@ def unlock_hook(t, w, a, v):
     if a in (0xfb0e, 0xfb36) and tracing[0]: TRACE.append(('up', hex(a), hex(regs()[0]), hex(regs()[5])))
     if tracing[0] and a in (0x38e, 0xc32):
         r = regs()
-        if a == 0x38e: TRACE.append(('dma', r[0] & 0xffff, hex((r[1] >> 16) & 0xffff), r[1] & 0xffff, hex(r[8] & 0xffffff)))
-        else: TRACE.append(('lcw', hex(r[8] & 0xffffff), hex(r[9] & 0xffffff)))
+        if a == 0x38e: TRACE.append((FRAME[0], 'dma', r[0] & 0xffff, hex((r[1] >> 16) & 0xffff), r[1] & 0xffff, hex(r[8] & 0xffffff)))
+        else: TRACE.append((FRAME[0], 'lcw', hex(r[8] & 0xffffff), hex(r[9] & 0xffffff)))
 for cmd in [c.strip() for c in script.split(';') if c.strip()]:
     a = cmd.split()
-    if a[0] == 'w': e.run(int(a[1]))
+    if a[0] == 'w':
+        for _ in range(int(a[1])): e.run(1); FRAME[0] += 1
     elif a[0] == 'p': e.press(*a[1].split('+'), frames=int(a[2]) if len(a) > 2 else 3, after=int(a[3]) if len(a) > 3 else 10)
     elif a[0] == 'h': e.hold(*a[1].split('+')); e.run(int(a[2])); e.release()
     elif a[0] == 'poke': poke(int(a[1], 16), int(a[2]), int(a[3], 0))
