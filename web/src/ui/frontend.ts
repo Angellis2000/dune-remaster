@@ -9,6 +9,7 @@ import { SCREEN_H, SCREEN_W } from "../gfx/screens.ts";
 import type { Button } from "../input/pad.ts";
 import type { HouseCode } from "./settings.ts";
 import { Intro } from "./intro.ts";
+import { menuArrow, menuPoint, menuText, prepareMenu } from "../gfx/menu-canvas.ts";
 
 const MENU_ITEMS = 3;
 const ARROW = { x: 120, y: 160, step: 8 };
@@ -35,7 +36,6 @@ export interface FrontEndHost {
 export class FrontEnd {
   readonly root: HTMLElement;
   private canvas = document.createElement("canvas");
-  private ctx: CanvasRenderingContext2D;
   private mode: "intro" | "title" | "house" = "title";
   private intro: Intro;
   private item = 0;
@@ -50,13 +50,12 @@ export class FrontEnd {
     private host: FrontEndHost,
   ) {
     this.root = document.createElement("section");
-    this.root.className = "settings frontend";
+    this.root.className = "settings frontend hd-menu";
     this.root.setAttribute("role", "dialog");
     this.root.setAttribute("aria-label", "Главное меню");
     this.root.hidden = true;
     this.canvas.width = SCREEN_W;
     this.canvas.height = SCREEN_H;
-    this.ctx = this.canvas.getContext("2d")!;
     this.root.append(this.canvas);
     this.canvas.addEventListener("click", (e) => this.onClick(e));
     this.intro = new Intro(gfx, (seq) => this.host.introSound?.(seq));
@@ -140,9 +139,7 @@ export class FrontEnd {
   }
 
   private onClick(e: MouseEvent): void {
-    const r = this.canvas.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width) * SCREEN_W;
-    const y = ((e.clientY - r.top) / r.height) * SCREEN_H;
+    const { x, y } = menuPoint(this.canvas, e);
     if (this.mode === "intro") this.openTitle();
     else if (this.mode === "title") {
       const i = Math.floor((y - ARROW.y) / ARROW.step);
@@ -174,16 +171,29 @@ export class FrontEnd {
   }
 
   private draw(): void {
-    const g = this.ctx;
+    const g = prepareMenu(this.canvas);
     if (this.mode === "intro") this.intro.draw(g);
     else if (this.mode === "title") {
-      g.drawImage(this.gfx.titleScreen(), 0, 0);
-      // стрелка: цвет меняется раз в 6 кадров
-      g.drawImage(this.gfx.titleArrow(Math.floor(this.frame / 6)), ARROW.x, ARROW.y + this.item * ARROW.step);
+      if (this.gfx.art.background(g, "arrakis")) this.gfx.drawTitleLettering(g);
+      else g.drawImage(this.gfx.titleScreen(), 0, 0);
+      menuArrow(g, ARROW.x, ARROW.y + this.item * ARROW.step, this.frame);
     } else {
-      g.drawImage(this.gfx.houseScreen(), 0, 0);
-      // рамка: цвет 1…4 раз в 8 кадров ($004870)
-      g.drawImage(this.gfx.houseFrame(((this.frame & 31) >> 3) + 1), HOUSE_FRAME.x + this.house * HOUSE_FRAME.step - this.slide, HOUSE_FRAME.y);
+      const image = this.gfx.art.get("houses");
+      if (image) {
+        g.drawImage(image, 0, 0, SCREEN_W, SCREEN_H);
+        const strings = this.gfx.menuStrings();
+        const russian = /[А-Я]/.test(strings.houses.join(""));
+        menuText(g, russian ? "ВЫБЕРИ СЕБЕ ДОМ" : "CHOOSE YOUR HOUSE", 160, 36,
+          { size: 10, color: "#f7d479", align: "center", serif: true });
+        [1, 2, 0].forEach((id, i) => menuText(g, strings.houses[id], 72 + i * 88, 139,
+          { size: 7.4, color: "#2b1a07", align: "center", maxWidth: 72, shadow: false }));
+        g.strokeStyle = ["#fff1ad", "#e8b63c", "#a86d16", "#e8b63c"][(this.frame & 31) >> 3];
+        g.lineWidth = 0.8;
+        g.strokeRect(HOUSE_FRAME.x + this.house * HOUSE_FRAME.step - this.slide, HOUSE_FRAME.y, 80, 16);
+      } else {
+        g.drawImage(this.gfx.houseScreen(), 0, 0);
+        g.drawImage(this.gfx.houseFrame(((this.frame & 31) >> 3) + 1), HOUSE_FRAME.x + this.house * HOUSE_FRAME.step - this.slide, HOUSE_FRAME.y);
+      }
     }
   }
 }

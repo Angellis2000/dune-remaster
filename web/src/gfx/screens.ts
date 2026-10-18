@@ -6,6 +6,8 @@
 import { lcwDecompress } from "../rom/lcw.ts";
 import { blitTile, cramToRGBA, readU16 } from "../rom/md.ts";
 import type { DuneRom } from "../rom/dune.ts";
+import { ScreenArt } from "./screen-art.ts";
+import { menuText } from "./menu-canvas.ts";
 
 export const SCREEN_W = 320;
 export const SCREEN_H = 224;
@@ -124,6 +126,7 @@ export function decodeText(bytes: Uint8Array, at: number, max = 32): string {
 
 export class ScreenGfx {
   readonly palette: Uint32Array;
+  readonly art = new ScreenArt();
   private cache = new Map<string, HTMLCanvasElement>();
 
   get romBytes(): Uint8Array {
@@ -290,6 +293,39 @@ export class ScreenGfx {
       plane(0xc000, t.scrollA);
       return toCanvas(px, SCREEN_W, SCREEN_H);
     });
+  }
+
+  /** Имена пунктов по ссылкам оригинального меню; перевод сохраняется из загруженного ROM. */
+  titleStrings(): string[] {
+    const b = this.rom.bytes;
+    return MENU_ROM.title.items.map(([call]) => decodeText(b, call + 2 + ((readU16(b, call + 2) << 16) >> 16)));
+  }
+
+  /** Логотип и пункты меню — гладкие буквы с расположением оригинала, поверх HD-фона. */
+  drawTitleLettering(ctx: CanvasRenderingContext2D): void {
+    ctx.save();
+    ctx.font = '400 52px "Times New Roman", serif';
+    ctx.textBaseline = "alphabetic";
+    ctx.lineWidth = 0.35;
+    ctx.strokeStyle = "#090100";
+    const gradient = ctx.createLinearGradient(0, 70, 0, 108);
+    gradient.addColorStop(0, "#f36346");
+    gradient.addColorStop(0.42, "#a52b20");
+    gradient.addColorStop(1, "#e35a31");
+    ctx.fillStyle = gradient;
+    [..."DUNE"].forEach((letter, i) => {
+      ctx.strokeText(letter, [38, 106, 175, 248][i], 107);
+      ctx.fillText(letter, [38, 106, 175, 248][i], 107);
+    });
+    ctx.restore();
+    menuText(ctx, "TM", 283, 70, { size: 5.5 });
+    menuText(ctx, "The Battle for Arrakis", 160, 126,
+      { size: 18, weight: "600", serif: true, align: "center", maxWidth: 248 });
+    const items = this.titleStrings();
+    items.forEach((text, i) => menuText(ctx, text, 128, 160 + i * 8, { size: 8, maxWidth: 164 }));
+    const russian = /[А-Я]/.test(items.join(""));
+    menuText(ctx, russian ? 'ГРУППА ПЕРЕВОДА «ШЕДЕВР», 2003 г.' : "© 1994 VIRGIN INTERACTIVE ENTERTAINMENT / WESTWOOD STUDIOS",
+      160, 204, { size: 4.6, align: "center", maxWidth: 280 });
   }
 
   /** Стрелка главного меню в фазе перелива (0…7). */

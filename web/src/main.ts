@@ -290,6 +290,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     }
   };
   const screens = new ScreenGfx(rom);
+  await screens.art.load();
   sound.musicOn = prefs.music;
   sound.soundOn = prefs.sound;
   let lastTrack = -1;

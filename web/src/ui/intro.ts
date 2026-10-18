@@ -15,6 +15,7 @@ import { SCREEN_H, SCREEN_W } from "../gfx/screens.ts";
 import { blitTile, cramToRGBA, readU16, readU32 } from "../rom/md.ts";
 import { drawObjSprite, objectDef, type ObjSprite } from "./endgame.ts";
 import { loadTileList } from "./tutorial.ts";
+import { menuText } from "../gfx/menu-canvas.ts";
 
 type Step = Generator<void, void, void>;
 
@@ -52,8 +53,11 @@ export class Intro {
   private braking = false;
   private readonly target = -704 * 0x10000;
   /** корабль сценки: координаты экрана и спрайты кадра */
-  private ship: { x: number; y: number; sprites: ObjSprite[] } | null = null;
+  private ship: { x: number; y: number; sprites: ObjSprite[]; house: number } | null = null;
   private vram: Uint8Array;
+  private original = document.createElement("canvas");
+  private stars: { x: number; y: number }[] = [];
+  private shipBounds = new Map<string, { x: number; y: number; w: number; h: number }>();
 
   constructor(
     private gfx: ScreenGfx,
@@ -63,9 +67,30 @@ export class Intro {
     this.title = gfx.titleData(false);
     this.titleMenu = gfx.titleData(true);
     this.vram = this.title.vram.slice();
+    this.original.width = SCREEN_W;
+    this.original.height = SCREEN_H;
+    const pal = Uint32Array.from(this.title.palette, (c) => cramToRGBA(c));
+    const tile = new Uint32Array(64);
+    // Позиции звёзд берём из той же плоскости ROM; сами лучи рисуем гладкими линиями.
+    for (let cy = 0; cy < 28; cy++) for (let cx = 0; cx < 88; cx++) {
+      tile.fill(0);
+      blitTile(this.vram, readU16(this.title.maps, 0xe000 + (cy * 128 + cx) * 2), pal, tile, 8, 0, 0);
+      const points = Array.from(tile.keys()).filter((i) => tile[i]);
+      if (points.length) this.stars.push({ x: cx * 8 + points.reduce((sum, i) => sum + i % 8, 0) / points.length,
+        y: cy * 8 + points.reduce((sum, i) => sum + Math.floor(i / 8), 0) / points.length });
+    }
   }
 
   start(): void {
+    this.cram.fill(0);
+    this.mode = "black";
+    this.hsA = this.hsB = 0;
+    this.showA = this.menu = this.scrolling = this.braking = false;
+    this.pos = -1;
+    this.speed = 0x8000;
+    this.loopOn = this.loopAgain = true;
+    this.ship = null;
+    this.vram = this.title.vram.slice();
     this.gen = this.run();
   }
 
@@ -97,7 +122,7 @@ export class Intro {
     const b = this.gfx.romBytes;
     const frames = readU32(b, 0x01957a + n * 4);
     let frame = 0;
-    this.ship = { x: 0, y: 0, sprites: objectDef(b, readU32(b, frames)) };
+    this.ship = { x: 0, y: 0, sprites: objectDef(b, readU32(b, frames)), house: n };
     for (let p = readU32(b, 0x01963a + n * 4); ; ) {
       const cmd = readU16(b, p);
       p += 2;
@@ -108,7 +133,7 @@ export class Intro {
         yield* this.wait(3);
       } else if (cmd === 2) {
         frame++;
-        this.ship = { x: 40, y: 40, sprites: objectDef(b, readU32(b, frames + frame * 4)) };
+        this.ship = { x: 40, y: 40, sprites: objectDef(b, readU32(b, frames + frame * 4)), house: n };
       } else break;
     }
     this.ship = null;
@@ -216,6 +241,7 @@ export class Intro {
   }
 
   draw(ctx: CanvasRenderingContext2D): void {
+    if (this.drawHD(ctx)) return;
     const pal = new Uint32Array(64);
     for (let i = 0; i < 64; i++) pal[i] = cramToRGBA(this.cram[i]);
     const px = this.px;
@@ -228,6 +254,109 @@ export class Intro {
       const s = this.ship;
       if (s) for (let i = s.sprites.length - 1; i >= 0; i--) drawObjSprite(px, SCREEN_W, SCREEN_H, this.vram, 0, s.sprites[i], s.x + s.sprites[i].x, s.y + s.sprites[i].y, pal);
     }
-    ctx.putImageData(new ImageData(new Uint8ClampedArray(px.buffer.slice(0)), SCREEN_W, SCREEN_H), 0, 0);
+    this.original.getContext("2d")!.putImageData(new ImageData(new Uint8ClampedArray(px.buffer.slice(0)), SCREEN_W, SCREEN_H), 0, 0);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(this.original, 0, 0);
+    ctx.restore();
+  }
+
+  /** Состояния и координаты анимации прежние; HD-слои рисуются сразу в нативный широкий холст. */
+  private drawHD(ctx: CanvasRenderingContext2D): boolean {
+    const art = this.gfx.art;
+    if (this.mode === "black") return true;
+    if (this.mode === "sega") {
+      const sega = art.get("sega");
+      if (!sega) return false;
+      ctx.save();
+      const color = cramToRGBA(this.cram[6]);
+      ctx.filter = `brightness(${0.65 + 0.35 * ((color >>> 16) & 255) / 255})`;
+      ctx.drawImage(sega, 0, 0, SCREEN_W, SCREEN_H);
+      ctx.restore();
+      return true;
+    }
+    if (!art.get("arrakis") || (this.showA && !this.menu && !art.get("publishers")) || (this.ship && !art.get("ships"))) return false;
+    ctx.save();
+    ctx.strokeStyle = "#3485e7";
+    ctx.lineWidth = 0.35;
+    const width = ctx.canvas.width / ctx.getTransform().a;
+    for (const star of this.stars) {
+      const x = ((star.x + this.hsB) % 704 + 704) % 704;
+      for (const sx of [x - 704, x]) {
+        if (sx < (320 - width) / 2 || sx > (320 + width) / 2) continue;
+        ctx.beginPath();
+        ctx.moveTo(sx - 1.4, star.y);
+        ctx.lineTo(sx + 1.4, star.y);
+        ctx.moveTo(sx, star.y - 1.4);
+        ctx.lineTo(sx, star.y + 1.4);
+        ctx.stroke();
+      }
+    }
+    art.background(ctx, "arrakis", 704 + this.hsB);
+    if (this.showA) {
+      let brightness = 0, full = 0;
+      const target = this.menu ? this.titleMenu.palette : this.title.palette;
+      for (let i = 16; i < 64; i++) {
+        const level = (c: number) => (c & 14) + ((c >> 4) & 14) + ((c >> 8) & 14);
+        brightness += level(this.cram[i]);
+        full += level(target[i]);
+      }
+      ctx.globalAlpha = Math.min(1, brightness / Math.max(1, full));
+      if (this.menu) this.gfx.drawTitleLettering(ctx);
+      else {
+        const publishers = art.get("publishers");
+        if (publishers) {
+          const crop = (sx: number, sy: number, w: number, h: number, x: number, y: number, dw: number, dh: number) =>
+            ctx.drawImage(publishers, sx / 320 * publishers.width, sy / 224 * publishers.height,
+              w / 320 * publishers.width, h / 224 * publishers.height, x, y, dw, dh);
+          crop(106, 19, 132, 103, 119, 13, 90, 68);
+          crop(30, 142, 260, 69, 60, 123, 200, 42);
+          menuText(ctx, "INTERACTIVE", 160, 82, { size: 6.2, align: "center" });
+          menuText(ctx, "ENTERTAINMENT", 160, 89, { size: 6, align: "center" });
+          menuText(ctx, "AND", 160, 106, { size: 7, align: "center" });
+          menuText(ctx, "©1994 VIRGIN INTERACTIVE", 160, 176, { size: 6.5, align: "center" });
+          menuText(ctx, "ENTERTAINMENT", 160, 184, { size: 6.5, align: "center" });
+          menuText(ctx, "©1994 WESTWOOD STUDIOS, INC.", 160, 200, { size: 6.5, align: "center" });
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+    const ship = this.ship;
+    const ships = art.get("ships");
+    if (ship && ships) {
+      const { x, y, w, h } = this.visibleShipBounds(ship.sprites);
+      // Корпус занимает всю ширину ячейки и 55% её высоты, начиная с 22.5%.
+      ctx.drawImage(ships, ship.house * ships.width / 3, ships.height * 0.225,
+        ships.width / 3, ships.height * 0.55, ship.x + x, ship.y + y, w, h);
+    }
+    ctx.restore();
+    return true;
+  }
+
+  /** Удаляющиеся кадры имеют разный прозрачный отступ: он не должен растягивать силуэт HD-корабля. */
+  private visibleShipBounds(sprites: ObjSprite[]): { x: number; y: number; w: number; h: number } {
+    const key = JSON.stringify(sprites);
+    const cached = this.shipBounds.get(key);
+    if (cached) return cached;
+    const x = Math.min(...sprites.map((s) => s.x));
+    const y = Math.min(...sprites.map((s) => s.y));
+    const w = Math.max(...sprites.map((s) => s.x + s.w * 8)) - x;
+    const h = Math.max(...sprites.map((s) => s.y + s.h * 8)) - y;
+    const px = new Uint32Array(w * h);
+    const pal = new Uint32Array(64).fill(0xffffffff);
+    for (let i = sprites.length - 1; i >= 0; i--) {
+      const s = sprites[i];
+      drawObjSprite(px, w, h, this.vram, 0, s, s.x - x, s.y - y, pal);
+    }
+    let left = w, top = h, right = 0, bottom = 0;
+    for (let i = 0; i < px.length; i++) if (px[i]) {
+      left = Math.min(left, i % w);
+      top = Math.min(top, Math.floor(i / w));
+      right = Math.max(right, i % w + 1);
+      bottom = Math.max(bottom, Math.floor(i / w) + 1);
+    }
+    const bounds = right > left ? { x: x + left, y: y + top, w: right - left, h: bottom - top } : { x, y, w, h };
+    this.shipBounds.set(key, bounds);
+    return bounds;
   }
 }

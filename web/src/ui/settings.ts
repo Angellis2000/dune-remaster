@@ -6,6 +6,7 @@
  */
 import { MENU_ROM, SCREEN_H, SCREEN_W, type ScreenGfx } from "../gfx/screens.ts";
 import type { Button } from "../input/pad.ts";
+import { menuArrow, menuPoint, menuText, prepareMenu } from "../gfx/menu-canvas.ts";
 
 export type HouseCode = "A" | "O" | "H";
 
@@ -84,7 +85,6 @@ export interface SettingsHost {
 export class SettingsMenu {
   readonly root: HTMLElement;
   private canvas = document.createElement("canvas");
-  private ctx: CanvasRenderingContext2D;
   private mode: "menu" | "password" = "menu";
   private index = 0;
   private track = 0;
@@ -106,13 +106,12 @@ export class SettingsMenu {
     private host: SettingsHost,
   ) {
     this.root = document.createElement("section");
-    this.root.className = "settings options";
+    this.root.className = "settings options hd-menu";
     this.root.setAttribute("role", "dialog");
     this.root.setAttribute("aria-label", "Настройки");
     this.root.hidden = true;
     this.canvas.width = SCREEN_W;
     this.canvas.height = SCREEN_H;
-    this.ctx = this.canvas.getContext("2d")!;
     this.root.append(this.canvas);
     this.tracks = gfx.names(MENU_ROM.tracks);
     this.sounds = gfx.names(MENU_ROM.sounds);
@@ -264,9 +263,7 @@ export class SettingsMenu {
 
   /** Мышь: щелчок по пункту или букве — как выбор и A. */
   private onClick(e: MouseEvent): void {
-    const r = this.canvas.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width) * SCREEN_W;
-    const y = ((e.clientY - r.top) / r.height) * SCREEN_H;
+    const { x, y } = menuPoint(this.canvas, e);
     if (this.mode === "menu") {
       const i = ROWS.findIndex((ry) => y >= ry - 4 && y < ry + 12);
       if (i < 0) return;
@@ -289,11 +286,26 @@ export class SettingsMenu {
   }
 
   private draw(): void {
-    const g = this.ctx;
+    const g = prepareMenu(this.canvas);
     const str = this.strings;
     const yes = (on: boolean) => (on ? str.yes : str.no);
+    const hd = this.gfx.art.background(g, this.mode === "menu" ? "settings" : "password");
+    const russian = /[А-Я]/.test(str.restart);
+    const text = (value: string, line: number, x: number, y: number, maxWidth = 320 - x) => {
+      if (hd) menuText(g, value, x, y, { size: 8, color: line === 2 ? "#8df7ff" : "#fff9e9", maxWidth });
+      else g.drawImage(this.gfx.text(value, line), x, y);
+    };
     if (this.mode === "menu") {
-      g.drawImage(this.gfx.background("settings"), 0, 0);
+      if (!hd) g.drawImage(this.gfx.background("settings"), 0, 0);
+      else {
+        menuText(g, russian ? "НАСТРОЙКИ" : "OPTIONS", 160, 16, { size: 10, align: "center" });
+        const labels = russian ? ["МУЗЫКА", "ЗВУКИ", "РАДАР", "ФОНОТЕКА", "СПЕЦЭФФЕКТЫ"]
+          : ["MUSIC", "SOUND", "RADAR", "MUSIC PLAYER", "SOUND PLAYER"];
+        labels.forEach((label, i) => text(label, 3, 32, ROWS[i], 140));
+        text(russian ? "ВВЕСТИ ПАРОЛЬ" : "ENTER PASSWORD", 3, 32, ROWS[ITEM.PASSWORD]);
+        menuText(g, russian ? 'НАЖМИТЕ «START» ДЛЯ ВЫХОДА' : 'PRESS START TO EXIT', 160, 200,
+          { size: 8, align: "center", maxWidth: 288 });
+      }
       // значения — бирюзовые (строка палитры 2), команды внизу — белые (строка 3)
       const values = [
         yes(this.host.music()),
@@ -302,31 +314,49 @@ export class SettingsMenu {
         this.tracks[this.track]?.name ?? "",
         this.sounds[this.sfx]?.name ?? "",
       ];
-      values.forEach((v, i) => g.drawImage(this.gfx.text(v, 2), VALUE_X, ROWS[i]));
-      g.drawImage(this.gfx.text(str.restart, 3), 32, ROWS[ITEM.RESTART]);
-      g.drawImage(this.gfx.text(str.chooseHouse, 3), 32, ROWS[ITEM.HOUSE]);
-      if (this.index === ITEM.HOUSE) g.drawImage(this.gfx.text(str.houses[HOUSES[this.house].id], 2), VALUE_X + 8, ROWS[ITEM.HOUSE] + 12);
-      g.drawImage(this.gfx.arrow(this.frame >> 2), 12, ROWS[this.index] - 4);
+      values.forEach((v, i) => text(v, 2, VALUE_X, ROWS[i]));
+      text(str.restart, 3, 32, ROWS[ITEM.RESTART]);
+      text(str.chooseHouse, 3, 32, ROWS[ITEM.HOUSE]);
+      if (this.index === ITEM.HOUSE) text(str.houses[HOUSES[this.house].id], 2, VALUE_X + 8, ROWS[ITEM.HOUSE] + 12);
+      menuArrow(g, 12, ROWS[this.index], this.frame);
       return;
     }
-    g.drawImage(this.gfx.background("password"), 0, 0);
+    if (!hd) g.drawImage(this.gfx.background("password"), 0, 0);
+    else {
+      menuText(g, russian ? "ВВЕДИТЕ ПАРОЛЬ" : "ENTER PASSWORD", 160, 24,
+        { size: 10, color: "#8df7ff", align: "center" });
+      [...LETTERS].forEach((letter, i) => text(letter, 3, GRID_X + i % 10 * GRID_STEP, GRID_Y + Math.floor(i / 10) * GRID_STEP));
+      LAST_ROW.slice(6).forEach((label, i) => text(label === "OK" ? "↵" : label === "<" ? "◀\uFE0E" : "▶\uFE0E", 3,
+        GRID_X + (i + 6) * GRID_STEP, GRID_Y + 2 * GRID_STEP));
+      g.fillStyle = "#121a20";
+      g.fillRect(112, 104, 104, 24);
+      g.strokeStyle = "#84d8ff";
+      g.lineWidth = 0.7;
+      g.strokeRect(112, 104, 104, 24);
+      g.strokeRect(114, 106, 100, 20);
+      menuText(g, russian ? 'НАЖМИТЕ «START» ДЛЯ ВЫХОДА' : 'PRESS START TO EXIT', 160, 200,
+        { size: 8, align: "center", maxWidth: 288 });
+    }
     const row = Math.floor(this.cell / 10);
     const col = this.cell % 10;
     const wide = row === 2 && LAST_ROW[col] === "OK";
     const fx = GRID_X + col * GRID_STEP - 4;
     const fy = GRID_Y + row * GRID_STEP - 4;
-    const frame = this.gfx.letterFrame();
     // рамка мигает (в оригинале пропадает на несколько кадров); после нажатия сразу видна
     if ((this.blink & 31) >= 24) {
       /* рамка погашена */
+    } else if (hd) {
+      g.strokeStyle = "#f2f5fc";
+      g.lineWidth = 0.65;
+      g.strokeRect(fx, fy, wide ? 32 : 16, 16);
     } else if (wide) {
+      const frame = this.gfx.letterFrame();
       // ↵ шире буквы: рамку растягиваем на две клетки
       g.drawImage(frame, 0, 0, 8, 16, fx, fy, 8, 16);
       g.drawImage(frame, 8, 0, 8, 16, fx + 24, fy, 8, 16);
       g.drawImage(frame, 4, 0, 8, 16, fx + 8, fy, 16, 16);
-    } else g.drawImage(frame, fx, fy);
-    const text = Array.from({ length: PASSWORD_LENGTH }, (_, i) => this.word[i] || " ").join("");
-    g.drawImage(this.gfx.text(text, 3), INPUT_X, INPUT_Y);
-    g.drawImage(this.gfx.text("_", 3), INPUT_X + this.pos * 8, INPUT_Y);
+    } else g.drawImage(this.gfx.letterFrame(), fx, fy);
+    for (let i = 0; i < PASSWORD_LENGTH; i++) text(this.word[i] || " ", 3, INPUT_X + i * 8, INPUT_Y, 8);
+    text("_", 3, INPUT_X + this.pos * 8, INPUT_Y);
   }
 }
