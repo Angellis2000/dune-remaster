@@ -408,7 +408,7 @@ export class MapView {
     for (const st of world.structures) {
       if (!st.built) continue;
       if (st.x > x1 || st.y > y1 || st.x + st.w <= x0 || st.y + st.h <= y0) continue;
-      const img = this.skins.structure(st.type, st.w * size, st.h * size);
+      const img = this.skins.structure(st.type, st.w * size, st.h * size, st.ref.rotationSpriteDiff);
       if (!img) continue;
       // Подмена не должна открывать здание под туманом или перекрывать его края.
       for (let row = 0; row < st.h; row++) for (let col = 0; col < st.w; col++) {

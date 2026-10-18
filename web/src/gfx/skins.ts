@@ -6,12 +6,16 @@
  * Картинка любого размера: под каждый масштаб она заранее уменьшается со сглаживанием.
  * Пользовательские замены хранятся в браузере (IndexedDB) и перекрывают встроенную графику.
  */
-import constructionYardUrl from "./assets/construction-yard.png?url";
+import type { DuneRom } from "../rom/dune.ts";
 import { loadSkinFiles, storeSkinFile } from "../ui/romstore.ts";
+import type { IconSet } from "./icons.ts";
+import { structureShape } from "./pack.ts";
+import { STRUCTURE_ART, type StructureArt } from "./structure-art.ts";
 
 interface Skin {
   image: ImageBitmap;
   scaled: Map<string, HTMLCanvasElement>;
+  directions?: boolean;
 }
 
 export class Skins {
@@ -21,16 +25,21 @@ export class Skins {
   readonly iconOverridden = new Uint8Array(512);
   onChange: () => void = () => {};
 
-  async load(): Promise<void> {
-    // Готовый строительный двор целиком; стройка и развалины остаются кадрами ROM.
-    try {
-      const response = await fetch(constructionYardUrl);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const image = await createImageBitmap(await response.blob());
-      this.defaults.set("structure:8", { image, scaled: new Map() });
-    } catch (error) {
-      console.warn("Не удалось загрузить графику строительного двора", error);
-    }
+  async load(rom: DuneRom, icons: IconSet): Promise<void> {
+    // Общие картинки заводов/казарм декодируются один раз; независимые здания грузятся параллельно.
+    const pending = new Map<string, Promise<Skin>>();
+    await Promise.all(STRUCTURE_ART.map(async (art) => {
+      try {
+        let task = pending.get(art.url);
+        if (!task) {
+          task = this.loadDefault(art, rom, icons);
+          pending.set(art.url, task);
+        }
+        this.defaults.set(`structure:${art.type}`, await task);
+      } catch (error) {
+        console.warn(`Не удалось загрузить графику здания ${art.type}`, error);
+      }
+    }));
     for (const [k, blob] of await loadSkinFiles()) {
       try {
         this.put(k, await createImageBitmap(blob));
@@ -38,6 +47,39 @@ export class Skins {
         /* испорченный файл — пропускаем */
       }
     }
+  }
+
+  private async loadDefault(art: StructureArt, rom: DuneRom, icons: IconSet): Promise<Skin> {
+    const response = await fetch(art.url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    let image = await createImageBitmap(await response.blob());
+    if (art.type !== 8) {
+      // В ROM площадки непрозрачны. Под HD-деталями сохраняем исходную площадку,
+      // чтобы прозрачность PNG не убирала фон и не оставляла дыр между частями здания.
+      const shape = structureShape(rom, art.type);
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const g = canvas.getContext("2d")!;
+      g.imageSmoothingEnabled = false;
+      const columns = art.directions ? 4 : 1;
+      const rows = art.directions ? 2 : 1;
+      const frameW = canvas.width / columns;
+      const frameH = canvas.height / rows;
+      for (let frame = 0; frame < columns * rows; frame++) {
+        shape.icons[2].forEach((id, i) => {
+          const s = icons.source(id + (art.directions ? frame : 0));
+          const x = (frame % columns) * frameW + (i % shape.w) * frameW / shape.w;
+          const y = Math.floor(frame / columns) * frameH + Math.floor(i / shape.w) * frameH / shape.h;
+          g.drawImage(s.image, s.sx, s.sy, s.sw, s.sh, x, y, frameW / shape.w, frameH / shape.h);
+        });
+      }
+      g.drawImage(image, 0, 0);
+      const composed = await createImageBitmap(canvas);
+      image.close();
+      image = composed;
+    }
+    return { image, scaled: new Map(), directions: art.directions };
   }
 
   private put(key: string, image: ImageBitmap | null): void {
@@ -80,16 +122,24 @@ export class Skins {
   }
 
   /** Картинка, уменьшенная ровно до w×h экранных пикселей. */
-  scaled(key: string, w: number, h: number): HTMLCanvasElement | null {
+  scaled(key: string, w: number, h: number, direction = 0): HTMLCanvasElement | null {
     const s = this.skins.get(key) ?? this.defaults.get(key);
     if (!s) return null;
     w = Math.max(1, Math.round(w));
     h = Math.max(1, Math.round(h));
-    const k = `${w}x${h}`;
+    const frame = s.directions ? direction & 7 : 0;
+    const k = `${w}x${h}:${frame}`;
     let c = s.scaled.get(k);
     if (!c) {
-      c = downscale(s.image, w, h);
-      if (s.scaled.size > 16) s.scaled.clear();
+      if (s.directions) {
+        const crop = document.createElement("canvas");
+        crop.width = Math.round(s.image.width / 4);
+        crop.height = Math.round(s.image.height / 2);
+        crop.getContext("2d")!.drawImage(s.image, (frame % 4) * s.image.width / 4, Math.floor(frame / 4) * s.image.height / 2,
+          s.image.width / 4, s.image.height / 2, 0, 0, crop.width, crop.height);
+        c = downscale(crop, w, h);
+      } else c = downscale(s.image, w, h);
+      if (s.scaled.size > (s.directions ? 64 : 16)) s.scaled.clear();
       s.scaled.set(k, c);
     }
     return c;
@@ -108,8 +158,8 @@ export class Skins {
   clearStructure(type: number): Promise<void> {
     return this.clear(`structure:${type}`);
   }
-  structure(type: number, w: number, h: number): HTMLCanvasElement | null {
-    return this.scaled(`structure:${type}`, w, h);
+  structure(type: number, w: number, h: number, direction = 0): HTMLCanvasElement | null {
+    return this.scaled(`structure:${type}`, w, h, direction);
   }
 }
 

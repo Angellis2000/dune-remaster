@@ -66,7 +66,7 @@ async function showRomScreen(error?: string): Promise<void> {
     "div",
     { className: "rom-card" },
     el("h1", {}, "DUNE", el("small", {}, "Битва за Арракис · свой движок")),
-    el("p", {}, "Нужен ROM Mega Drive «Dune: The Battle for Arrakis» (.bin, .gen или .md). Файл читается прямо в браузере и никуда не отправляется. Графика берётся из него как есть."),
+    el("p", {}, "Нужен ROM Mega Drive «Dune: The Battle for Arrakis» (.bin, .gen или .md). Файл читается прямо в браузере и никуда не отправляется. Ресурсы читаются из ROM, здания на карте отображаются в HD."),
     drop,
   );
   app.replaceChildren(el("main", { className: "rom-screen" }, card));
@@ -109,7 +109,7 @@ const MISSION_HOUSES: { code: "A" | "O" | "H"; name: string }[] = [
 async function startGame(rom: DuneRom): Promise<void> {
   const icons = new IconSet(rom);
   const skins = new Skins();
-  await skins.load();
+  await skins.load(rom, icons);
   const sprites = new SpriteSet(rom);
   const canvas = el("canvas", { className: "view", tabIndex: 0 });
   canvas.setAttribute("aria-label", "Карта миссии");
