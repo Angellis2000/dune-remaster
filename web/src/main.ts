@@ -18,6 +18,7 @@ import { CommandPanel } from "./ui/command.ts";
 import { Minimap } from "./ui/minimap.ts";
 import { forgetRom, loadStoredRom, storeRom } from "./ui/romstore.ts";
 import { FactoryWindow } from "./ui/factory.ts";
+import { FrontEnd } from "./ui/frontend.ts";
 import { Hud, hudState } from "./ui/hud.ts";
 import { passwordFor, SettingsMenu, type HouseCode } from "./ui/settings.ts";
 import { MapView } from "./view/mapview.ts";
@@ -221,7 +222,12 @@ async function startGame(rom: DuneRom): Promise<void> {
       savePrefs();
     },
     restart: () => loadMission(current),
-    chooseHouse: (house) => loadMission(`${house}1`),
+    // «ВЫБРАТЬ ДРУГОЙ ДОМ» в оригинале ведёт на экран выбора дома
+    chooseHouse: () => {
+      settings.close();
+      paused = true;
+      frontend.openHouse();
+    },
     password: (r) => {
       if (r.kind === "level") loadMission(`${r.house}${r.mission}`);
       else if (r.cheat === "LOOKAROUND" || r.cheat === "SPLURGEOLA" || r.cheat === "PLAYTESTER") {
@@ -231,11 +237,31 @@ async function startGame(rom: DuneRom): Promise<void> {
       } else if (r.cheat === "DUNEFINALE") G.onMessage("Финальные титры пока не сделаны");
     },
     toggled: (open) => {
-      paused = open;
+      paused = open || frontend.isOpen;
       pausedBanner.hidden = true;
+      // ОПЦИИ из главного меню — по выходу назад в меню
+      if (!open && optionsFromTitle) {
+        optionsFromTitle = false;
+        frontend.openTitle();
+      }
     },
   });
   stage.append(settings.root);
+  // главное меню и выбор дома — до игры, как в оригинале
+  let optionsFromTitle = false;
+  const frontend = new FrontEnd(screens, {
+    newGame: (house) => {
+      paused = false;
+      loadMission(`${house}1`);
+    },
+    options: () => {
+      optionsFromTitle = true;
+      frontend.close();
+      settings.open();
+    },
+    tutorial: () => G.onMessage("Обучение пока не сделано"),
+  });
+  stage.append(frontend.root);
   // окно здания с геймпада — как в оригинале; в режиме мыши остаётся правое меню
   const factory = new FactoryWindow(rom, screens, {
     game: () => world.game,
@@ -510,7 +536,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   pad.onPress((b) => {
     if (!assets.root.hidden) return;
     lastButton = BUTTON_LABEL[b];
-    if (settings.handlePad(b) || factory.handlePad(b)) {
+    if (frontend.handlePad(b) || settings.handlePad(b) || factory.handlePad(b)) {
       updateHud();
       return;
     }
@@ -582,6 +608,12 @@ async function startGame(rom: DuneRom): Promise<void> {
   });
 
   loadMission("A1");
+  // ?debug — сразу в игру (для автотестов), иначе — главное меню
+  const q = new URLSearchParams(location.search);
+  if (!q.has("debug") || q.has("title")) {
+    paused = true;
+    frontend.openTitle();
+  }
   canvas.focus();
   // для автотестов: ?debug открывает мир и вид из консоли
   if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites } });

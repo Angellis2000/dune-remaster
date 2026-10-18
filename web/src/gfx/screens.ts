@@ -46,6 +46,40 @@ export const MENU_ROM = {
     tiles: [0x0bab86, 0x0bb20a, 0x0bb9dc, 0x0bc0ce],
     palettes: [0x013816, 0x0a6c58, 0x013856],
   },
+  /**
+   * Главное меню (трасса от включения): обе плоскости 128 клеток в ширину. Слева на A — логотипы, справа —
+   * «DUNE» с пунктами; на B — звёзды и планета. Меню показано при прокрутке A = −512, B = −704.
+   * Тайлы — 7 LCW-потоков по $1000 и общий поток $0FEEE2 (стрелка) в $9000. Пары [LCW, адрес VRAM].
+   */
+  title: {
+    tiles: [[0x0b296a, 0x0000], [0x0b3286, 0x1000], [0x0b38b8, 0x2000], [0x0b42b8, 0x3000], [0x0b4d48, 0x4000], [0x0b56ec, 0x5000], [0x0b60da, 0x6000], [0x0feee2, 0x9000]],
+    planeA: [[0x0c628a, 0xc000], [0x0c6556, 0xd000]],
+    planeB: [[0x0c5e1a, 0xe000], [0x0c609a, 0xf000]],
+    palettes: [0x0a6d18, 0x0a6e38, 0x0a6e58, 0x0a6e78],
+    /** цвета, которые код меню ставит поверх палитры ROM (сняты с CRAM): строка 2 — 14, 15; строка 3 — 13, 14 */
+    paletteFix: [[2 * 16 + 14, 0x644], [2 * 16 + 15, 0x666], [3 * 16 + 13, 0xeee], [3 * 16 + 14, 0x666]],
+    scrollA: 512,
+    scrollB: 704,
+    /**
+     * пункты меню код пишет в плоскость A ($01FF66: тайл $480 + код символа, строка палитры 3) по смещениям
+     * в словах $A50, $AD0, $B50; строки берутся по ссылкам pea (d16,pc) у вызовов, как в ROM
+     */
+    items: [[0x017816, 0xa50], [0x01782e, 0xad0], [0x017846, 0xb50]],
+    /** стрелка: тайл $4BE, строка 2, x 120, y 160 + 8·пункт; цвет 13 строки 2 переливается по 6 кадров */
+    arrowTile: 0x4be,
+    arrowPulse: [0xeee, 0xccc, 0xaaa, 0x888, 0x666, 0x888, 0xaaa, 0xccc],
+  },
+  /**
+   * Выбор дома: плоскость Window (64 клетки), рамка под именем — три спрайта из тайлов `$06424E`
+   * (4×2, 2×2 из тайлов 4–7, 4×2 с отражением) в x = 32 + 88·n, y = 136; её ненулевые байты — цвет
+   * 1…4 строки 3, смена раз в 8 кадров ($004870).
+   */
+  house: {
+    tiles: [[0x0a8ba8, 0x0000], [0x0a9648, 0x1000]],
+    window: 0x0c3af4,
+    palette: 0x0412fe,
+    frame: 0x06424e,
+  },
   /** шрифт: 128 тайлов, номер тайла = код символа; 9 — буква, 12 — фон */
   font: 0x04f6c8,
   /** стрелка-курсор меню, 2×2 тайла по столбцам; переливается цветами 8–13 строки 1 */
@@ -165,6 +199,104 @@ export class ScreenGfx {
       this.maps.set(addr, m);
     }
     return m;
+  }
+
+  /** VRAM из пар [LCW, адрес]; длина каждой порции — сколько игра шлёт DMA (до следующего адреса или $1000). */
+  private vramFrom(parts: readonly (readonly [number, number])[], limit = 0x1000): Uint8Array {
+    const key = "v:" + parts.map((p) => p.join(":")).join(",");
+    let vram = this.vrams.get(key);
+    if (!vram) {
+      vram = new Uint8Array(0x10000);
+      for (const [src, dst] of parts) {
+        const data = lcwDecompress(this.rom.bytes, src).data;
+        vram.set(data.subarray(0, Math.min(data.length, limit, 0x10000 - dst)), dst);
+      }
+      this.vrams.set(key, vram);
+    }
+    return vram;
+  }
+
+  /** Палитра из 4 строк ROM (адреса строк) с правками [номер цвета, слово CRAM]. */
+  paletteOf(lines: readonly number[], fix: readonly (readonly [number, number])[] = []): Uint32Array {
+    return this.memoPal("p:" + lines.join(",") + "|" + fix.join(";"), () => {
+      const pal = new Uint32Array(64);
+      lines.forEach((a, i) => pal.set(this.rom.readPalette(a, 1), i * 16));
+      for (const [i, w] of fix) pal[i] = cramToRGBA(w);
+      return pal;
+    });
+  }
+
+  /** Главное меню целиком (320×224): плоскость B, поверх A, с прокруткой как у оригинала. */
+  titleScreen(): HTMLCanvasElement {
+    return this.memo("title", () => {
+      const t = MENU_ROM.title;
+      const vram = this.vramFrom(t.tiles);
+      const maps = this.vramFrom([...t.planeA, ...t.planeB]).slice();
+      const b = this.rom.bytes;
+      for (const [call, offset] of t.items) {
+        if (readU16(b, call) !== 0x487a) continue; // pea (d16,pc)
+        const str = call + 2 + ((readU16(b, call + 2) << 16) >> 16);
+        for (let i = 0; b[str + i] && i < 40; i++) {
+          const word = (3 << 13) | 0x480 | (b[str + i] & 0x7f);
+          const at = 0xc000 + (offset + i) * 2;
+          maps[at] = word >> 8;
+          maps[at + 1] = word & 0xff;
+        }
+      }
+      const pal = this.paletteOf(t.palettes, t.paletteFix);
+      const px = new Uint32Array(SCREEN_W * SCREEN_H).fill(pal[0]);
+      const plane = (base: number, scroll: number) => {
+        for (let cy = 0; cy < 28; cy++)
+          for (let sx = 0; sx < 40; sx++) {
+            const cx = (sx + scroll / 8) & 127;
+            blitTile(vram, readU16(maps, base + (cy * 128 + cx) * 2), pal, px, SCREEN_W, sx * 8, cy * 8);
+          }
+      };
+      plane(0xe000, t.scrollB);
+      plane(0xc000, t.scrollA);
+      return toCanvas(px, SCREEN_W, SCREEN_H);
+    });
+  }
+
+  /** Стрелка главного меню в фазе перелива (0…7). */
+  titleArrow(phase: number): HTMLCanvasElement {
+    const t = MENU_ROM.title;
+    const p = phase & 7;
+    return this.memo(`tarrow:${p}`, () => {
+      const pal = this.paletteOf(t.palettes, [...t.paletteFix, [2 * 16 + 13, t.arrowPulse[p]]]);
+      const px = new Uint32Array(64);
+      blitTile(this.vramFrom(t.tiles), (2 << 13) | t.arrowTile, pal, px, 8, 0, 0);
+      return toCanvas(px, 8, 8);
+    });
+  }
+
+  houseScreen(): HTMLCanvasElement {
+    return this.memo("house", () => {
+      const h = MENU_ROM.house;
+      const vram = this.vramFrom(h.tiles);
+      const map = lcwDecompress(this.rom.bytes, h.window).data;
+      const pal = this.rom.readPalette(h.palette, 4);
+      const px = new Uint32Array(SCREEN_W * SCREEN_H).fill(pal[0]);
+      for (let cy = 0; cy < 28; cy++) for (let cx = 0; cx < 40; cx++) blitTile(vram, readU16(map, (cy * 64 + cx) * 2), pal, px, SCREEN_W, cx * 8, cy * 8);
+      return toCanvas(px, SCREEN_W, SCREEN_H);
+    });
+  }
+
+  /** Рамка под именем дома (80×16) с цветом перелива 1…4 строки 3. */
+  houseFrame(color: number): HTMLCanvasElement {
+    const c = color & 15;
+    return this.memo(`hframe:${c}`, () => {
+      const pal = this.rom.readPalette(MENU_ROM.house.palette, 4);
+      const tiles = this.rom.bytes.subarray(MENU_ROM.house.frame, MENU_ROM.house.frame + 8 * 32).map((b) => (b ? (c << 4) | c : 0));
+      const px = new Uint32Array(80 * 16);
+      const put = (tile: number, x: number, y: number, hflip: boolean) => blitTile(tiles, (3 << 13) | (hflip ? 0x800 : 0) | tile, pal, px, 80, x, y);
+      for (let col = 0; col < 4; col++) for (let row = 0; row < 2; row++) {
+        put(col * 2 + row, col * 8, row * 8, false); // 4×2
+        put(col * 2 + row, 48 + (3 - col) * 8, row * 8, true); // 4×2 с отражением
+      }
+      for (let col = 0; col < 2; col++) for (let row = 0; row < 2; row++) put(4 + col * 2 + row, 32 + col * 8, row * 8, false); // 2×2 из тайлов 4–7
+      return toCanvas(px, 80, 16);
+    });
   }
 
   /** Экран 40×28 тайлов: тайлы из LCW-потоков подряд с VRAM 0, карта — LCW, 64 слова в строке. */
