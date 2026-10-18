@@ -134,6 +134,39 @@ export class ScreenGfx {
     });
   }
 
+  /**
+   * Точка на экранчике космопорта: тайл $1D5 тайлов окна, строка 2, с отражением; рисуется только там,
+   * где клетка плоскости Window без приоритета (так у VDP рамка закрывает спрайт).
+   */
+  starportBlip(ctx: CanvasRenderingContext2D, x: number, y: number, flip: number): void {
+    const cfg = MENU_ROM.starport;
+    const vram = this.tileVram(cfg.tiles);
+    const map = this.memoMap(cfg.map);
+    const pal = this.starportPalette();
+    const px = new Uint32Array(64);
+    blitTile(vram, (2 << 13) | (flip << 11) | 0x1d5, pal, px, 8, 0, 0);
+    const img = ctx.getImageData(x, y, 8, 8);
+    const out = new Uint32Array(img.data.buffer);
+    for (let r = 0; r < 8; r++)
+      for (let c = 0; c < 8; c++) {
+        const sx = x + c;
+        const sy = y + r;
+        if (!px[r * 8 + c] || sx < 0 || sy < 0 || sx >= SCREEN_W || sy >= SCREEN_H) continue;
+        if (readU16(map, ((sy >> 3) * 64 + (sx >> 3)) * 2) & 0x8000) continue;
+        out[r * 8 + c] = px[r * 8 + c];
+      }
+    ctx.putImageData(img, x, y);
+  }
+  private maps = new Map<number, Uint8Array>();
+  private memoMap(addr: number): Uint8Array {
+    let m = this.maps.get(addr);
+    if (!m) {
+      m = lcwDecompress(this.rom.bytes, addr).data;
+      this.maps.set(addr, m);
+    }
+    return m;
+  }
+
   /** Экран 40×28 тайлов: тайлы из LCW-потоков подряд с VRAM 0, карта — LCW, 64 слова в строке. */
   private tilemapScreen(tiles: readonly number[], mapAddr: number, palette: Uint32Array): HTMLCanvasElement {
     const vram = this.tileVram(tiles);
@@ -247,11 +280,6 @@ export class ScreenGfx {
     return this.memo("bg:starport", () => this.tilemapScreen(MENU_ROM.starport.tiles, MENU_ROM.starport.map, this.starportPalette()));
   }
 
-  /** Рамка-курсор космопорта: те же тайлы, строка 2 у него зелёная. */
-  starportCursor(): HTMLCanvasElement {
-    return this.memo("scur", () => this.sprite(MENU_ROM.factory.cursor, 4, 3, 2, this.starportPalette(), false));
-  }
-
   /** Значок патрона 2×2 (урон юнита) — у заводов юнитов и космопорта вместо энергии. */
   ammoIcon(): HTMLCanvasElement {
     return this.memo("ammo", () => this.sprite(MENU_ROM.factory.ammoIcon, 2, 2, 1, this.factoryPalette(), false));
@@ -277,8 +305,18 @@ export class ScreenGfx {
     });
   }
 
-  factoryCursor(): HTMLCanvasElement {
-    return this.memo("fcur", () => this.sprite(MENU_ROM.factory.cursor, 4, 3, 2, this.factoryPalette(), false));
+  /**
+   * Рамка-курсор с переливом ($008596): каждый кадр счётчик +1, фаза (счётчик & 31) >> 3 выбирает цвет из
+   * 11, 12, 15, 12 (`$0085E0`); каждый ненулевой байт тайлов рамки заменяется на этот цвет в обоих пикселях.
+   */
+  factoryCursor(phase = 0, starport = false): HTMLCanvasElement {
+    const p = phase & 3;
+    return this.memo(`fcur:${starport}:${p}`, () => {
+      const c = this.rom.bytes[0x0085e0 + p] & 15;
+      const src = this.rom.bytes.subarray(MENU_ROM.factory.cursor, MENU_ROM.factory.cursor + 12 * 32);
+      const tiles = src.map((b) => (b ? (c << 4) | c : 0));
+      return this.spriteFrom(tiles, 4, 3, 2, starport ? this.starportPalette() : this.factoryPalette());
+    });
   }
 
   /** Значок 2×2: цена (0), энергия (1), прочность (2). */
@@ -321,6 +359,14 @@ export class ScreenGfx {
       out.push({ name: decodeText(this.rom.bytes, ptr), id: (readU16(this.rom.bytes, o + 4) << 16) | readU16(this.rom.bytes, o + 6) });
     }
     return out;
+  }
+
+  /** Спрайт из готовых тайлов (по столбцам). */
+  private spriteFrom(tiles: Uint8Array, tw: number, th: number, line: number, pal: Uint32Array): HTMLCanvasElement {
+    const w = tw * 8;
+    const px = new Uint32Array(w * th * 8);
+    for (let c = 0; c < tw; c++) for (let r = 0; r < th; r++) blitTile(tiles, (line << 13) | (c * th + r), pal, px, w, c * 8, r * 8);
+    return toCanvas(px, w, th * 8);
   }
 
   /** Спрайт из сырых тайлов ROM (тайлы идут по столбцам, как у VDP). */

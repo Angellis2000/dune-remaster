@@ -12,6 +12,7 @@ import { layoutSize, structureInfo, unitInfo } from "../engine/tables.ts";
 import { decodeText, SCREEN_H, SCREEN_W, type ScreenGfx } from "../gfx/screens.ts";
 import type { Button } from "../input/pad.ts";
 import type { DuneRom, Picture } from "../rom/dune.ts";
+import { readU16 } from "../rom/md.ts";
 
 /** Кнопки окна слева направо и их иконки (номера в таблице иконок окна). */
 const TABS = [
@@ -77,6 +78,10 @@ const STARPORT_LIGHTS: Light[] = [
 ];
 const rnd = (min: number, max: number) => min + Math.floor(Math.random() * (max - min + 1));
 
+/** Путь точки на экранчике космопорта ($008B0C): $B4 пар (y, x), центр спрайта; описание $04A70C — смещение −4. */
+const BLIP_PATH = 0x008b0c;
+const BLIP_LAST = 0xb3;
+
 /** Иконка пункта улучшения (гаечный ключ): номер 19 в таблице зданий, 27 — юнитов (обе $06E890). */
 const UPGRADE_ICON = { structures: 19, units: 27 };
 /** Имя пункта улучшения — строка ROM, которую копирует код окна ($0276FA). */
@@ -95,6 +100,8 @@ export class FactoryWindow {
   private raf = 0;
   /** огоньки: таймер и текущий кадр */
   private lights: { timer: number; frame: number }[] = [];
+  /** точка космопорта ($008A96): номер точки пути, направление, отражение */
+  private blip = { index: 0, back: false, flip: 0 };
 
   constructor(
     private rom: DuneRom,
@@ -132,6 +139,7 @@ export class FactoryWindow {
     this.s = s;
     this.cursor = -3;
     this.lights = [];
+    this.blip = { index: 0, back: false, flip: 0 };
     this.refresh();
     this.root.hidden = false;
     this.host.toggled(true);
@@ -271,6 +279,20 @@ export class FactoryWindow {
       }
       g.drawImage(gfx.windowLight(this.starport ? "starport" : "factory", l.table, l.words, st.frame), l.col * 8, l.row * 8);
     });
+    if (this.starport) {
+      // $008A96: шаг по пути; на конце — случайные отражение и направление, с начала или с конца
+      const b = this.blip;
+      b.index += b.back ? -1 : 1;
+      if (b.index < 0 || b.index > BLIP_LAST) {
+        b.flip = rnd(0, 3);
+        b.back = Math.random() < 0.5;
+        b.index = b.back ? BLIP_LAST : 0;
+      }
+      const at = BLIP_PATH + b.index * 4;
+      const y = (readU16(this.rom.bytes, at) << 16) >> 16;
+      const x = (readU16(this.rom.bytes, at + 2) << 16) >> 16;
+      gfx.starportBlip(g, x - 4, y - 4, b.flip);
+    }
 
     // кнопки ($028F8C, $029042): РЕМОНТ светлая у повреждённого, СТОП — если идёт ремонт, стройка,
     // улучшение или (у двора) готовый заказ ждёт постановки
@@ -303,11 +325,11 @@ export class FactoryWindow {
       }
     });
 
-    // курсор: мигающая рамка, как в оригинале
-    if ((this.frame >> 3) % 4 !== 3) {
+    // курсор: рамка с переливом цвета раз в 8 кадров ($008596)
+    {
       const cx = this.cursor < 0 ? GRID_X + (this.cursor + 3) * CELL_W : GRID_X + (this.cursor % COLUMNS) * CELL_W;
       const cy = this.cursor < 0 ? TAB_Y : GRID_Y + (Math.floor(this.cursor / COLUMNS) - firstRow) * CELL_H;
-      g.drawImage(this.starport ? gfx.starportCursor() : gfx.factoryCursor(), cx, cy);
+      g.drawImage(gfx.factoryCursor((this.frame & 31) >> 3, this.starport), cx, cy);
     }
 
     // правая часть: под курсором заказ — его картинка и числа, на кнопках — само здание без чисел
