@@ -44,12 +44,22 @@ export const MENTAT_ROM = {
   mapPaletteLast: 0x0a2dfe,
   facePalette: 0x0a2c3e,
   colorCycle: 0x0a2dce,
+  /** анимация после ПРИНЯТЬ: целевая область ($096050), тайлы областей, цвета спрайтов, масштаб */
+  target: 0x096050,
+  baseTileOffsets: 0x09d11c,
+  ownTileOffsets: 0x09d144,
+  pieceLine: 0x095cf0,
+  targetColors: 0x095cf8,
+  zoomSteps: 0x024b8e,
   /** тексты: вступление дома и таблица миссий (16 байт: брифинг, победа, поражение, совет) */
   houseIntro: 0x087d7c,
   missionTexts: 0x087f38,
 } as const;
 
 const LAYER = 0x39c0;
+/** картинка целевой области: $FF7380, $640 длинных слов, строка $70 байт */
+const ZOOM_BMP = 0x1900;
+const ZOOM_STRIDE = 0x70;
 const MAP_COLS = 33;
 const MAP_ROWS = 14;
 /** клетка плоскости, где лежит карта, и сдвиг экрана вверх */
@@ -104,8 +114,8 @@ export class MentatGfx {
   }
 
   /** Два слоя карты (как буфер $FF0000) для дома и уровня. */
-  mapLayers(house: number, level: number): Uint8Array {
-    const key = `map:${house}:${level}`;
+  mapLayers(house: number, level: number, mask = 0x3ff): Uint8Array {
+    const key = `map:${house}:${level}:${mask}`;
     let buf = this.data.get(key);
     if (buf) return buf;
     buf = new Uint8Array(LAYER * 2);
@@ -149,7 +159,8 @@ export class MentatGfx {
         p += 6;
         const color = readU16(this.b, colors + i * 2);
         for (;;) {
-          blit(x, y, shape, color, tile, src);
+          // область i рисуется, если стоит бит 9 − i маски ($FFF3B2)
+          if (mask & (1 << (9 - i))) blit(x, y, shape, color, tile, src);
           tile += readU16(this.b, R.shapeTiles + shape * 2);
           if (readU32(this.b, p) === 0) break;
           x += s16(p);
@@ -173,14 +184,14 @@ export class MentatGfx {
   }
 
   /** Нарисовать обе плоскости карты в буфер экрана 320×224. */
-  drawMap(px: Uint32Array, house: number, level: number, pal: Uint32Array): void {
-    const buf = this.mapLayers(house, level);
-    const x0 = MAP_CELL.col * 8;
+  drawMap(px: Uint32Array, house: number, level: number, pal: Uint32Array, mask = 0x3ff, dx = 0): void {
+    const buf = this.mapLayers(house, level, mask);
+    const x0 = MAP_CELL.col * 8 + dx;
     const y0 = MAP_CELL.row * 8 - MENTAT_VSCROLL;
     for (const [layer, line] of [[0, 0], [1, 1]] as const)
       for (let r = 0; r < MAP_ROWS; r++)
         for (let c = 0; c < MAP_COLS; c++)
-          blitTile(buf.subarray(layer * LAYER), (line << 13) | (r * MAP_COLS + c), pal, px, 320, x0 + c * 8, y0 + r * 8);
+          blitClipped(buf.subarray(layer * LAYER), (line << 13) | (r * MAP_COLS + c), pal, px, x0 + c * 8, y0 + r * 8);
   }
 
   /** Спрайты шаблона $0257EC (41 шт.). */
@@ -301,11 +312,169 @@ export class MentatGfx {
     return pages;
   }
 
+  /** Целевая область уровня ($096050[дом] + уровень·8, слово +6). */
+  targetRegion(house: number, level: number): number {
+    return readU16(this.b, readU32(this.b, MENTAT_ROM.target + house * 4) + level * 8 + 6);
+  }
+
+  /** Цвет области на уровне (0–3, таблица $095F6C). */
+  regionColor(house: number, level: number, region: number): number {
+    return readU16(this.b, readU32(this.b, MENTAT_ROM.ownColors + house * 4) + level * 0x14 + region * 2);
+  }
+
+  /** Куски области: основа ($096158) или владение ($0962DC); x, y — экран после сдвига карты, tile — от начала области. */
+  regionPieces(own: boolean, region: number): { x: number; y: number; shape: number; tile: number }[] {
+    const s16 = (a: number) => (readU16(this.b, a) << 16) >> 16;
+    let p = readU32(this.b, (own ? MENTAT_ROM.ownRegions : MENTAT_ROM.regions) + region * 4);
+    let x = s16(p);
+    let y = s16(p + 2);
+    let shape = s16(p + 4);
+    p += 6;
+    let tile = 0;
+    const out = [];
+    for (;;) {
+      out.push({ x, y, shape, tile });
+      tile += readU16(this.b, MENTAT_ROM.shapeTiles + shape * 2);
+      if (readU32(this.b, p) === 0) break;
+      x += s16(p);
+      y += s16(p + 2);
+      shape = s16(p + 4);
+      p += 6;
+    }
+    return out;
+  }
+
+  /** Тайлы области в ROM (как DMA $0244CC). */
+  regionTiles(own: boolean, region: number): Uint8Array {
+    const src = own ? MENTAT_ROM.ownTiles + readU32(this.b, MENTAT_ROM.ownTileOffsets + region * 4) : MENTAT_ROM.regionTiles + readU32(this.b, MENTAT_ROM.baseTileOffsets + region * 4);
+    return this.b.subarray(src);
+  }
+
+  /** Строка палитры спрайта-области по её цвету ($095CF0: 0, 2, 1, 3). */
+  pieceLine(color: number): number {
+    return readU16(this.b, MENTAT_ROM.pieceLine + color * 2) >> 13;
+  }
+
+  /** Нарисовать область спрайтами (основа поверх владения, как $0245F2) со сдвигом по y. */
+  drawRegion(px: Uint32Array, region: number, line: number, dy: number, pal: Uint32Array): void {
+    for (const own of [true, false]) {
+      const tiles = this.regionTiles(own, region);
+      for (const p of this.regionPieces(own, region)) {
+        const sz = p.shape;
+        this.drawSprite(px, tiles, { x: p.x, y: p.y + dy, w: ((sz >> 2) & 3) + 1, h: (sz & 3) + 1, attr: (line << 13) | p.tile }, pal);
+      }
+    }
+  }
+
+  /** Палитра $0A2D7E целиком (64 слова). */
+  fullPalette(): Uint16Array {
+    const pal = new Uint16Array(64);
+    for (let i = 0; i < 64; i++) pal[i] = readU16(this.b, MENTAT_ROM.mapPalette + i * 2);
+    return pal;
+  }
+
+  /** Цвета 1–6 строки 0 для целевой области по её цвету ($095CF8), или null для цвета 0. */
+  targetColors(color: number): Uint16Array | null {
+    if (!color) return null;
+    const a = MENTAT_ROM.mapPalette + readU16(this.b, MENTAT_ROM.targetColors + color * 2);
+    const out = new Uint16Array(6);
+    for (let i = 0; i < 6; i++) out[i] = readU16(this.b, a + i * 2);
+    return out;
+  }
+
+  /**
+   * Картинка целевой области ($024A76 + $02435E): байт на точку, строка $70 байт; сначала владение
+   * от (0, 0), поверх — основа в том же месте карты; ненулевые точки затирают.
+   */
+  zoomBitmap(region: number): Uint8Array {
+    const bmp = new Uint8Array(ZOOM_BMP);
+    const own = this.regionPieces(true, region);
+    const base = this.regionPieces(false, region);
+    const put = (isOwn: boolean, pieces: typeof own, ox: number, oy: number) => {
+      const tiles = this.regionTiles(isOwn, region);
+      for (const p of pieces) {
+        const cols = (readU16(this.b, MENTAT_ROM.shapeCols + p.shape * 2) << 16) >> 16;
+        const rows = (readU16(this.b, MENTAT_ROM.shapeRows + p.shape * 2) << 16) >> 16;
+        let src = p.tile * 32;
+        const x0 = (p.x - own[0].x + ox) & 0x1f8;
+        const y0 = p.y - own[0].y + oy;
+        for (let c = 0; c <= cols; c++)
+          for (let r = 0; r <= rows; r++) {
+            for (let line = 0; line < 8; line++)
+              for (let k = 0; k < 8; k++) {
+                const v = (tiles[src + line * 4 + (k >> 1)] >> (k & 1 ? 0 : 4)) & 15;
+                const at = (y0 + r * 8 + line) * ZOOM_STRIDE + x0 + c * 8 + k;
+                if (v && at >= 0 && at < ZOOM_BMP) bmp[at] = v;
+              }
+            src += 32;
+          }
+      }
+    };
+    put(true, own, 0, 0);
+    put(false, base, 0, 0);
+    return bmp;
+  }
+
+  /** Шаг масштаба ($024B8E + область·$FC, по 12 байт): сдвиг x/y, шаг 16.16, тайлов в ширину и высоту. */
+  zoomStep(region: number, k: number): { dx: number; dy: number; step: number; w: number; h: number } {
+    const a = MENTAT_ROM.zoomSteps + region * 0xfc + k * 12;
+    const s16 = (o: number) => (readU16(this.b, a + o) << 16) >> 16;
+    return { dx: s16(0), dy: s16(2), step: readU32(this.b, a + 4), w: s16(8), h: s16(10) };
+  }
+
   /** Адрес текста: вступление дома или текст миссии (0 брифинг, 1 победа, 2 поражение, 3 совет). */
   textOf(house: number, mission: number | null, kind = 0): number {
     if (mission === null) return readU32(this.b, MENTAT_ROM.houseIntro + house * 4);
     const t = readU32(this.b, MENTAT_ROM.missionTexts + house * 4);
     return readU32(this.b, t + (mission - 1) * 16 + kind * 4);
+  }
+}
+
+/**
+ * Масштаб картинки в тайлы ($024AF2): тайлы по строкам 33 в ряд, w × h тайлов, шаг 16.16 по x и y.
+ * Пятый шаг в каждой восьмёрке точек — только целая часть (add.w в оригинале). Остальное в буфере не трогается.
+ */
+export function zoomTiles(bmp: Uint8Array, out: Uint8Array, step: number, w: number, h: number): void {
+  const int = step >>> 16;
+  const frac = step & 0xffff;
+  let row = 0;
+  let rowFrac = 0;
+  for (let ty = 0; ty < h; ty++)
+    for (let line = 0; line < 8; line++) {
+      const base = row * ZOOM_STRIDE;
+      let x = 0;
+      let xf = 0;
+      const px = (ty * 8 + line) * MAP_COLS * 8;
+      for (let tx = 0; tx < w; tx++)
+        for (let k = 0; k < 8; k++) {
+          const at = base + x;
+          out[px + tx * 8 + k] = at < ZOOM_BMP ? bmp[at] : 0;
+          if (k === 4) x = (x + int) & 0xffff;
+          else {
+            xf += frac;
+            x = (x + int + (xf >>> 16)) & 0xffff;
+            xf &= 0xffff;
+          }
+        }
+      rowFrac += frac;
+      row += int + (rowFrac >>> 16);
+      rowFrac &= 0xffff;
+    }
+}
+
+/** Плоскость из тайлов zoomTiles в клетке (6, 9) со сдвигом прокрутки, строка палитры 0. */
+export function drawZoom(px: Uint32Array, img: Uint8Array, pal: Uint32Array, hs: number, vs: number): void {
+  const x0 = MAP_CELL.col * 8 + hs;
+  const y0 = MAP_CELL.row * 8 - vs;
+  const W = MAP_COLS * 8;
+  for (let y = 0; y < MAP_ROWS * 8; y++) {
+    const sy = y0 + y;
+    if (sy < 0 || sy >= 224) continue;
+    for (let x = 0; x < W; x++) {
+      const v = img[y * W + x];
+      const sx = x0 + x;
+      if (v && sx >= 0 && sx < 320) px[sy * 320 + sx] = pal[v];
+    }
   }
 }
 

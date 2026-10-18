@@ -277,7 +277,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   const briefing = (house: HouseCode, m: number, again = false): void => {
     paused = true;
     const text = mentat.text(house, m, again ? 3 : 0);
-    mentat.open({ house, level: m - 1, text, buttons: "accept", again }, (advice) => {
+    mentat.open({ house, level: m - 1, text, buttons: "accept", again, leave: true }, (advice) => {
       if (advice) briefing(house, m, true);
       else {
         paused = false;
@@ -639,7 +639,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   }
   canvas.focus();
   // для автотестов: ?debug открывает мир и вид из консоли
-  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites } });
+  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat } });
 }
 
 showRomScreen();

@@ -10,7 +10,7 @@
  * - $0264CA: палитра гаснет (шаг раз в 3 кадра).
  * Цвета 8–11 строки 2 крутятся раз в 8 кадров ($024728).
  */
-import { MentatGfx, toRGBA, type MdSprite } from "../gfx/mentat.ts";
+import { drawZoom, MentatGfx, toRGBA, zoomTiles, type MdSprite } from "../gfx/mentat.ts";
 import { SCREEN_H, SCREEN_W } from "../gfx/screens.ts";
 import type { DuneRom } from "../rom/dune.ts";
 import type { Button } from "../input/pad.ts";
@@ -31,6 +31,8 @@ export interface MentatScene {
   buttons: MentatButtons;
   /** продолжить на том же экране без затемнения (совет, $0260EC) */
   again?: boolean;
+  /** после ПРИНЯТЬ — уход с экрана: портрет уезжает, области откалываются, целевая приближается ($025DB2, $02610C) */
+  leave?: boolean;
 }
 
 /** Звуки оригинала ($02DDB6): $19 — рамка кнопок, $28 — выбор. */
@@ -44,7 +46,27 @@ const MOUTH = [11, 12, 13, 14];
 const BUTTON_TOP = 168;
 const BUTTON_BOTTOM = 192;
 
-type Phase = "fadein" | "typer" | "buttons" | "key" | "fadeout" | "idle";
+type Phase = "fadein" | "typer" | "buttons" | "key" | "fadeout" | "leave" | "idle";
+
+/** Падающая область ($FFA500, $24 байта): смещение по y и скорость в 16.16. */
+interface FallingRegion {
+  region: number;
+  line: number;
+  /** y первого куска владения — по нему область уходит за низ экрана */
+  top: number;
+  y: number;
+  vel: number;
+  visible: boolean;
+  falling: boolean;
+}
+
+/**
+ * Кадров от снятия области до следующей попытки ($024952 перерисовывает карту без неё): замерено в эмуляторе,
+ * по числу оставшихся на карте областей.
+ */
+const RECOMPOSE = [0, 9, 13, 15, 15, 17, 18, 21, 24, 27];
+/** Кадры смены картинок приближения после её появления на плоскости (замерено в эмуляторе). */
+const ZOOM_FRAMES = [8, 13, 18, 23, 28, 33, 38, 43, 48, 53, 58, 64, 71, 79, 88, 98];
 
 /** Случайное в [lo, hi], как $000C0C. */
 function rnd(lo: number, hi: number): number {
@@ -111,6 +133,19 @@ export class MentatScreen {
   private mouthAt = 0;
   private faceHidden = false;
 
+  // уход после ПРИНЯТЬ
+  private leaveGen: Generator<void, void, void> | null = null;
+  private planeDx = 0;
+  private portraitDx = 0;
+  private portraitGone = false;
+  private mapMask = 0x3ff;
+  private slots: (FallingRegion | null)[] = [null, null, null, null];
+  private physics = false;
+  private cycling = true;
+  private zoomImg: Uint8Array | null = null;
+  private zoomHs = 0;
+  private zoomVs = 0;
+
   // кнопки ($025BB8)
   private buttonY = BUTTON_TOP;
   private buttonMove = 0;
@@ -163,6 +198,15 @@ export class MentatScreen {
     this.faceHidden = false;
     this.fadeWait = 0;
     this.phase = "fadein";
+    this.leaveGen = null;
+    this.planeDx = 0;
+    this.portraitDx = 0;
+    this.portraitGone = false;
+    this.mapMask = 0x3ff;
+    this.slots = [null, null, null, null];
+    this.physics = false;
+    this.cycling = true;
+    this.zoomImg = null;
     // $01F9DA: начальное состояние
     this.pages = this.gfx.pages(scene.text);
     this.remaining = this.pages.length;
@@ -182,6 +226,13 @@ export class MentatScreen {
     this.last = performance.now();
     this.acc = 0;
     this.loop();
+  }
+
+  /** Для автотестов: остановить свой цикл и прогнать n кадров. */
+  stepFrames(n: number): void {
+    cancelAnimationFrame(this.raf);
+    for (let i = 0; i < n && !this.root.hidden; i++) this.tick();
+    if (!this.root.hidden) this.draw();
   }
 
   close(): void {
@@ -237,7 +288,7 @@ export class MentatScreen {
   private tick(): void {
     this.timer++;
     // VBlank $024728: цвета 8–11 строки 2
-    if (--this.cycleWait < 0) {
+    if (this.cycling && --this.cycleWait < 0) {
       this.cycleWait = CYCLE_FRAMES - 1;
       for (let i = 0; i < 4; i++) this.cram[40 + i] = this.gfx.cycleColor(this.cycle + i);
       this.cycle++;
@@ -259,7 +310,160 @@ export class MentatScreen {
       case "key":
         if (pressed) this.finish(0);
         break;
+      case "leave":
+        if (this.physics) this.fall();
+        if (this.leaveGen?.next().done) {
+          this.close();
+          this.done?.(0);
+        }
+        break;
     }
+  }
+
+  /** $0246E4: падение областей, ускорение $4000 (16.16); ушедшая за y $E0 освобождает место. */
+  private fall(): void {
+    this.slots.forEach((s, i) => {
+      if (!s || !s.falling) return;
+      s.vel += 0x4000;
+      s.y += s.vel;
+      if (s.top + Math.floor(s.y / 0x10000) >= 0xe0) this.slots[i] = null;
+    });
+  }
+
+  /** Свободное место для области ($0244CC): область 7 — только третье, остальные — первое свободное. */
+  private freeSlot(region: number): number {
+    if (region === 7) return this.slots[2] ? -1 : 2;
+    return this.slots.findIndex((s) => !s);
+  }
+
+  private lift(slot: number, region: number): FallingRegion {
+    const s: FallingRegion = {
+      region,
+      line: this.gfx.pieceLine(this.gfx.regionColor(this.house, this.scene.level, region)),
+      top: this.gfx.regionPieces(true, region)[0].y,
+      y: 0,
+      vel: 0,
+      visible: false,
+      falling: false,
+    };
+    this.slots[slot] = s;
+    return s;
+  }
+
+  /** Уход с экрана после ПРИНЯТЬ: $01F4B6 (пауза), $025DB2 (портрет уезжает), $02610C (карта рассыпается, приближение). */
+  private *leave(): Generator<void, void, void> {
+    const wait = function* (n: number): Generator<void, void, void> {
+      for (let i = 0; i < n; i++) yield;
+    };
+    // звук $26, 60 кадров, музыка $1D, 100 кадров
+    yield* wait(160);
+    // $025DB2: текст стёрт, 24 кадра портрет едет влево по 4 точки, карта — по 1; строка 3 гаснет в последние 9
+    this.page = [];
+    const line3 = this.cram.slice(48, 64);
+    for (let d7 = 23; d7 >= 0; d7--) {
+      yield;
+      this.cram.set(line3, 48);
+      this.planeDx--;
+      this.portraitDx -= 4;
+      if (d7 < 9) for (let i = 0; i < 16; i++) line3[i] = stepColor(line3[i], 0);
+    }
+    // $02610C: спрайты строятся заново из мест областей ($0245F2) — портрета больше нет;
+    // палитра $0A2D7E проявляется из тени ($0006C8)
+    this.physics = true;
+    this.portraitGone = true;
+    const full = this.gfx.fullPalette();
+    for (;;) {
+      let same = 0;
+      for (let i = 0; i < 64; i++) {
+        if (this.shadow[i] === full[i]) same++;
+        else this.shadow[i] = stepColor(this.shadow[i], full[i]);
+      }
+      this.cram.set(this.shadow);
+      // шаг раз в $E010 кадров — здесь 1 (вызывающий код возвращает своё значение)
+      yield;
+      if (same === 64) break;
+    }
+    // $0249F4: 101 кадр, затем области 9…0 (кроме целевой) по одной становятся спрайтами и падают
+    yield* wait(101);
+    const level = this.scene.level;
+    const target = this.gfx.targetRegion(this.house, level);
+    for (let r = 9; r >= 0; r--) {
+      let slot = -1;
+      for (;;) {
+        if (r === 7) yield* wait(21);
+        if (r === target) break;
+        slot = this.freeSlot(r);
+        if (slot >= 0) break;
+        yield;
+      }
+      if (r === target) continue;
+      const s = this.lift(slot, r);
+      yield;
+      s.visible = true;
+      const mask = this.mapMask & ~(1 << (9 - r));
+      let left = 0;
+      for (let i = 0; i < 10; i++) if (mask & (1 << i)) left++;
+      yield* wait(RECOMPOSE[left] - 2);
+      this.mapMask = mask;
+      yield;
+      s.falling = true;
+    }
+    // целевая область — тоже спрайтом, но не падает; карта стирается
+    yield* wait(51);
+    let slot = -1;
+    while (slot < 0) {
+      yield;
+      slot = this.freeSlot(target);
+    }
+    const t = this.lift(slot, target);
+    yield;
+    t.visible = true;
+    yield* wait(3);
+    this.mapMask = 0;
+    // прокрутка плоскости A — под первый кусок владения; цвета 1–6 строки 0 — цвета области
+    const own = this.gfx.regionPieces(true, target)[0];
+    this.zoomHs = own.x - 0x30;
+    this.zoomVs = 0x48 - own.y;
+    const colors = this.gfx.targetColors(this.gfx.regionColor(this.house, level, target));
+    if (colors) this.cram.set(colors, 1);
+    const bmp = this.gfx.zoomBitmap(target);
+    const W = 33 * 8 * 14 * 8;
+    const bufA = new Uint8Array(W);
+    const bufB = new Uint8Array(W);
+    zoomTiles(bmp, bufA, 0x10000, 14, 10);
+    yield* wait(19);
+    // картинка на плоскости, спрайты убраны; VBlank $024816: палитра гаснет раз в 5 кадров после первых 40
+    this.zoomImg = bufA;
+    this.slots = [null, null, null, null];
+    this.physics = false;
+    this.cycling = false;
+    this.shadow.set(this.cram);
+    let fadeIn = 40;
+    let frame = 0;
+    const steps = Array.from({ length: 17 }, (_, k) => this.gfx.zoomStep(target, k));
+    // кадр k показывает шаг k (чётные — буфер B), прокрутка уже сдвинута на шаг k + 1
+    for (let k = 0; k < ZOOM_FRAMES.length; k++) {
+      while (frame < ZOOM_FRAMES[k]) {
+        if (frame === ZOOM_FRAMES[k] - 1) {
+          this.zoomHs -= steps[k + 1].dx;
+          this.zoomVs -= steps[k + 1].dy;
+        }
+        if (--fadeIn === 0) {
+          fadeIn = 5;
+          for (let i = 0; i < 64; i++) this.shadow[i] = stepColor(this.shadow[i], 0);
+          this.cram.set(this.shadow);
+        }
+        frame++;
+        yield;
+      }
+      this.zoomImg = this.zoomRender(bmp, steps[k], k % 2 ? bufA : bufB);
+    }
+  }
+
+  /** Картинка шага (буферы не очищаются между шагами, как в оригинале). */
+  private zoomRender(bmp: Uint8Array, step: { step: number; w: number; h: number }, buf: Uint8Array): Uint8Array {
+    zoomTiles(bmp, buf, step.step, step.w, step.h);
+    return buf;
   }
 
   private fade(): void {
@@ -370,6 +574,11 @@ export class MentatScreen {
       this.done?.(choice);
       return;
     }
+    if (this.scene.leave && choice === 0) {
+      this.phase = "leave";
+      this.leaveGen = this.leave();
+      return;
+    }
     // $000628: тень палитры читается из CRAM
     this.shadow.set(this.cram);
     this.phase = "fadeout";
@@ -432,7 +641,10 @@ export class MentatScreen {
     const px = this.px;
     px.fill(0xff000000);
     const pal = toRGBA(this.cram);
-    this.gfx.drawMap(px, this.house, this.scene.level, pal);
+    // падающие области — спрайты без приоритета: под картой (её тайлы с приоритетом), третье место поверх первого
+    for (const s of this.slots) if (s?.visible) this.gfx.drawRegion(px, s.region, s.line, Math.floor(s.y / 0x10000), pal);
+    if (this.zoomImg) drawZoom(px, this.zoomImg, pal, this.zoomHs, this.zoomVs);
+    if (this.mapMask) this.gfx.drawMap(px, this.house, this.scene.level, pal, this.mapMask, this.planeDx);
     if (this.page.length) this.gfx.drawText(px, this.vram, this.page, pal);
     const eyes = this.gfx.faceOffset("eyes", this.house);
     const mouth = this.gfx.faceOffset("mouth", this.house);
@@ -443,11 +655,12 @@ export class MentatScreen {
         if (this.phase !== "buttons") continue;
         const y = i <= 2 ? this.buttonY : s.y + 128;
         this.gfx.drawSprite(px, this.vram, { ...s, x: s.x + 320, y }, pal);
-      } else if (EYES.includes(i)) {
-        if (!this.faceHidden) this.gfx.drawSprite(px, this.vram, s, pal, eyes.dx, eyes.dy);
+      } else if (this.portraitGone) continue;
+      else if (EYES.includes(i)) {
+        if (!this.faceHidden) this.gfx.drawSprite(px, this.vram, s, pal, eyes.dx + this.portraitDx, eyes.dy);
       } else if (MOUTH.includes(i)) {
-        if (!this.faceHidden) this.gfx.drawSprite(px, this.vram, s, pal, mouth.dx, mouth.dy);
-      } else this.gfx.drawSprite(px, this.vram, s, pal);
+        if (!this.faceHidden) this.gfx.drawSprite(px, this.vram, s, pal, mouth.dx + this.portraitDx, mouth.dy);
+      } else this.gfx.drawSprite(px, this.vram, s, pal, this.portraitDx);
     }
     new Uint32Array(this.img.data.buffer).set(px);
     this.ctx.putImageData(this.img, 0, 0);
