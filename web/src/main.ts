@@ -23,6 +23,7 @@ import { HOUSE_INDEX, MentatScreen } from "./ui/mentat.ts";
 import { EndPicture, Flyby, FLYBY_FRAMES } from "./ui/endgame.ts";
 import { ScoreScreen, type MissionStats } from "./ui/score.ts";
 import { MUSIC, Sound } from "./sound/sound.ts";
+import { TutorialScreen } from "./ui/tutorial.ts";
 import { Hud, hudState } from "./ui/hud.ts";
 import { SettingsMenu, type HouseCode } from "./ui/settings.ts";
 import { MapView } from "./view/mapview.ts";
@@ -373,7 +374,11 @@ async function startGame(rom: DuneRom): Promise<void> {
       frontend.close();
       settings.open();
     },
-    tutorial: () => G.onMessage("Обучение пока не сделано"),
+    // $03067C: ролик обучения, по концу или Start — снова главное меню
+    tutorial: () => {
+      frontend.close();
+      tutorial.open(() => frontend.openTitle());
+    },
     // $017418: заставка — секвенция 0 (если музыка включена); $026BBA: выбор дома — мелодия $1C
     screen: (mode) => {
       inMission = false;
@@ -382,6 +387,8 @@ async function startGame(rom: DuneRom): Promise<void> {
     },
   });
   stage.append(frontend.root);
+  const tutorial = new TutorialScreen(rom, sound);
+  stage.append(tutorial.root);
   // ментат: брифинг ($01F3EA) — ПРИНЯТЬ начинает миссию, СОВЕТ — совет на том же экране и снова кнопки
   const mentat = new MentatScreen(rom, sound);
   stage.append(mentat.root);
@@ -691,7 +698,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     if (!assets.root.hidden) return;
     lastButton = BUTTON_LABEL[b];
     if (ending) return;
-    if (scoreScreen.handlePad(b) || endPicture.handlePad(b) || mentat.handlePad(b) || frontend.handlePad(b) || settings.handlePad(b) || factory.handlePad(b)) {
+    if (tutorial.handlePad(b) || scoreScreen.handlePad(b) || endPicture.handlePad(b) || mentat.handlePad(b) || frontend.handlePad(b) || settings.handlePad(b) || factory.handlePad(b)) {
       updateHud();
       return;
     }
@@ -773,7 +780,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   }
   canvas.focus();
   // для автотестов: ?debug открывает мир и вид из консоли
-  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat, endPicture, scoreScreen, frontend, sound } });
+  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat, endPicture, scoreScreen, frontend, sound, tutorial } });
 }
 
 showRomScreen();

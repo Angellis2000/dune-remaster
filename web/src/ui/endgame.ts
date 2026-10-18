@@ -41,7 +41,7 @@ export const END_ROM = {
 /** Длительность пролёта ($026A38: 180 кадров). */
 export const FLYBY_FRAMES = 180;
 
-interface ObjSprite {
+export interface ObjSprite {
   x: number;
   y: number;
   w: number;
@@ -50,7 +50,7 @@ interface ObjSprite {
 }
 
 /** Описание объекта из спрайтов ($001000): слово «число − 1», затем по 12 байт: 2 слова, y, размер, атрибут, x. */
-function objectDef(b: Uint8Array, addr: number): ObjSprite[] {
+export function objectDef(b: Uint8Array, addr: number): ObjSprite[] {
   const s16 = (a: number) => (readU16(b, a) << 16) >> 16;
   const n = readU16(b, addr) + 1;
   const out: ObjSprite[] = [];
@@ -63,7 +63,7 @@ function objectDef(b: Uint8Array, addr: number): ObjSprite[] {
 }
 
 /** Спрайт MD (тайлы по столбцам) из источника тайлов; tileBase — номер тайла начала источника. */
-function drawObjSprite(px: Uint32Array, w: number, h: number, tiles: Uint8Array, tileBase: number, s: ObjSprite, x: number, y: number, pal: Uint32Array, paletteBits = 0): void {
+export function drawObjSprite(px: Uint32Array, w: number, h: number, tiles: Uint8Array, tileBase: number, s: ObjSprite, x: number, y: number, pal: Uint32Array, paletteBits = 0): void {
   const hf = (s.attr & 0x800) !== 0;
   const vf = (s.attr & 0x1000) !== 0;
   const tmp = new Uint32Array(64);
