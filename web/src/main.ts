@@ -302,16 +302,16 @@ async function startGame(rom: DuneRom): Promise<void> {
     sound: () => prefs.sound,
     setSound: (on) => {
       prefs.sound = on;
-      sound.soundOn = on;
+      sound.setSound(on);
       savePrefs();
     },
-    ui: (seq) => sound.ui(seq),
+    ui: (seq) => sound.menuUi(seq),
     playTrack: (seq) => {
       if (lastTrack >= 0) sound.stopSong(lastTrack);
       lastTrack = -1;
       if (prefs.music) sound.startSong((lastTrack = seq));
     },
-    playSfx: (seq) => sound.ui(seq),
+    playSfx: (seq) => sound.menuUi(seq),
     radar: () => prefs.radar,
     setRadar: (on) => {
       prefs.radar = on;
@@ -388,6 +388,10 @@ async function startGame(rom: DuneRom): Promise<void> {
     introSound: (seq) => {
       if (prefs.music) sound.play(seq);
     },
+    ui: (seq) => sound.ui(seq),
+    select: (seq) => {
+      if (prefs.sound) sound.play(seq);
+    },
     screen: (mode) => {
       inMission = false;
       if (mode === "intro" && prefs.music) sound.play(0);
@@ -429,6 +433,8 @@ async function startGame(rom: DuneRom): Promise<void> {
       updateHud();
     },
     placing: () => updateHud(),
+    ui: (seq) => sound.ui(seq),
+    sfx: (id) => sound.sfx(id),
   });
   stage.append(factory.root);
   /** Окно своего здания: с геймпада — оригинальное окно, мышью — правое меню. */

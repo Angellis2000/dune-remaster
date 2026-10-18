@@ -52,6 +52,8 @@ export class Sound {
   battleLeft = -1;
   /** звук, отложенный до кадра ($F800) */
   private deferred: number[] = [];
+  /** последний звук меню «НАСТРОЙКИ» (d5 в $020E00): перед новым он останавливается */
+  private lastUi = -1;
 
   constructor(private rom: DuneRom) {}
 
@@ -134,6 +136,23 @@ export class Sound {
   /** $02DDB6 */
   ui(seq: number): void {
     if (this.soundOn) this.startSong(seq);
+  }
+
+  /** Звук меню «НАСТРОЙКИ» ($020F3E): прошлый стоп ($02DDCC), затем новый ($02DDB6). */
+  menuUi(seq: number): void {
+    if (this.lastUi >= 0) this.stopSong(this.lastUi);
+    this.ui(seq);
+    this.lastUi = seq;
+  }
+
+  /** Звуки выключены: флаг $FFDC51 и сразу тишина — стоп всех секвенций, музыка играет дальше. */
+  setSound(on: boolean): void {
+    this.soundOn = on;
+    if (on) return;
+    this.command(GEMS.STOP_ALL);
+    this.voice = -1;
+    this.deferred = [];
+    if (this.musicOn && this.music) this.startSong(this.music);
   }
 
   /** $00A8E2 */

@@ -15,6 +15,8 @@ const ARROW = { x: 120, y: 160, step: 8 };
 /** дома слева направо */
 const HOUSES: HouseCode[] = ["A", "O", "H"];
 const HOUSE_FRAME = { x: 32, step: 88, y: 136 };
+/** рамка выбора дома едет к соседнему по 4 точки за кадр ($00480C) */
+const HOUSE_SLIDE = 4;
 
 export interface FrontEndHost {
   newGame(house: HouseCode): void;
@@ -22,6 +24,10 @@ export interface FrontEndHost {
   screen?(mode: "intro" | "title" | "house"): void;
   /** звук заставки ($02DD26) */
   introSound?(seq: number): void;
+  /** звук интерфейса ($02DDB6) */
+  ui?(seq: number): void;
+  /** звук выбора пункта: $02DD26, только если звуки включены ($017980) */
+  select?(seq: number): void;
   options(): void;
   tutorial(): void;
 }
@@ -34,6 +40,8 @@ export class FrontEnd {
   private intro: Intro;
   private item = 0;
   private house = 0;
+  /** сколько точек рамке ещё ехать до выбранного дома ($FFBF02), знак — направление */
+  private slide = 0;
   private frame = 0;
   private raf = 0;
 
@@ -83,6 +91,7 @@ export class FrontEnd {
   openHouse(): void {
     this.mode = "house";
     this.house = 0;
+    this.slide = 0;
     this.show();
     this.host.screen?.("house");
   }
@@ -107,12 +116,15 @@ export class FrontEnd {
       return true;
     }
     if (this.mode === "title") {
-      if (b === "up") this.item = (this.item + MENU_ITEMS - 1) % MENU_ITEMS;
-      else if (b === "down") this.item = (this.item + 1) % MENU_ITEMS;
-      else if (b === "a" || b === "c" || b === "start") this.chooseItem();
+      // $017A9E: стрелка — звук $0B, выбор — $0C
+      if (b === "up") (this.item = (this.item + MENU_ITEMS - 1) % MENU_ITEMS), this.host.ui?.(0x0b);
+      else if (b === "down") (this.item = (this.item + 1) % MENU_ITEMS), this.host.ui?.(0x0b);
+      else if (b === "a" || b === "c" || b === "start") (this.host.select?.(0x0c), this.chooseItem());
     } else {
-      if (b === "left") this.house = Math.max(0, this.house - 1);
-      else if (b === "right") this.house = Math.min(HOUSES.length - 1, this.house + 1);
+      // $004934: пока рамка едет, кнопки не действуют
+      if (this.slide) return true;
+      if (b === "left" && this.house > 0) (this.house--, (this.slide = -HOUSE_FRAME.step));
+      else if (b === "right" && this.house < HOUSES.length - 1) (this.house++, (this.slide = HOUSE_FRAME.step));
       else if (b === "a" || b === "c" || b === "start") {
         this.close();
         this.host.newGame(HOUSES[this.house]);
@@ -136,6 +148,7 @@ export class FrontEnd {
       const i = Math.floor((y - ARROW.y) / ARROW.step);
       if (i >= 0 && i < MENU_ITEMS && x >= ARROW.x) {
         this.item = i;
+        this.host.select?.(0x0c);
         this.chooseItem();
       }
     } else {
@@ -151,6 +164,11 @@ export class FrontEnd {
   private loop(): void {
     this.frame++;
     if (this.mode === "intro" && !this.intro.tick()) this.openTitle();
+    if (this.mode === "house" && this.slide) {
+      this.slide -= Math.sign(this.slide) * HOUSE_SLIDE;
+      // рамка доехала — звук $19
+      if (!this.slide) this.host.ui?.(0x19);
+    }
     this.draw();
     if (!this.root.hidden) this.raf = requestAnimationFrame(() => this.loop());
   }
@@ -165,7 +183,7 @@ export class FrontEnd {
     } else {
       g.drawImage(this.gfx.houseScreen(), 0, 0);
       // рамка: цвет 1…4 раз в 8 кадров ($004870)
-      g.drawImage(this.gfx.houseFrame(((this.frame & 31) >> 3) + 1), HOUSE_FRAME.x + this.house * HOUSE_FRAME.step, HOUSE_FRAME.y);
+      g.drawImage(this.gfx.houseFrame(((this.frame & 31) >> 3) + 1), HOUSE_FRAME.x + this.house * HOUSE_FRAME.step - this.slide, HOUSE_FRAME.y);
     }
   }
 }

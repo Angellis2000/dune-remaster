@@ -20,10 +20,10 @@ await key("Digit1");
 await page.waitForTimeout(200);
 await shot("fe3_house");
 await key("ArrowRight");
-await page.waitForTimeout(200);
+await page.waitForTimeout(500); // рамка едет 22 кадра, пока едет — A не действует
 await shot("fe4_ordos");
 await key("Digit1");
 await page.waitForTimeout(300);
-console.log("меню закрыто:", await page.isHidden(".frontend"), "миссия:", await page.inputValue("#mission-select"));
+console.log("меню закрыто:", await page.isHidden(".frontend"), "ментат открыт:", await page.isVisible(".mentat"), "дом:", await page.evaluate(() => window.dune.mentat?.scene?.house ?? window.dune.mentat?.house));
 console.log("errors:", errors);
 await browser.close();

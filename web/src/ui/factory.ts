@@ -44,6 +44,10 @@ export interface FactoryHost {
   toggled(open: boolean): void;
   /** заказ готов и взят на постановку */
   placing(): void;
+  /** звук интерфейса ($02DDB6) */
+  ui?(seq: number): void;
+  /** звук $00A7DC */
+  sfx?(id: number): void;
 }
 
 interface Order {
@@ -173,6 +177,7 @@ export class FactoryWindow {
     if (this.root.hidden) return false;
     const n = this.orders.length;
     const col = this.cursor < 0 ? this.cursor + 3 : this.cursor % COLUMNS;
+    const was = this.cursor;
     if (b === "left" || b === "right") {
       const d = b === "left" ? -1 : 1;
       if (this.cursor < 0) this.cursor = Math.min(-1, Math.max(-3, this.cursor + d));
@@ -188,29 +193,47 @@ export class FactoryWindow {
       if (this.cursor >= COLUMNS) this.cursor -= COLUMNS;
       else if (this.cursor >= 0) this.cursor = col - 3;
     } else if (b === "a" || b === "c") this.activate();
+    // $0288E8: курсор сдвинулся — звук $19
+    if (this.cursor !== was) this.host.ui?.(0x19);
     return true;
   }
 
+  /** Кнопки ВЫХОД, РЕМОНТ, СТОП: светлая — можно нажать ($028F8C, $029042). */
+  private buttons(s: Structure): boolean[] {
+    const damaged = s.o.hitpoints < structureInfo[s.o.type].o.hitpoints;
+    const busy = s.o.linkedID !== 0xff && (s.state === STATE.BUSY || (!this.units && s.state === STATE.READY));
+    return [true, damaged, s.o.flags.repairing || s.o.flags.upgrading || busy];
+  }
+
+  /**
+   * A в окне ($028876): нельзя (тёмная кнопка, авиации некуда, космопорт не продаёт) — звук ошибки $2F,
+   * иначе действие и звук $26.
+   */
   private activate(): void {
     const s = this.s;
     if (!s) return;
+    const fail = () => this.host.sfx?.(0x2f);
+    const ok = () => this.host.sfx?.(0x26);
     const game = this.host.game();
-    if (this.cursor === -3) return this.close();
+    if (this.cursor < 0 && !this.buttons(s)[this.cursor + 3]) return fail();
+    if (this.cursor === -3) return ok(), this.close();
     if (this.cursor === -2) {
+      ok();
       game.startRepair(s);
       return;
     }
     if (this.cursor === -1) {
+      ok();
       game.stopAll(s);
       return;
     }
     const order = this.orders[this.cursor];
-    if (!order || order.available < 0) return;
+    if (!order || order.available < 0) return fail();
     if (this.starport) {
       // $028BB4: цена не больше кредитов, запас есть, для авиации — свободное место ($FFC728); покупка — и на карту
-      if (order.cost > this.host.credits() || G.starportAvailable[order.type] <= 0) return;
-      if ((order.type === UNIT.CARRYALL || order.type === UNIT.ORNITHOPTER) && !unitAirSlotFree()) return;
-      if (game.starportBuy(s, order.type, order.cost)) this.close();
+      if (order.cost > this.host.credits() || G.starportAvailable[order.type] <= 0) return fail();
+      if ((order.type === UNIT.CARRYALL || order.type === UNIT.ORNITHOPTER) && !unitAirSlotFree()) return fail();
+      if (game.starportBuy(s, order.type, order.cost)) (ok(), this.close());
       return;
     }
     // $029060: выбор пункта снимает ремонт
@@ -223,7 +246,8 @@ export class FactoryWindow {
       return;
     }
     // $0288BC: хайтек не заказывает авиацию, если для неё нет места ($FFC728), — звук ошибки 0x2F
-    if (s.o.type === STRUCTURE.HIGH_TECH && (order.type === UNIT.CARRYALL || order.type === UNIT.ORNITHOPTER) && !unitAirSlotFree()) return;
+    if (s.o.type === STRUCTURE.HIGH_TECH && (order.type === UNIT.CARRYALL || order.type === UNIT.ORNITHOPTER) && !unitAirSlotFree()) return fail();
+    ok();
     const prod = game.production(s);
     if (prod && prod.type === order.type) {
       // готовое здание — сразу постановка; заказ в работе — просто назад на карту
@@ -297,9 +321,7 @@ export class FactoryWindow {
     // кнопки ($028F8C, $029042): РЕМОНТ светлая у повреждённого, СТОП — если идёт ремонт, стройка,
     // улучшение или (у двора) готовый заказ ждёт постановки
     const prod = game.production(s);
-    const damaged = s.o.hitpoints < structureInfo[s.o.type].o.hitpoints;
-    const busy = s.o.linkedID !== 0xff && (s.state === STATE.BUSY || (!units && s.state === STATE.READY));
-    const enabled = [true, damaged, s.o.flags.repairing || s.o.flags.upgrading || busy];
+    const enabled = this.buttons(s);
     TABS.forEach((t, i) => {
       const icon = gfx.factoryIcon(units, enabled[i] ? t.on : t.off);
       if (icon) g.drawImage(icon, GRID_X + i * CELL_W, TAB_Y);

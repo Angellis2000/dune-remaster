@@ -24,6 +24,8 @@ export const GEMS_ROM = {
 export const GEMS = {
   START: 0x10,
   STOP: 0x12,
+  /** остановить всё ($0016A6, $02DDC6) */
+  STOP_ALL: 0x16,
   INIT: 0x0b,
 } as const;
 
