@@ -1,5 +1,5 @@
 import css from "./style.css?inline";
-import { ACTION, G, SELECTION, STRUCTURE, UNIT, type Structure as EngineStructure } from "./engine/core.ts";
+import { ACTION, G, SELECTION, STRUCTURE, UNIT, type Structure as EngineStructure, type Unit as EUnit } from "./engine/core.ts";
 import { layoutSize, structureInfo } from "./engine/tables.ts";
 import { houseAreAllied } from "./engine/house.ts";
 import { structureLimitReached } from "./engine/structure.ts";
@@ -722,6 +722,15 @@ async function startGame(rom: DuneRom): Promise<void> {
   const playerUnitsSelected = () => [...view.selectedUnits].filter((u) => u.house === world.player && u.ref.o.flags.used && !u.ref.o.flags.isNotOnMap);
   /** юниты, которым отдаётся приказ: выделенные свои */
   const commandable = () => playerUnitsSelected().map((u) => u.ref);
+  /** Приказ выделенным по щелчку: у каждого своё действие по умолчанию, одинаковые идут одной группой (Game.orderGroup). */
+  const orderSelected = (units: EUnit[], packed: number) => {
+    const byAction = new Map<number, EUnit[]>();
+    for (const u of units) {
+      const action = world.game.defaultAction(u, packed);
+      byAction.set(action, [...(byAction.get(action) ?? []), u]);
+    }
+    for (const [action, list] of byAction) world.game.orderGroup(list, action, packed);
+  };
   const selectUnits = (list: WorldUnit[]) => {
     clearSelection();
     for (const u of list) view.selectedUnits.add(u);
@@ -764,11 +773,9 @@ async function startGame(rom: DuneRom): Promise<void> {
       return;
     }
     if (G.selectionType === SELECTION.TARGET) {
-      const action = G.activeAction;
       const others = commandable().filter((u) => u !== G.unitActive);
       const active = G.unitActive;
-      world.game.targetClick(packed);
-      for (const u of others) world.game.order(u, action, packed);
+      world.game.targetClick(packed, others);
       view.flashOrders(active ? [active, ...others] : others);
       updateHud();
       return;
@@ -786,7 +793,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       if(mine.includes(unit.ref)&&world.game.activateSelf(unit.ref))updateHud();
       else selectUnits([unit]);
     } else if (mine.length) {
-      for (const u of mine) world.game.order(u, world.game.defaultAction(u, packed), packed);
+      orderSelected(mine, packed);
       view.flashOrders(mine);
     } else if (unit) {
       selectUnits([unit]);
@@ -840,7 +847,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       } else if (unit && unit.house === world.player && !unit.air) {
         selectUnits([unit]);
       } else {
-        for (const u of mine) world.game.order(u, world.game.defaultAction(u, packed), packed);
+        orderSelected(mine, packed);
         view.flashOrders(mine);
         clearSelection();
       }

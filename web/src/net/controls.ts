@@ -10,7 +10,7 @@ import { actionInfo, houseInfo, unitInfo } from "../engine/tables.ts";
 import { unitGetHouseID } from "../engine/unit.ts";
 
 const OVERRIDDEN = [
-  "order", "unitCommand", "activateSelf", "targetClick", "cancelTarget", "build", "starportBuy", "cancelQueuedUnit", "cancelQueuedBuilding", "cancelReadyBuilding",
+  "order", "orderGroup", "unitCommand", "activateSelf", "targetClick", "cancelTarget", "build", "starportBuy", "cancelQueuedUnit", "cancelQueuedBuilding", "cancelReadyBuilding",
   "placeIt", "canPlaceAt", "placementDetail", "place", "cancelPlace", "toggleRepair", "upgrade", "holdOrResume", "cancelBuild", "stopAll",
   "startRepair", "palaceSpecial",
 ] as const;
@@ -26,6 +26,11 @@ export function installNetControls(game: Game, send: (c: NetCommand) => void, ho
   const local: Partial<Record<(typeof OVERRIDDEN)[number], unknown>> = {
     order(u: Unit, action: number, packed: number) {
       if (ownUnit(u)) send({ k: "order", u: [u.o.index], a: action, p: packed });
+    },
+    // вся группа — одной командой: так у всех клиентов те же клетки атаки и не упираемся в предел команд за ход
+    orderGroup(units: Unit[], action: number, packed: number) {
+      const list = units.filter(ownUnit).map((u) => u.o.index);
+      for (let i = 0; i < list.length; i += 64) send({ k: "order", u: list.slice(i, i + 64), a: action, p: packed });
     },
     unitCommand(u: Unit, action: number): boolean {
       if (!ownUnit(u)) return false;
@@ -48,7 +53,7 @@ export function installNetControls(game: Game, send: (c: NetCommand) => void, ho
       send({ k: "act", u: [u.o.index], a: ACTION.DESTRUCT });
       return true;
     },
-    targetClick(packed: number) {
+    targetClick(packed: number, others: Unit[] = []) {
       if (missilePalace >= 0) {
         send({ k: "palace", s: missilePalace, p: packed });
         missilePalace = -1;
@@ -60,7 +65,7 @@ export function installNetControls(game: Game, send: (c: NetCommand) => void, ho
       G.unitActive = null;
       G.activeAction = 0xffff;
       G.selectionType = SELECTION.UNIT;
-      if (u && ownUnit(u)) send({ k: "order", u: [u.o.index], a: action, p: packed });
+      if (u && ownUnit(u)) (g.orderGroup as (units: Unit[], a: number, p: number) => void)([u, ...others.filter((o) => o !== u)], action, packed);
     },
     cancelTarget() {
       if (G.structureActiveType !== 0xffff) (g.cancelPlace as () => void)();

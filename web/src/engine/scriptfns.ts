@@ -12,7 +12,7 @@ import {
 import { humanMask, isHuman, isLocal } from "./core.ts";
 import { houseAlliedToHuman, houseAreAllied } from "./house.ts";
 import { mapChangeSpiceAmount, mapGetLandscapeType, mapIsValidPosition, mapMakeExplosion, mapSearchSpice, tileGetTileInDirectionOf } from "./map.ts";
-import { objectGetByPackedTile, objectGetDistanceToEncoded, objectScriptVariable4Clear, objectScriptVariable4Link, objectScriptVariable4Set } from "./object.ts";
+import { objectGetByPackedTile, objectGetDistanceToEncoded, pointGetDistanceToEncoded, objectScriptVariable4Clear, objectScriptVariable4Link, objectScriptVariable4Set } from "./object.ts";
 import { peek } from "./script.ts";
 import { scriptLoad, scriptReset } from "./script.ts";
 import { msg } from "./strings.ts";
@@ -489,6 +489,82 @@ function unitFindClearShotTile(unit: Unit, target: number): number {
   return best;
 }
 
+/**
+ * Клетка для группового приказа атаки: ближайшая к юниту свободная проходимая клетка, откуда цель уже в пределах его
+ * дальности (расстояние как у скрипта — до ближнего края здания), без своих зданий на линии огня и не из taken.
+ */
+function findAttackSpot(unit: Unit, target: number, taken: Set<number>): number {
+  const targetPosition = indexGetTile(target);
+  const packedTarget = packTile(targetPosition);
+  const range = unitInfo[unit.o.type].fireDistance << 8;
+  const reach = unitInfo[unit.o.type].fireDistance + 2;
+  let best = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let y = Math.max(0, (packedTarget >> 6) - reach); y <= Math.min(63, (packedTarget >> 6) + reach); y++) {
+    for (let x = Math.max(0, (packedTarget & 63) - reach); x <= Math.min(63, (packedTarget & 63) + reach); x++) {
+      const packed = packXY(x, y);
+      if (taken.has(packed) || !mapIsValidPosition(packed) || structureGetByPackedTile(packed)) continue;
+      const other = objectGetByPackedTile(packed);
+      if (other && other !== unit.o) continue;
+      if (unitGetTileEnterScore(unit, packed, 0) >= 256) continue;
+      const point = tileCenter(unpackTile(packed));
+      if (pointGetDistanceToEncoded(point, target) >= range) continue;
+      if (friendlyStructureOnRay(point, targetPosition, unitGetHouseID(unit))) continue;
+      const distance = tileGetDistance(unit.o.position, point);
+      if (distance < bestDistance) {
+        best = packed;
+        bestDistance = distance;
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Групповой приказ атаки (в MD выделять группу нельзя, это добавка ремейка). Скрипт ROM у каждого юнита ведёт его
+ * к клетке цели, поэтому толпа упирается друг в друга и задние объезжают передних почти вплотную. Здесь каждому,
+ * кто ещё не достаёт, даётся своя клетка на дальности огня (ближние к цели выбирают первыми); unitCalculateRoute
+ * везёт туда вместо клетки цели, дальше стрельбой управляет тот же скрипт ROM. Одиночный приказ не меняется.
+ */
+export function unitsAssignAttackSpots(units: Unit[], target: number): void {
+  if (!indexIsValid(target) || indexGetType(target) === IT.TILE) return;
+  const taken = new Set<number>();
+  const order = [...units].sort((a, b) => objectGetDistanceToEncoded(a.o, target) - objectGetDistanceToEncoded(b.o, target) || a.o.index - b.o.index);
+  for (const u of order) {
+    u.attackSpot = undefined;
+    if (unitInfo[u.o.type].movementType === MOVEMENT.WINGER || u.targetAttack !== target) continue;
+    if (objectGetDistanceToEncoded(u.o, target) < unitInfo[u.o.type].fireDistance << 8) continue;
+    const packed = findAttackSpot(u, target, taken);
+    if (packed === 0) continue;
+    taken.add(packed);
+    u.attackSpot = { target, packed };
+    u.route[0] = 0xff;
+  }
+}
+
+/** Клетка группы ещё годится? Если её занял другой, подобрать новую среди свободных от товарищей по цели. */
+function attackSpotFor(u: Unit): number {
+  const spot = u.attackSpot;
+  if (!spot) return 0;
+  if (spot.target !== u.targetAttack || !indexIsValid(spot.target) || packTile(u.o.position) === spot.packed) {
+    u.attackSpot = undefined;
+    return 0;
+  }
+  const other = objectGetByPackedTile(spot.packed);
+  if (other && other !== u.o) {
+    const taken = new Set<number>();
+    for (const o of G.unitFind) if (o !== u && o.o.flags.used && o.attackSpot?.target === spot.target) taken.add(o.attackSpot.packed);
+    const packed = findAttackSpot(u, spot.target, taken);
+    if (packed === 0) {
+      u.attackSpot = undefined;
+      return 0;
+    }
+    spot.packed = packed;
+    u.route[0] = 0xff;
+  }
+  return spot.packed;
+}
+
 const unitFire: ScriptFunction = (script) => {
   const u = cur();
   const target = u.targetAttack;
@@ -875,8 +951,11 @@ function pathfinder(packedSrc: number, packedDst: number, bufferSize: number): P
 
 const unitCalculateRoute: ScriptFunction = (script) => {
   const u = cur();
-  const encoded = P(script, 1);
+  let encoded = P(script, 1);
   if (u.currentDestination.x !== 0 || u.currentDestination.y !== 0 || !indexIsValid(encoded)) return 1;
+  // групповая атака: вместо клетки цели — своя клетка на дальности огня (unitsAssignAttackSpots)
+  const spot = u.attackSpot && encoded === u.targetAttack ? attackSpotFor(u) : 0;
+  if (spot !== 0) encoded = indexEncode(spot, IT.TILE);
   const packedSrc = packTile(u.o.position);
   const packedDst = packTile(unitDestinationTile(u,encoded));
   if (packedDst === packedSrc) {
@@ -888,6 +967,8 @@ const unitCalculateRoute: ScriptFunction = (script) => {
     const res = pathfinder(packedSrc, packedDst, 40);
     const n = Math.min(res.routeSize, 14);
     for (let i = 0; i < n; i++) u.route[i] = res.buffer[i];
+    // до своей клетки пути нет — дальше как в ROM, к самой цели
+    if (spot !== 0 && u.route[0] === 0xff) { u.attackSpot = undefined; return 1; }
     if (u.route[0] === 0xff) {
       const refinery=indexGetStructure(encoded);
       if(u.o.type===UNIT.HARVESTER&&refinery?.o.type===STRUCTURE.REFINERY&&refinery.o.houseID===unitGetHouseID(u)){

@@ -1,7 +1,7 @@
 /**
  * Общее для юнитов и зданий (OpenDUNE src/object.c): связь «кто к кому едет» через переменную скрипта 4.
  */
-import { G, indexGetObject, indexGetStructure, indexGetTile, indexIsValid, orientation8, packTile, tileGetDirection, tileGetDistance, unpackTile, type GObject } from "./core.ts";
+import { G, indexGetObject, indexGetStructure, indexGetTile, indexIsValid, orientation8, packTile, tileGetDirection, tileGetDistance, unpackTile, type GObject, type Tile32 } from "./core.ts";
 import { STATE } from "./core.ts";
 import { layoutEdgeTiles, structureInfo } from "./tables.ts";
 import { structureGetLinkedUnit, structureSetState } from "./structure.ts";
@@ -49,14 +49,19 @@ export function objectGetByPackedTile(packed: number): GObject | null {
 }
 
 export function objectGetDistanceToEncoded(o: GObject, encoded: number): number {
+  return pointGetDistanceToEncoded(o.position, encoded);
+}
+
+/** То же, что objectGetDistanceToEncoded, но от любой точки: у здания — до ближней к точке клетки края. */
+export function pointGetDistanceToEncoded(from: Tile32, encoded: number): number {
   const s = indexGetStructure(encoded);
   let position;
   if (s) {
     let packed = packTile(s.o.position);
-    packed += layoutEdgeTiles[structureInfo[s.o.type].layout][(orientation8(tileGetDirection(o.position, s.o.position)) + 4) & 7];
+    packed += layoutEdgeTiles[structureInfo[s.o.type].layout][(orientation8(tileGetDirection(from, s.o.position)) + 4) & 7];
     position = unpackTile(packed & 0xffff);
   } else {
     position = indexGetTile(encoded);
   }
-  return tileGetDistance(o.position, position);
+  return tileGetDistance(from, position);
 }

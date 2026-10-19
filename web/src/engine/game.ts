@@ -15,7 +15,7 @@ import { gameLoopHouse, houseCalculatePowerAndCredit, houseResetTimers, houseUpd
 import { mapBloomExplodeSpice, mapGetLandscapeType, mapIsUnveiledLocal, mapIsValidPosition, mapUnveilTile } from "./map.ts";
 import { objectGetByPackedTile, objectScriptVariable4Clear } from "./object.ts";
 import { loadEmc, scriptLoad } from "./script.ts";
-import { scriptFunctionsStructure, scriptFunctionsTeam, scriptFunctionsUnit, structureDeployProducedUnit } from "./scriptfns.ts";
+import { scriptFunctionsStructure, scriptFunctionsTeam, scriptFunctionsUnit, structureDeployProducedUnit, unitsAssignAttackSpots } from "./scriptfns.ts";
 import { msg } from "./strings.ts";
 import {initializeDrone,clampDronePoint,droneTargetAllowed,droneCanLaunch} from './advanced-units.ts';
 import {
@@ -496,6 +496,7 @@ export class Game {
   order(u: Unit, action: number, packed: number, house = G.playerHouseID): void {
     if (unitGetHouseID(u) !== house) return;
     u.blockedAttack=undefined;
+    u.attackSpot=undefined;
     if(u.o.type===UNIT.COMBAT_DRONE){
       if(!u.drone)initializeDrone(u);
       if(action===ACTION.MOVE||action===ACTION.PATROL)packed=packTile(clampDronePoint(u,tileCenter(unpackTile(packed))));
@@ -602,7 +603,8 @@ export class Game {
   }
 
   /** Указана цель для выбранного действия. */
-  targetClick(packed: number): void {
+  /** Цель выбрана: приказ активному юниту и (others) остальным выделенным — одной группой. */
+  targetClick(packed: number, others: Unit[] = []): void {
     if (G.unitHouseMissile) {
       unitLaunchHouseMissile(packed);
       return;
@@ -612,7 +614,20 @@ export class Game {
     G.unitActive = null;
     G.activeAction = 0xffff;
     G.selectionType = SELECTION.UNIT;
-    if (u) this.order(u, action, packed);
+    if (u) this.orderGroup([u, ...others.filter((o) => o !== u)], action, packed);
+  }
+
+  /**
+   * Приказ нескольким юнитам сразу (выделение рамкой — добавка ремейка, в MD юнит один). Каждому — как order; при
+   * атаке одной цели толпой каждый получает свою клетку на дальности огня (unitsAssignAttackSpots), чтобы не
+   * съезжаться к цели вплотную. Методы — именно класса: в сети интерфейс подменяет их отправкой команд.
+   */
+  orderGroup(units: Unit[], action: number, packed: number, house = G.playerHouseID): void {
+    for (const u of units) Game.prototype.order.call(this, u, action, packed, house);
+    if (action !== ACTION.ATTACK || units.length < 2) return;
+    const attackers = units.filter((u) => unitGetHouseID(u) === house && u.actionID === ACTION.ATTACK && u.targetAttack !== 0);
+    const target = attackers[0]?.targetAttack ?? 0;
+    unitsAssignAttackSpots(attackers.filter((u) => u.targetAttack === target), target);
   }
 
   cancelTarget(): void {
@@ -1130,11 +1145,7 @@ export class Game {
     switch (c.k) {
       case "order":
         if (!cell(c.p)) return;
-        for (const u of units(c.u)) {
-          const actions = unitInfo[u.o.type].o.actionsPlayer;
-          if (!actions.includes(c.a) && c.a !== ACTION.PATROL) continue;
-          Game.prototype.order.call(this, u, c.a, c.p, house);
-        }
+        Game.prototype.orderGroup.call(this, units(c.u).filter((u) => unitInfo[u.o.type].o.actionsPlayer.includes(c.a) || c.a === ACTION.PATROL), c.a, c.p, house);
         return;
       case "act":
         for (const u of units(c.u)) this.netUnitAction(u, c.a, house);
@@ -1195,6 +1206,7 @@ export class Game {
     if (!ai || ai.selectionType === SELECTION.TARGET || action === ACTION.PATROL) return;
     if (!unitInfo[u.o.type].o.actionsPlayer.includes(action)) return;
     u.blockedAttack=undefined;
+    u.attackSpot=undefined;
     u.patrolActive = false;
     u.patrolEngaging = false;
     u.harvesterDefense = undefined;
@@ -1224,6 +1236,7 @@ export class Game {
       if (!u.o.flags.used) continue;
       mix(u.o.index); mix(u.o.type); mix(u.o.houseID); mix(u.o.position.x); mix(u.o.position.y); mix(u.o.hitpoints); mix(u.actionID); mix(u.targetAttack);
       if(u.blockedAttack){mix(u.blockedAttack.target);mix(u.blockedAttack.wall);}
+      if(u.attackSpot){mix(u.attackSpot.target);mix(u.attackSpot.packed);}
       if(u.laser){const l=u.laser;mix(l.target);mix(l.chargeStart);mix(l.chargeUntil);mix(l.cooldownUntil);mix(l.firedAt);}
       if(u.drone){
         const d=u.drone;mix(d.home);mix(d.homePosition.x);mix(d.homePosition.y);mix(d.guardPosition?.x??0);mix(d.guardPosition?.y??0);mix(d.lastAction??0);

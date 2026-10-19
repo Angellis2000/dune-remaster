@@ -200,6 +200,8 @@ export interface Unit {
   /** Temporary reaction to attacking infantry; separate from the player's work order. */
   harvesterDefense?: { target:number; spice:Tile32; start:Tile32; expires:number };
   blockedAttack?: {target:number;wall:number};
+  /** групповой приказ атаки (в MD его нет): своя клетка на дальности огня, куда юнит едет вместо клетки цели */
+  attackSpot?: {target:number;packed:number};
   laser?: {target:number;chargeStart:number;chargeUntil:number;cooldownUntil:number;firedAt:number;from:Tile32;to:Tile32};
   drone?: {home:number;homePosition:Tile32;guardPosition?:Tile32;lastAction?:number;
     /** очередь на площадку: кадр, когда звено начало возврат; сел ли на землю (заряд не тратится); с какого кадра без дела */
