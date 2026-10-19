@@ -1,0 +1,18 @@
+{
+  "name": "dune-net",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Сервер сетевой игры Dune Remaster: комнаты и пересылка команд по ходам (lockstep)",
+  "type": "module",
+  "main": "dune-net.mjs",
+  "scripts": {
+    "start": "node dune-net.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "8.18.0"
+  }
+}

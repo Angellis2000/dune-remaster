@@ -1,0 +1,17 @@
+# Сервер сетевой игры Dune на общем VPS такси (hoster.kz): compose-проект «dune» в /opt/dune.
+# Наружу портов нет: Caddy такси проксирует dune.109-235-116-121.sslip.io → dune-net:8787 по сети vector_default.
+name: dune
+services:
+  dune-net:
+    build: .
+    container_name: dune-net
+    restart: unless-stopped
+    mem_limit: 96m
+    environment:
+      - PORT=8787
+    networks:
+      - vector
+networks:
+  vector:
+    external: true
+    name: vector_default

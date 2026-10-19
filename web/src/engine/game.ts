@@ -6,7 +6,7 @@ import type { DuneRom } from "../rom/dune.ts";
 import type { Scenario } from "../rom/scenario.ts";
 import { animationInit, animationTick } from "./animation.ts";
 import {
-  ACTION, G, HOUSE, HOUSE_INVALID, INDEX_INVALID, IT, MOVEMENT, SELECTION, STATE, STRUCTURE, UNIT, findAll, houseAllocate, houseFind,
+  ACTION, G, HOUSE, HOUSE_INVALID, INDEX_INVALID, IT, MAP_INFOS, MOVEMENT, SELECTION, STATE, STRUCTURE, UNIT, findAll, houseAllocate, houseFind, isHuman, isLocal, randomState,
   idiv, indexEncode, indexGetUnit, newScenario, packTile, packXY, poolsReset, randomLCGSeed, randomRange, randomSeed, s8, structureFind, unitAllocate,
   tileCenter, unitFind, unitFree, unpackTile, type House, type Structure, type Unit,
 } from "./core.ts";
@@ -24,7 +24,7 @@ import {
   structureRemoveFog, structureResetTimers, structureSetRepairingState, structureSetState, structureSetUpgradingState,
   structureStarportBuy,structureCanQueueUnits,structureEnqueueUnit,structureCancelQueuedUnit,structureEnqueueBuilding,structureCancelQueuedBuilding,structureStartNextBuilding,
 } from "./structure.ts";
-import { actionInfo, applyRomTables, structureInfo, unitInfo } from "./tables.ts";
+import { actionInfo, applyRomTables, landscapeInfo, structureInfo, unitInfo } from "./tables.ts";
 import { gameLoopTeam, teamCreate, teamResetTimers } from "./team.ts";
 import {
   gameLoopUnit, unitCreate, unitCreateWrapper, unitDeviationDecrease, unitFindTargetAround, unitGetByPackedTile, unitGetHouseID,
@@ -41,6 +41,53 @@ const TEAM_ACTION_CHAR: Record<string, number> = { N: 0, S: 1, F: 2, K: 3, G: 4 
 const MOVEMENT_CHAR: Record<string, number> = { F: MOVEMENT.FOOT, T: MOVEMENT.TRACKED, H: MOVEMENT.HARVESTER, W: MOVEMENT.WHEELED, w: MOVEMENT.WINGER, S: MOVEMENT.SLITHER };
 
 export type MissionEnd = "won" | "lost";
+
+/** Игрок сетевого матча: дом движка (0..5) — он же фракция, команда, имя. */
+export interface NetPlayer {
+  slot: number;
+  house: number;
+  team: number;
+  name: string;
+}
+/** Всё, что нужно, чтобы у всех клиентов матч начался одинаково. */
+export interface NetSetup {
+  /** номер карты ROM 1..27 */
+  map: number;
+  seed: number;
+  credits: number;
+  players: NetPlayer[];
+  /** дом местного игрока или −1 — наблюдатель */
+  local: number;
+}
+/**
+ * Команды игрока в сети: всё, что меняет игру, идёт только через них и выполняется у всех в один такт.
+ * u — номера юнитов в пуле, s — номер здания, p — клетка (packed), a — действие, t — тип.
+ */
+export type NetCommand =
+  | { k: "order"; u: number[]; a: number; p: number }
+  | { k: "act"; u: number[]; a: number }
+  | { k: "build"; s: number; t: number }
+  | { k: "cancel"; s: number }
+  | { k: "hold"; s: number }
+  | { k: "stop"; s: number }
+  | { k: "repair"; s: number }
+  | { k: "fix"; s: number }
+  | { k: "upgrade"; s: number }
+  | { k: "unqueue"; s: number; i: number }
+  | { k: "unqueueB"; s: number; i: number }
+  | { k: "starport"; s: number; t: number }
+  | { k: "place"; s: number; p: number }
+  | { k: "palace"; s: number; p: number }
+  | { k: "left" };
+
+/** Юниты и здания ремейка, которых нет в оригинале: их код использует sin/cos/hypot, а в сети нужна одинаковая арифметика. */
+const NET_FORBIDDEN_UNITS = new Set<number>([UNIT.LASER_TANK, UNIT.COMBAT_DRONE]);
+const NET_FORBIDDEN_STRUCTURES = new Set<number>([STRUCTURE.DRONE_PAD]);
+/** Космопорт сетевого матча: что и сколько можно купить (общий запас CHOAM). */
+const NET_STARPORT_STOCK: [number, number][] = [
+  [UNIT.CARRYALL, 2], [UNIT.ORNITHOPTER, 2], [UNIT.TRIKE, 5], [UNIT.QUAD, 5], [UNIT.TANK, 4], [UNIT.LAUNCHER, 3],
+  [UNIT.SIEGE_TANK, 3], [UNIT.HARVESTER, 3], [UNIT.MCV, 2],
+];
 
 let tablesReady = false;
 
@@ -84,6 +131,12 @@ export class Game {
   /** цены космопорта MD и кадр, до которого они действуют ($FFBF88, 18000 кадров) */
   private starportPriceList: number[] = [];
   private starportPriceUntil = -1;
+  /** зерно сетевого матча (цены космопорта считаются из него, не трогая общий генератор) */
+  private netSeed = 0;
+  /** живые дома сетевого матча, как их видел последний подсчёт */
+  netAlive = 0;
+  /** выполняется ли сейчас команда сети: интерфейсные вызовы снаружи не должны менять таблицы */
+  private netExecuting = false;
 
   constructor(private rom: DuneRom) {
     if (!tablesReady) {
@@ -108,6 +161,7 @@ export class Game {
 
   /** Game_LoadScenario + Scenario_Load + Game_Prepare */
   load(house: "A" | "O" | "H", mission: number): Scenario {
+    G.net = null;
     G.infiniteSpice=false;
     G.droneGrenades.length=0;
     G.difficulty = Math.max(0, Math.min(2, Math.round(this.difficulty)));
@@ -321,7 +375,7 @@ export class Game {
   tick(): void {
     G.timerGUI++;
     G.timerGame++;
-    if (this.ended) {
+    if (this.ended && !G.net) {
       if (this.afterEnd <= 0) return;
       this.afterEnd--;
     }
@@ -333,7 +387,8 @@ export class Game {
     animationTick();
     unitSort();
     G.playerCredits = this.player?.credits ?? 0;
-    if (!this.ended) this.levelEnd();
+    if (G.net) this.netLevelEnd();
+    else if (!this.ended) this.levelEnd();
   }
 
   // ------------------------------------------------------------------ конец миссии (opendune.c)
@@ -427,8 +482,8 @@ export class Game {
   }
 
   /** Приказ юниту с целью на клетке (щелчок в режиме цели, gui/viewport.c). */
-  order(u: Unit, action: number, packed: number): void {
-    if (unitGetHouseID(u) !== G.playerHouseID) return;
+  order(u: Unit, action: number, packed: number, house = G.playerHouseID): void {
+    if (unitGetHouseID(u) !== house) return;
     if(u.o.type===UNIT.COMBAT_DRONE){
       if(!u.drone)initializeDrone(u);
       if(action===ACTION.MOVE||action===ACTION.PATROL)packed=packTile(clampDronePoint(u,tileCenter(unpackTile(packed))));
@@ -468,8 +523,9 @@ export class Game {
     // MD $0281b6: приказ пехоте — $10 (GEMS seq 80), технике — $12 (GEMS seq 68)
     if(u.o.type===UNIT.COMBAT_DRONE&&action===ACTION.ATTACK&&!droneTargetAllowed(u,u.targetAttack)){
       u.targetAttack=0;u.targetMove=0;u.actionID=ACTION.GUARD;
-      G.onMessage('Цель вне зоны управления дронами — 9 клеток.',1);
+      if (isLocal(house)) G.onMessage('Цель вне зоны управления дронами — 9 клеток.',1);
     }
+    if (!isLocal(house)) return;
     if (unitInfo[u.o.type].movementType === MOVEMENT.FOOT) G.onSound(0x10);
     else G.onSound(0x12);
   }
@@ -557,6 +613,11 @@ export class Game {
   // ---- здания
   /** Что можно заказать на заводе: тип и доступность (1 — да, −1 — после улучшения). */
   buildOptions(s: Structure): { type: number; available: number; cost: number; time: number }[] {
+    if (G.net) return this.netQuiet(() => this.buildOptionsRaw(s).filter((o) => this.netAllowed(s, o.type)));
+    return this.buildOptionsRaw(s);
+  }
+
+  private buildOptionsRaw(s: Structure): { type: number; available: number; cost: number; time: number }[] {
     const si = structureInfo[s.o.type];
     if (!si.o.flags.factory) return [];
     // Listing orders must never rewrite the live order or change repair/hold state.
@@ -583,6 +644,7 @@ export class Game {
    * Пересчитываются, когда истёк таймер $FFBF88 (18000 кадров), иначе окно показывает прежние.
    */
   starportPrices(): number[] {
+    if (G.net) return unitInfo.map((_, type) => this.netStarportPrice(type));
     if (this.starportPriceUntil < 0 || G.timerGame >= this.starportPriceUntil) {
       this.starportPriceList = unitInfo.map((ui) => {
         const f = randomRange(0, 50) + randomRange(0, 50) + 60;
@@ -750,11 +812,13 @@ export class Game {
   }
 
   buildable(s: Structure): number {
+    if (G.net) return this.netQuiet(() => structureGetBuildable(s));
     return structureGetBuildable(s);
   }
 
   /** Коды оригинала, вводимые как пароль (код проверки $021908). */
   cheat(code: "LOOKAROUND" | "SPLURGEOLA" | "PLAYTESTER"): void {
+    if (G.net) return; // в сети коды изменили бы игру только у одного игрока
     if (code === "LOOKAROUND") {
       G.revealAll = !G.revealAll; // bchg — повторный ввод выключает
     } else if (code === "SPLURGEOLA") {
@@ -763,6 +827,354 @@ export class Game {
       // без хранилищ лишнее сгорело бы на следующем такте — как со стартовыми кредитами
       G.playerCreditsNoSilo = Math.max(G.playerCreditsNoSilo, this.player.credits);
     } else G.playtester = !G.playtester;
+  }
+
+  // ------------------------------------------------------------------ сетевой матч (lockstep)
+  /**
+   * Матч на готовой карте ROM: у каждого игрока двор, два квадроцикла и кредиты. Тумана нет, вся техника открыта
+   * (как в 9-й миссии). Всё зависит только от setup, поэтому у всех клиентов состояние совпадает такт в такт.
+   */
+  loadNetwork(setup: NetSetup): { cursor: { x: number; y: number }; spawns: Map<number, number> } {
+    const humans = setup.players.reduce((m, p) => m | (1 << p.house), 0);
+    const team = new Array<number>(8).fill(-1);
+    for (const p of setup.players) team[p.house] = p.team;
+    G.net = { humans, team };
+    G.playerHouseID = setup.local >= 0 ? setup.local : setup.players[0].house;
+    G.infiniteSpice = true;
+    G.droneGrenades.length = 0;
+    G.difficulty = 1;
+    G.gameSpeed = 2;
+    G.playtester = false;
+    G.revealAll = false;
+    this.netSeed = setup.seed >>> 0;
+    this.mission = 9;
+    this.ended = null;
+    this.afterEnd = 0;
+    this.selectedStructure = null;
+    this.levelEndTimer = 0;
+    this.netAlive = humans;
+
+    poolsReset();
+    animationInit();
+    explosionInit();
+    unitResetTimers();
+    structureResetTimers();
+    houseResetTimers();
+    teamResetTimers();
+    G.timerGame = 0;
+    G.timerGUI = 0;
+    G.starportAvailable.fill(0);
+    for (const [type, count] of NET_STARPORT_STOCK) G.starportAvailable[type] = count;
+    this.starportListed = NET_STARPORT_STOCK.map(([type]) => type).sort((a, b) => a - b);
+    this.starportPriceUntil = -1;
+    G.playerCreditsNoSilo = 0;
+    G.houseMissileCountdown = 0;
+    G.unitHouseMissile = null;
+    G.unitActive = null;
+    G.structureActive = null;
+    G.activeAction = 0xffff;
+    G.structureActiveType = 0xffff;
+    G.unitSelected = null;
+    G.selectionType = SELECTION.STRUCTURE;
+    randomSeed(this.netSeed);
+    randomLCGSeed((this.netSeed ^ 0x9e3779b9) >>> 0);
+
+    G.validateStrictIfZero++;
+    G.scenarioID = 9;
+    G.campaignID = 8;
+    G.scenario = newScenario();
+    const m = this.rom.missionMap(setup.map);
+    G.mapScale = m.bounds.w === 64 ? 0 : 1;
+    G.scenario.mapScale = G.mapScale;
+    for (let i = 0; i < 4096; i++) {
+      const t = G.map[i];
+      G.mapTileID[i] = m.ground[i];
+      t.groundTileID = m.ground[i];
+      t.isUnveiled = true;
+      t.overlayTileID = 0;
+    }
+
+    const unitMax = Math.max(8, Math.floor(70 / setup.players.length));
+    for (const p of setup.players) {
+      const h = houseAllocate(p.house);
+      if (!h) continue;
+      h.flags.human = true;
+      h.credits = setup.credits;
+      h.creditsNoSilo = setup.credits;
+      h.creditsQuota = 0;
+      h.unitCountMax = unitMax;
+    }
+    const spawns = this.netSpawns(setup);
+    for (const p of setup.players) {
+      const packed = spawns.get(p.house);
+      if (packed === undefined) continue;
+      const s = structureCreate(INDEX_INVALID, STRUCTURE.CONSTRUCTION_YARD, p.house, packed);
+      if (s) {
+        s.o.hitpoints = structureInfo[s.o.type].o.hitpoints;
+        s.o.flags.degrades = false;
+        s.state = STATE.IDLE;
+      }
+      const x = packed & 63;
+      const y = packed >> 6;
+      for (const [dx, dy] of [[2, 0], [2, 1], [-1, 0], [-1, 1], [0, 2], [1, 2]].slice(0, 2)) {
+        const cell = packXY(x + dx, y + dy);
+        const u = unitCreate(INDEX_INVALID, UNIT.QUAD, p.house, tileCenter(unpackTile(cell)), 0x40);
+        if (u) unitSetAction(u, ACTION.GUARD);
+      }
+    }
+    G.tickScenarioStart = 0;
+    this.prepare();
+    G.validateStrictIfZero--;
+    const own = spawns.get(G.playerHouseID) ?? 0;
+    return { cursor: { x: (own & 63) + 1, y: (own >> 6) + 1 }, spawns };
+  }
+
+  /**
+   * Стартовые точки: клетки, где помещается двор 2×2 на скале и вокруг есть место под базу. Первая — ближняя к
+   * углу по зерну, дальше каждый раз самая дальняя от уже выбранных. Команды получают точки по очереди.
+   */
+  private netSpawns(setup: NetSetup): Map<number, number> {
+    const mi = MAP_INFOS[G.mapScale];
+    const rock = (x: number, y: number) =>
+      x >= mi.minX && y >= mi.minY && x < mi.minX + mi.sizeX && y < mi.minY + mi.sizeY &&
+      landscapeInfo[mapGetLandscapeType(packXY(x, y))].isValidForStructure !== 0;
+    const pick = (need: number) => {
+      const out: { x: number; y: number }[] = [];
+      for (let y = mi.minY + 2; y < mi.minY + mi.sizeY - 4; y++) {
+        for (let x = mi.minX + 2; x < mi.minX + mi.sizeX - 4; x++) {
+          if (!rock(x, y) || !rock(x + 1, y) || !rock(x, y + 1) || !rock(x + 1, y + 1)) continue;
+          let room = 0;
+          for (let j = -2; j <= 4; j++) for (let i = -2; i <= 4; i++) if (rock(x + i, y + j)) room++;
+          if (room >= need) out.push({ x, y });
+        }
+      }
+      return out;
+    };
+    let cands = pick(28);
+    if (cands.length < setup.players.length) cands = pick(10);
+    if (cands.length < setup.players.length) cands = pick(4);
+    const corner = [[mi.minX, mi.minY], [mi.minX + mi.sizeX, mi.minY + mi.sizeY], [mi.minX + mi.sizeX, mi.minY], [mi.minX, mi.minY + mi.sizeY]][this.netSeed % 4];
+    const d2 = (a: { x: number; y: number }, b: { x: number; y: number }) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+    const chosen: { x: number; y: number }[] = [];
+    if (cands.length) {
+      let first = cands[0];
+      for (const c of cands) if (d2(c, { x: corner[0], y: corner[1] }) < d2(first, { x: corner[0], y: corner[1] })) first = c;
+      chosen.push(first);
+    }
+    while (chosen.length < setup.players.length && chosen.length < cands.length) {
+      let best = cands[0];
+      let bestDistance = -1;
+      for (const c of cands) {
+        let nearest = Infinity;
+        for (const s of chosen) nearest = Math.min(nearest, d2(c, s));
+        if (nearest > bestDistance) {
+          bestDistance = nearest;
+          best = c;
+        }
+      }
+      chosen.push(best);
+    }
+    // команды по кругу: первая точка — команде 0, вторая (самая дальняя) — команде 1 и т. д.
+    const teams = [...new Set(setup.players.map((p) => p.team))].sort((a, b) => a - b);
+    const queue = new Map(teams.map((t) => [t, setup.players.filter((p) => p.team === t).sort((a, b) => a.slot - b.slot)]));
+    const out = new Map<number, number>();
+    let ti = 0;
+    for (const c of chosen) {
+      for (let k = 0; k < teams.length; k++) {
+        const q = queue.get(teams[(ti + k) % teams.length])!;
+        if (!q.length) continue;
+        out.set(q.shift()!.house, packXY(c.x, c.y));
+        ti = (ti + k + 1) % teams.length;
+        break;
+      }
+    }
+    return out;
+  }
+
+  /** Конец сетевого матча: побеждает последняя команда, у которой остались здания или боевые юниты. */
+  private netLevelEnd(): void {
+    if (this.levelEndTimer >= G.timerGame) return;
+    this.levelEndTimer = G.timerGame + 300;
+    let alive = 0;
+    for (const s of G.structureFind) {
+      if (!s.o.flags.used) continue;
+      const t = s.o.type;
+      if (t === STRUCTURE.SLAB_1x1 || t === STRUCTURE.SLAB_2x2 || t === STRUCTURE.WALL) continue;
+      alive |= 1 << s.o.houseID;
+    }
+    for (const u of G.unitFind) {
+      if (!u.o.flags.used || u.o.flags.isNotOnMap || !unitInfo[u.o.type].flags.isNormalUnit) continue;
+      alive |= 1 << u.o.houseID;
+    }
+    this.netAlive = alive & G.net!.humans;
+    if (this.ended) return;
+    const team = G.net!.team;
+    const teamsAlive = new Set<number>();
+    for (let h = 0; h < 8; h++) if ((this.netAlive >> h) & 1) teamsAlive.add(team[h]);
+    const own = team[G.playerHouseID];
+    let result: MissionEnd | null = null;
+    if (!teamsAlive.has(own)) result = "lost";
+    else if (teamsAlive.size === 1) result = "won";
+    if (!result) return;
+    this.ended = result;
+    G.onFeedback(result === "won" ? 40 : 41);
+    G.onMessage(result === "won" ? msg.missionWon : msg.missionLost, 0);
+    this.onEnd(result);
+  }
+
+  /** Можно ли заказывать тип в сетевом матче. */
+  private netAllowed(s: Structure, type: number): boolean {
+    return s.o.type === STRUCTURE.CONSTRUCTION_YARD ? !NET_FORBIDDEN_STRUCTURES.has(type) : !NET_FORBIDDEN_UNITS.has(type);
+  }
+
+  /** Вызов из интерфейса без следа в игре: таблицы доступности общие для всех домов и пишутся при подсчёте. */
+  private netQuiet<T>(fn: () => T): T {
+    if (this.netExecuting) return fn();
+    const saved = [...structureInfo.map((x) => x.o.available), ...unitInfo.map((x) => x.o.available)];
+    try {
+      return fn();
+    } finally {
+      structureInfo.forEach((x, i) => (x.o.available = saved[i]));
+      unitInfo.forEach((x, i) => (x.o.available = saved[structureInfo.length + i]));
+    }
+  }
+
+  /** Цена космопорта ($027334: × (60 + 0..50 + 0..50) / 100) из зерна матча и окна 18000 кадров — без общего генератора. */
+  private netStarportPrice(type: number): number {
+    let x = (this.netSeed ^ Math.imul(Math.floor(G.timerGame / 18000) + 1, 0x9e3779b1) ^ Math.imul(type + 1, 0x85ebca6b)) >>> 0;
+    x = Math.imul(x ^ (x >>> 16), 0x7feb352d) >>> 0;
+    x = Math.imul(x ^ (x >>> 15), 0x846ca68b) >>> 0;
+    x = (x ^ (x >>> 16)) >>> 0;
+    const f = 60 + (x % 51) + ((x >>> 8) % 51);
+    return Math.floor((unitInfo[type].o.buildCredits * f) / 100);
+  }
+
+  /** Выполнить команду игрока-дома. Интерфейсные глобальные переменные (постановка, цель) после команды возвращаются. */
+  execNet(house: number, c: NetCommand): void {
+    if (!G.net || !isHuman(house)) return;
+    const saved = [G.selectionType, G.unitActive, G.activeAction, G.structureActive, G.structureActiveType, G.structureActivePosition] as const;
+    this.netExecuting = true;
+    try {
+      this.execNetCommand(house, c);
+    } finally {
+      this.netExecuting = false;
+      [G.selectionType, G.unitActive, G.activeAction, G.structureActive, G.structureActiveType, G.structureActivePosition] = saved;
+    }
+  }
+
+  private execNetCommand(house: number, c: NetCommand): void {
+    // методы — именно класса: на время матча интерфейс подменяет их отправкой команд (net/controls.ts)
+    const units = (list: number[]) =>
+      list.slice(0, 64).map((i) => G.units[i]).filter((u): u is Unit => !!u && u.o.flags.used && u.o.flags.allocated && !u.o.flags.isNotOnMap && unitGetHouseID(u) === house);
+    const structure = (i: number): Structure | null => {
+      const s = G.structures[i];
+      return s && s.o.flags.used && s.o.houseID === house ? s : null;
+    };
+    const cell = (p: number) => Number.isInteger(p) && p >= 0 && p < 4096;
+    switch (c.k) {
+      case "order":
+        if (!cell(c.p)) return;
+        for (const u of units(c.u)) {
+          const actions = unitInfo[u.o.type].o.actionsPlayer;
+          if (!actions.includes(c.a) && c.a !== ACTION.PATROL) continue;
+          Game.prototype.order.call(this, u, c.a, c.p, house);
+        }
+        return;
+      case "act":
+        for (const u of units(c.u)) this.netUnitAction(u, c.a, house);
+        return;
+      case "build": {
+        const s = structure(c.s);
+        if (!s || !this.netAllowed(s, c.t)) return;
+        // окно здания ($029060): выбор пункта снимает ремонт
+        if (s.o.flags.repairing) s.o.flags.repairing = false;
+        if (!this.buildOptionsRaw(s).some((o) => o.type === c.t && o.available > 0)) return;
+        Game.prototype.build.call(this, s, c.t);
+        return;
+      }
+      case "cancel": { const s = structure(c.s); if (s) Game.prototype.cancelBuild.call(this, s); return; }
+      case "hold": { const s = structure(c.s); if (s) Game.prototype.holdOrResume.call(this, s); return; }
+      case "stop": { const s = structure(c.s); if (s) Game.prototype.stopAll.call(this, s); return; }
+      case "repair": { const s = structure(c.s); if (s) Game.prototype.toggleRepair.call(this, s); return; }
+      case "fix": { const s = structure(c.s); if (s) Game.prototype.startRepair.call(this, s); return; }
+      case "upgrade": {
+        const s = structure(c.s);
+        if (!s) return;
+        if (s.o.flags.repairing) s.o.flags.repairing = false;
+        if (this.upgradeEntry(s) && !s.o.flags.upgrading) Game.prototype.upgrade.call(this, s);
+        return;
+      }
+      case "unqueue": { const s = structure(c.s); if (s) Game.prototype.cancelQueuedUnit.call(this, s, c.i); return; }
+      case "unqueueB": { const s = structure(c.s); if (s) Game.prototype.cancelQueuedBuilding.call(this, s, c.i); return; }
+      case "starport": {
+        const s = structure(c.s);
+        if (!s || s.o.type !== STRUCTURE.STARPORT || NET_FORBIDDEN_UNITS.has(c.t) || !unitInfo[c.t]) return;
+        Game.prototype.starportBuy.call(this, s, c.t, this.netStarportPrice(c.t));
+        return;
+      }
+      case "place": {
+        const cy = structure(c.s);
+        if (!cy || !cell(c.p) || cy.o.type !== STRUCTURE.CONSTRUCTION_YARD || cy.o.linkedID === 0xff || cy.countDown !== 0) return;
+        const linked = cy.o.linkedID;
+        G.structureActive = G.structures[linked];
+        G.structureActiveType = cy.objectType;
+        G.structureActivePosition = packTile(cy.o.position);
+        cy.o.linkedID = 0xff;
+        if (!structurePlayerPlace(c.p, house)) cy.o.linkedID = linked;
+        return;
+      }
+      case "palace": {
+        const s = structure(c.s);
+        if (!s || s.o.type !== STRUCTURE.PALACE || s.countDown !== 0) return;
+        structureActivateSpecial(s);
+        if (G.unitHouseMissile && G.unitHouseMissile.o.houseID === house && cell(c.p)) unitLaunchHouseMissile(c.p);
+        return;
+      }
+      case "left":
+        return;
+    }
+  }
+
+  /** Кнопка действия юнита без цели (стоп, охрана, отступ, уничтожить себя…), как unitCommand. */
+  private netUnitAction(u: Unit, action: number, house: number): void {
+    const ai = actionInfo[action];
+    if (!ai || ai.selectionType === SELECTION.TARGET || action === ACTION.PATROL) return;
+    if (!unitInfo[u.o.type].o.actionsPlayer.includes(action)) return;
+    u.patrolActive = false;
+    u.patrolEngaging = false;
+    u.harvesterDefense = undefined;
+    if (u.deviated !== 0) {
+      unitDeviationDecrease(u, 5);
+      if (u.deviated === 0) return;
+    }
+    objectScriptVariable4Clear(u.o);
+    u.targetAttack = 0;
+    u.targetMove = 0;
+    u.route[0] = 0xff;
+    unitSetAction(u, action);
+    if (!isLocal(house)) return;
+    if (unitInfo[u.o.type].movementType === MOVEMENT.FOOT) G.onSound(0x10);
+    else G.onSound(0x12);
+  }
+
+  /** Контрольная сумма симуляции: у всех клиентов в один такт она должна совпадать. */
+  netHash(): number {
+    let h = 0x811c9dc5;
+    const mix = (v: number) => {
+      h = Math.imul(h ^ (v | 0), 0x01000193) >>> 0;
+    };
+    mix(G.timerGame);
+    mix(randomState());
+    for (const u of G.units) {
+      if (!u.o.flags.used) continue;
+      mix(u.o.index); mix(u.o.type); mix(u.o.houseID); mix(u.o.position.x); mix(u.o.position.y); mix(u.o.hitpoints); mix(u.actionID); mix(u.targetAttack);
+    }
+    for (const s of G.structures) {
+      if (!s.o.flags.used) continue;
+      mix(s.o.index); mix(s.o.type); mix(s.o.houseID); mix(s.o.hitpoints); mix(s.state); mix(s.countDown);
+    }
+    for (const hh of G.houses) if (hh.flags.used) { mix(hh.index); mix(hh.credits); }
+    return h;
   }
 }
 

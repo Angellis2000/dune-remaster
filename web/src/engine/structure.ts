@@ -10,7 +10,8 @@ import {
   teamFind, tileAddDiff, tileCenter, tileGetDistancePacked, tileMoveByRandom, u16, unitAllocate, unitFind, unitFree, unpackTile,
   type House, type Structure, type Unit,
 } from "./core.ts";
-import { houseAreAllied, houseCalculatePowerAndCredit, houseUpdateCreditsStorage, houseUpdateRadarState } from "./house.ts";
+import { isHuman, isLocal } from "./core.ts";
+import { houseAlliedToHuman, houseAreAllied, houseCalculatePowerAndCredit, houseUpdateCreditsStorage, houseUpdateRadarState } from "./house.ts";
 import {
   mapFindLocationTile, mapGetLandscapeType, mapIsPositionUnveiled, mapIsValidPosition, mapMakeExplosion, mapSearchSpice,
   tileIsUnveiled, tileRemoveFogInRadius,
@@ -83,7 +84,7 @@ export function gameLoopStructure(): void {
     if (tickPalace && s.o.type === STRUCTURE.PALACE) {
       // MD $00BDEA: сначала пауза после спецоружия, отсчёт стоит и при бите 8 (предел юнитов)
       if (s.specialWait !== 0) s.specialWait--;
-      else if (s.countDown !== 0 && !(s.o.houseID === G.playerHouseID && structureLimitReached(s))) s.countDown--;
+      else if (s.countDown !== 0 && !(isHuman(s.o.houseID) && structureLimitReached(s))) s.countDown--;
       if (s.countDown === 0 && !h.flags.human && h.flags.isAIActive) structureActivateSpecial(s);
     }
     if (tickDegrade && s.o.flags.degrades && s.o.hitpoints > idiv(si.o.hitpoints, 2)) structureDamage(s, hi.degradingAmount, 0);
@@ -113,7 +114,7 @@ export function gameLoopStructure(): void {
         const repairCost = idiv(idiv(2 * 256, si.o.hitpoints) * si.o.buildCredits + 128, 256);
         if (repairCost <= h.credits) {
           h.credits -= repairCost;
-          s.o.hitpoints += s.o.houseID === G.playerHouseID || G.campaignID >= 3 ? 5 : 3;
+          s.o.hitpoints += isHuman(s.o.houseID) || G.campaignID >= 3 ? 5 : 3;
           if (s.o.hitpoints > si.o.hitpoints) {
             s.o.hitpoints = si.o.hitpoints;
             s.o.flags.repairing = false;
@@ -130,7 +131,7 @@ export function gameLoopStructure(): void {
           else oi = unitInfo[s.objectType].o;
           let buildSpeed = 256;
           if (s.o.hitpoints < si.o.hitpoints) buildSpeed = idiv(s.o.hitpoints * 256, si.o.hitpoints);
-          if (G.playerHouseID !== s.o.houseID) {
+          if (!isHuman(s.o.houseID)) {
             if (buildSpeed > G.campaignID * 20 + 95) buildSpeed = G.campaignID * 20 + 95;
             buildSpeed = idiv(buildSpeed * [82, 100, 125][G.difficulty], 100);
           }
@@ -148,8 +149,8 @@ export function gameLoopStructure(): void {
               s.countDown = 0;
               s.buildCostRemainder = 0;
               structureSetState(s, STATE.READY);
-              if (s.o.houseID === G.playerHouseID) {
-                if (s.o.type !== STRUCTURE.BARRACKS && s.o.type !== STRUCTURE.WOR_TROOPER) {
+              if (isHuman(s.o.houseID)) {
+                if (isLocal(s.o.houseID) && s.o.type !== STRUCTURE.BARRACKS && s.o.type !== STRUCTURE.WOR_TROOPER) {
                   G.onMessage(msg.buildComplete(s.o.type, s.objectType), 0);
                   if(s.o.type===STRUCTURE.CONSTRUCTION_YARD)G.onConstructionComplete(s);
                   else G.onFeedback(0);
@@ -172,9 +173,9 @@ export function gameLoopStructure(): void {
                 }
               }
             }
-          } else if (s.o.houseID === G.playerHouseID) {
+          } else if (isHuman(s.o.houseID)) {
             s.o.flags.onHold = true;
-            G.onMessage(msg.insufficientFunds, 0);
+            if (isLocal(s.o.houseID)) G.onMessage(msg.insufficientFunds, 0);
           }
         }
         if (s.o.type === STRUCTURE.REPAIR) {
@@ -190,14 +191,14 @@ export function gameLoopStructure(): void {
               } else {
                 s.countDown = 0;
                 structureSetState(s, STATE.READY);
-                if (s.o.houseID === G.playerHouseID) G.onFeedback(G.playerHouseID + 55);
+                if (isLocal(s.o.houseID)) G.onFeedback(G.playerHouseID + 55);
               }
             }
           } else if (h.credits !== 0) {
             s.o.flags.onHold = false;
           }
         }
-        if (h.flags.isAIActive && s.o.flags.allocated && s.o.houseID !== G.playerHouseID && h.credits !== 0) {
+        if (h.flags.isAIActive && s.o.flags.allocated && !isHuman(s.o.houseID) && h.credits !== 0) {
           if (s.o.hitpoints < idiv(si.o.hitpoints, 2)) structureSetRepairingState(s, 1);
           if (si.o.flags.factory && s.countDown === 0 && s.o.linkedID === 0xff) {
             const type = structureAIPickNextToBuild(s);
@@ -246,7 +247,7 @@ export function structureCreate(index: number, typeID: number, houseID: number, 
   s.objectType = 0xffff;
   structureBuildObject(s, 0xfffe);
   s.countDown = 0;
-  if (houseID !== G.playerHouseID) {
+  if (!isHuman(houseID)) {
     while (structureIsUpgradable(s)) s.upgradeLevel++;
     s.upgradeTimeLeft = 0;
   }
@@ -268,7 +269,7 @@ export function structurePlace(s: Structure | null, position: number): boolean {
       t.groundTileID = G.wallTileID + 1;
       t.houseID = s.o.houseID;
       G.mapTileID[position] |= 0x8000;
-      if (s.o.houseID === G.playerHouseID) tileRemoveFogInRadius(unpackTile(position), 1);
+      if (isHuman(s.o.houseID)) tileRemoveFogInRadius(unpackTile(position), 1);
       if (mapIsPositionUnveiled(position)) t.overlayTileID = 0;
       structureConnectWall(position, true);
       structureFree(s);
@@ -288,7 +289,7 @@ export function structurePlace(s: Structure | null, position: number): boolean {
           t.groundTileID = G.builtSlabTileID;
           t.houseID = s.o.houseID;
           G.mapTileID[curPos] |= 0x8000;
-          if (s.o.houseID === G.playerHouseID) tileRemoveFogInRadius(unpackTile(curPos), 1);
+          if (isHuman(s.o.houseID)) tileRemoveFogInRadius(unpackTile(curPos), 1);
           if (mapIsPositionUnveiled(curPos)) t.overlayTileID = 0;
           result = 1;
           changed = true;
@@ -301,10 +302,10 @@ export function structurePlace(s: Structure | null, position: number): boolean {
   }
 
   const validBuildLocation = structureIsValidBuildLocation(position, s.o.type);
-  if (validBuildLocation === 0 && s.o.houseID === G.playerHouseID && G.validateStrictIfZero === 0) return false;
-  if (s.o.houseID === G.playerHouseID) tileRemoveFogInRadius(unpackTile(position), 2);
+  if (validBuildLocation === 0 && isHuman(s.o.houseID) && G.validateStrictIfZero === 0) return false;
+  if (isHuman(s.o.houseID)) tileRemoveFogInRadius(unpackTile(position), 2);
   s.o.seenByHouses |= 1 << s.o.houseID;
-  if (s.o.houseID === G.playerHouseID) s.o.seenByHouses |= 0xff;
+  if (isHuman(s.o.houseID)) s.o.seenByHouses |= 0xff;
   s.o.flags.isNotOnMap = false;
   s.o.position = unpackTile(position);
   s.o.position.x &= 0xff00;
@@ -340,7 +341,7 @@ export function structurePlace(s: Structure | null, position: number): boolean {
 
 export function structureCalculateHitpointsMax(h: House | null): void {
   if (!h) return;
-  if (h.index === G.playerHouseID) houseUpdateRadarState(h);
+  if (isHuman(h.index)) houseUpdateRadarState(h);
   const power = h.powerUsage === 0 ? 256 : Math.min(idiv(h.powerProduction * 256, h.powerUsage), 256);
   const find = findAll(h.index);
   for (;;) {
@@ -403,7 +404,7 @@ export function structureIsValidBuildLocation(position: number, type: number): n
         if (!landscapeInfo[lst].isValidForStructure && G.validateStrictIfZero === 0) continue;
         if (objectGetByPackedTile(curPos) !== null) continue;
         const t = G.map[curPos];
-        if (t.groundTileID === G.builtSlabTileID && t.houseID === G.playerHouseID) continue;
+        if (t.groundTileID === G.builtSlabTileID && t.houseID === placer()) continue;
 
         let connected = false;
         if (G.validateStrictIfZero !== 0) {
@@ -418,12 +419,12 @@ export function structureIsValidBuildLocation(position: number, type: number): n
               break;
             }
             const s = structureGetByPackedTile(adjPos);
-            if (s && s.o.houseID === G.playerHouseID) {
+            if (s && s.o.houseID === placer()) {
               connected = true;
               break;
             }
             const alst = mapGetLandscapeType(adjPos);
-            if ((alst === LST.CONCRETE_SLAB || alst === LST.WALL) && G.map[adjPos & 0xfff].houseID === G.playerHouseID) {
+            if ((alst === LST.CONCRETE_SLAB || alst === LST.WALL) && G.map[adjPos & 0xfff].houseID === placer()) {
               connected = true;
               break;
             }
@@ -472,13 +473,13 @@ export function structureIsValidBuildLocation(position: number, type: number): n
       const curPos = u16(position + offset);
       const s = structureGetByPackedTile(curPos);
       if (s) {
-        if (s.o.houseID !== G.playerHouseID) continue;
+        if (s.o.houseID !== placer()) continue;
         isValid = true;
         break;
       }
       const lst = mapGetLandscapeType(curPos);
       if (lst !== LST.CONCRETE_SLAB && lst !== LST.WALL) continue;
-      if (G.map[curPos & 0xfff].houseID !== G.playerHouseID) continue;
+      if (G.map[curPos & 0xfff].houseID !== placer()) continue;
       isValid = true;
       break;
     }
@@ -508,7 +509,7 @@ export function structurePlacementDetail(position: number, type: number): { vali
         if (!landscapeInfo[lst].isValidForStructure && G.validateStrictIfZero === 0) continue;
         if (objectGetByPackedTile(curPos) !== null) continue;
         const t = G.map[curPos];
-        if (t.groundTileID === G.builtSlabTileID && t.houseID === G.playerHouseID) continue;
+        if (t.groundTileID === G.builtSlabTileID && t.houseID === placer()) continue;
 
         let connected = false;
         if (G.validateStrictIfZero !== 0) {
@@ -523,12 +524,12 @@ export function structurePlacementDetail(position: number, type: number): { vali
               break;
             }
             const s = structureGetByPackedTile(adjPos);
-            if (s && s.o.houseID === G.playerHouseID) {
+            if (s && s.o.houseID === placer()) {
               connected = true;
               break;
             }
             const alst = mapGetLandscapeType(adjPos);
-            if ((alst === LST.CONCRETE_SLAB || alst === LST.WALL) && G.map[adjPos & 0xfff].houseID === G.playerHouseID) {
+            if ((alst === LST.CONCRETE_SLAB || alst === LST.WALL) && G.map[adjPos & 0xfff].houseID === placer()) {
               connected = true;
               break;
             }
@@ -555,12 +556,12 @@ export function structurePlacementDetail(position: number, type: number): { vali
       if (offset === 0) break;
       const curPos = u16(position + offset);
       const s = structureGetByPackedTile(curPos);
-      if (s && s.o.houseID === G.playerHouseID) {
+      if (s && s.o.houseID === placer()) {
         touchesBase = true;
         break;
       }
       const lst = mapGetLandscapeType(curPos);
-      if ((lst === LST.CONCRETE_SLAB || lst === LST.WALL) && G.map[curPos & 0xfff]?.houseID === G.playerHouseID) {
+      if ((lst === LST.CONCRETE_SLAB || lst === LST.WALL) && G.map[curPos & 0xfff]?.houseID === placer()) {
         touchesBase = true;
         break;
       }
@@ -651,7 +652,7 @@ export function structureActivateSpecial(s: Structure | null): void {
 }
 
 export function structureRemoveFog(s: Structure | null): void {
-  if (!s || s.o.houseID !== G.playerHouseID) return;
+  if (!s || !isHuman(s.o.houseID)) return;
   tileRemoveFogInRadius(s.o.position, structureInfo[s.o.type].o.fogUncoverRadius);
 }
 
@@ -680,7 +681,7 @@ function structureDestroy(s: Structure | null): void {
   const h = G.houses[s.o.houseID];
   const si = structureInfo[s.o.type];
   h.credits -= h.creditsStorage === 0 ? h.credits : Math.min(h.credits, idiv(idiv(h.credits * 256, h.creditsStorage) * si.creditsStorage, 256));
-  if (s.o.houseID !== G.playerHouseID) h.credits += si.o.buildCredits + (G.campaignID > 7 ? idiv(si.o.buildCredits, 2) : 0);
+  if (!isHuman(s.o.houseID)) h.credits += si.o.buildCredits + (G.campaignID > 7 ? idiv(si.o.buildCredits, 2) : 0);
   if (s.o.type !== STRUCTURE.WINDTRAP) return;
   h.windtrapCount--;
 }
@@ -694,7 +695,7 @@ export function structureDamage(s: Structure | null, damage: number, range: numb
   s.o.hitpoints = s.o.hitpoints >= damage ? s.o.hitpoints - damage : 0;
   if (s.o.hitpoints === 0) {
     const score = Math.max(idiv(si.o.buildCredits, 100), 1);
-    if (houseAreAllied(G.playerHouseID, s.o.houseID)) {
+    if (houseAlliedToHuman(s.o.houseID)) {
       G.scenario.destroyedAllied++;
       // MD $00F980: очков не меньше нуля
       G.scenario.score -= Math.min(score, Math.max(0, G.scenario.score));
@@ -703,7 +704,7 @@ export function structureDamage(s: Structure | null, damage: number, range: numb
       G.scenario.score += score;
     }
     structureDestroy(s);
-    if (G.playerHouseID === s.o.houseID) {
+    if (isLocal(s.o.houseID)) {
       const index = [22, 23, 24][s.o.houseID] ?? 0xffff;
       G.onFeedback(index);
     } else {
@@ -926,7 +927,7 @@ export function structureStarportBuy(s: Structure, items: number[]): void {
     G.validateStrictIfZero--;
     if (!u) {
       h.credits += unitInfo[UNIT.CARRYALL].o.buildCredits;
-      if (s.o.houseID === G.playerHouseID) G.onMessage(msg.unableToCreateMore, 2);
+      if (isLocal(s.o.houseID)) G.onMessage(msg.unableToCreateMore, 2);
       continue;
     }
     G.structureIndex = s.o.index;
@@ -1005,18 +1006,18 @@ export function structureBuildObject(s: Structure | null, objectType: number, qu
     s.spent = 0;
     s.countDown = oi.buildTime << 8;
     structureSetState(s, STATE.BUSY);
-    if (s.o.houseID !== G.playerHouseID) return true;
+    if (!isLocal(s.o.houseID)) return true;
     G.onMessage(msg.productionStarted(s.o.type, objectType), 2);
     if(s.o.type===STRUCTURE.CONSTRUCTION_YARD)G.onConstructionStart();
     return true;
   }
-  if (s.o.houseID !== G.playerHouseID) return false;
+  if (!isLocal(s.o.houseID)) return false;
   if(!quiet)G.onMessage(msg.unableToCreateMore, 2);
   return false;
 }
 
 export function structureCanQueueUnits(s:Structure):boolean{
-  return s.o.houseID===G.playerHouseID&&!!structureInfo[s.o.type].o.flags.factory&&s.o.type!==STRUCTURE.CONSTRUCTION_YARD&&s.o.type!==STRUCTURE.STARPORT&&s.o.type!==STRUCTURE.REPAIR;
+  return isHuman(s.o.houseID)&&!!structureInfo[s.o.type].o.flags.factory&&s.o.type!==STRUCTURE.CONSTRUCTION_YARD&&s.o.type!==STRUCTURE.STARPORT&&s.o.type!==STRUCTURE.REPAIR;
 }
 /** Reserve the full price on acceptance; the ROM build tick must not charge it again. */
 export function structureEnqueueUnit(s:Structure,type:number):boolean{
@@ -1079,14 +1080,14 @@ export function structureSetUpgradingState(s: Structure | null, state: number): 
   const parallelYard = s.o.type === STRUCTURE.CONSTRUCTION_YARD;
   if (state === -1) state = s.o.flags.upgrading ? 0 : 1;
   if (state === 0 && s.o.flags.upgrading) {
-    if (s.o.houseID === G.playerHouseID) G.onMessage(msg.upgradingStops, 2);
+    if (isLocal(s.o.houseID)) G.onMessage(msg.upgradingStops, 2);
     s.o.flags.upgrading = false;
     s.upgradeSpent = 0;
     if (!parallelYard) s.o.flags.onHold = false;
     ret = true;
   }
   if (state === 0 || s.o.flags.upgrading || s.upgradeTimeLeft === 0) return ret;
-  if (s.o.houseID === G.playerHouseID) G.onMessage(msg.upgradingStarts, 2);
+  if (isLocal(s.o.houseID)) G.onMessage(msg.upgradingStarts, 2);
   s.upgradeSpent = 0;
   if (!parallelYard) {
     s.o.flags.onHold = true;
@@ -1102,13 +1103,13 @@ export function structureSetRepairingState(s: Structure | null, state: number): 
   if (!s.o.flags.allocated) state = 0;
   if (state === -1) state = s.o.flags.repairing ? 0 : 1;
   if (state === 0 && s.o.flags.repairing) {
-    if (s.o.houseID === G.playerHouseID) G.onMessage(msg.repairingStops, 2);
+    if (isLocal(s.o.houseID)) G.onMessage(msg.repairingStops, 2);
     s.o.flags.repairing = false;
     s.o.flags.onHold = false;
     ret = true;
   }
   if (state === 0 || s.o.flags.repairing || s.o.hitpoints === structureInfo[s.o.type].o.hitpoints) return ret;
-  if (s.o.houseID === G.playerHouseID) G.onMessage(msg.repairingStarts, 2);
+  if (isLocal(s.o.houseID)) G.onMessage(msg.repairingStarts, 2);
   s.o.flags.onHold = true;
   s.o.flags.repairing = true;
   return true;
@@ -1182,13 +1183,13 @@ export function structureGetBuildable(s: Structure | null): number {
           structuresRequired = (structuresRequired & ~(1 << STRUCTURE.BARRACKS)) >>> 0;
           availableCampaign = 2;
         }
-        if ((structuresBuilt & structuresRequired) >>> 0 === structuresRequired || s.o.houseID !== G.playerHouseID) {
+        if ((structuresBuilt & structuresRequired) >>> 0 === structuresRequired || !isHuman(s.o.houseID)) {
           if (s.o.houseID !== HOUSE.HARKONNEN && i === STRUCTURE.LIGHT_VEHICLE) availableCampaign = 2;
           // MD ($00FF2E): Дом IX со двора не строится; машинный двор доступен для прямой постройки.
           if (i === STRUCTURE.HOUSE_OF_IX) continue;
-          if (i === STRUCTURE.WOR_TROOPER && G.playerHouseID === HOUSE.ORDOS) continue;
+          if (i === STRUCTURE.WOR_TROOPER && (G.net ? s.o.houseID : G.playerHouseID) === HOUSE.ORDOS) continue;
           if (G.campaignID >= availableCampaign - 1 && (lsi.o.availableHouse & (1 << s.o.houseID)) !== 0) {
-            if (s.upgradeLevel >= lsi.o.upgradeLevelRequired || s.o.houseID !== G.playerHouseID) {
+            if (s.upgradeLevel >= lsi.o.upgradeLevelRequired || !isHuman(s.o.houseID)) {
               lsi.o.available = 1;
               ret |= 1 << i;
             } else if (s.upgradeTimeLeft !== 0 && s.upgradeLevel + 1 >= lsi.o.upgradeLevelRequired) {
@@ -1200,7 +1201,7 @@ export function structureGetBuildable(s: Structure | null): number {
       // MD ($00FFCC): плиты 2×2 строятся всегда
       structureInfo[STRUCTURE.SLAB_2x2].o.available = 1;
       ret |= 1 << STRUCTURE.SLAB_2x2;
-      if (s.o.houseID === G.playerHouseID && structurePoolFull()) {
+      if (isHuman(s.o.houseID) && structurePoolFull()) {
         // бит 8 слова $6: построек уже 70 — только плиты и стены ($00FFDC: d3 &= $4002)
         ret &= (1 << STRUCTURE.SLAB_2x2) | (1 << STRUCTURE.WALL);
       } else {
@@ -1277,8 +1278,8 @@ export function structureLimitReached(s: Structure): boolean {
 
 export function structureHouseUnderAttack(houseID: number): void {
   const h = G.houses[houseID];
-  if (houseID !== G.playerHouseID) h.flags.isAIActive = true;
-  if (houseID !== G.playerHouseID && h.flags.doneFullScaleAttack) return;
+  if (!isHuman(houseID)) h.flags.isAIActive = true;
+  if (!isHuman(houseID) && h.flags.doneFullScaleAttack) return;
   h.flags.doneFullScaleAttack = true;
   if (h.flags.human) {
     if (h.timerStructureAttack !== 0) return;
@@ -1328,27 +1329,38 @@ export function structureAIPickNextToBuild(s: Structure | null): number {
 }
 
 /** Выбор места для постройки игрока (Structure_Place из режима PLACE в viewport.c). */
-export function structurePlayerPlace(position: number): boolean {
+export function structurePlayerPlace(position: number, houseID = G.playerHouseID): boolean {
+  const before = placingHouse;
+  placingHouse = houseID;
+  try {
+    return structurePlayerPlaceAs(position, houseID);
+  } finally {
+    placingHouse = before;
+  }
+}
+
+function structurePlayerPlaceAs(position: number, houseID: number): boolean {
   const s = G.structureActive;
   if (!s) return false;
   const type = s.o.type;
+  const local = isLocal(houseID);
   if (structureIsValidBuildLocation(position, type) === 0) {
-    G.onSound(47);
-    G.onMessage(type === STRUCTURE.SLAB_1x1 || type === STRUCTURE.SLAB_2x2 ? msg.cannotPlaceFoundation : msg.cannotPlace(type), 2);
+    if (local) G.onSound(47);
+    if (local) G.onMessage(type === STRUCTURE.SLAB_1x1 || type === STRUCTURE.SLAB_2x2 ? msg.cannotPlaceFoundation : msg.cannotPlace(type), 2);
     return false;
   }
   if (!structurePlace(s, position)) {
-    G.onSound(47);
-    G.onMessage(type === STRUCTURE.SLAB_1x1 || type === STRUCTURE.SLAB_2x2 ? msg.cannotPlaceFoundation : msg.cannotPlace(type), 2);
+    if (local) G.onSound(47);
+    if (local) G.onMessage(type === STRUCTURE.SLAB_1x1 || type === STRUCTURE.SLAB_2x2 ? msg.cannotPlaceFoundation : msg.cannotPlace(type), 2);
     return false;
   }
   // The user-selected «Установка» effect from the sound browser (GEMS 70).
-  G.onSound(0x14);
-  const h = G.houses[G.playerHouseID];
+  if (local) G.onSound(0x14);
+  const h = G.houses[houseID];
   if (type === STRUCTURE.PALACE) h.palacePosition = { ...s.o.position };
   if (type === STRUCTURE.REFINERY && G.validateStrictIfZero === 0) {
     G.validateStrictIfZero++;
-    const u = unitCreateWrapperLazy(G.playerHouseID, UNIT.HARVESTER, indexEncode(s.o.index, IT.STRUCTURE));
+    const u = unitCreateWrapperLazy(houseID, UNIT.HARVESTER, indexEncode(s.o.index, IT.STRUCTURE));
     G.validateStrictIfZero--;
     if (!u) h.harvestersIncoming++;
     else u.originEncoded = indexEncode(s.o.index, IT.STRUCTURE);
@@ -1363,7 +1375,7 @@ export function structurePlayerPlace(position: number): boolean {
     else if((structureGetBuildable(cy)&(1<<cy.objectType))===0)structureBuildObject(cy,0xfffe);
   }
   houseUpdateRadarState(h);
-  if (h.powerProduction < h.powerUsage && (h.structuresBuilt & (1 << STRUCTURE.OUTPOST)) !== 0) G.onMessage(msg.notEnoughPowerForRadar, 3);
+  if (local && h.powerProduction < h.powerUsage && (h.structuresBuilt & (1 << STRUCTURE.OUTPOST)) !== 0) G.onMessage(msg.notEnoughPowerForRadar, 3);
   return true;
 }
 
@@ -1373,3 +1385,28 @@ export function setUnitCreateWrapper(fn: typeof unitCreateWrapperLazy): void {
 }
 
 export { mapIsValidPosition };
+
+/** Дом, который сейчас ставит здание игрока (structurePlayerPlace); иначе — игрок, как в оригинале. */
+let placingHouse = -1;
+function placer(): number {
+  return placingHouse >= 0 ? placingHouse : G.playerHouseID;
+}
+/** Проверка места для дома houseID (интерфейс сетевой игры: подсветка постановки своего здания). */
+export function structureIsValidBuildLocationFor(position: number, type: number, houseID: number): number {
+  const before = placingHouse;
+  placingHouse = houseID;
+  try {
+    return structureIsValidBuildLocation(position, type);
+  } finally {
+    placingHouse = before;
+  }
+}
+export function structurePlacementDetailFor(position: number, type: number, houseID: number): { valid: number; cells: boolean[] } {
+  const before = placingHouse;
+  placingHouse = houseID;
+  try {
+    return structurePlacementDetail(position, type);
+  } finally {
+    placingHouse = before;
+  }
+}

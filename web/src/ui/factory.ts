@@ -261,7 +261,8 @@ export class FactoryWindow {
       return;
     }
     // $029060: выбор пункта снимает ремонт
-    if (s.o.flags.repairing) s.o.flags.repairing = false;
+    // в сети это делает команда (у всех игроков в один такт)
+    if (s.o.flags.repairing && !G.net) s.o.flags.repairing = false;
     if (order.upgrade !== undefined) {
       // $0290D4: уже улучшается — ничего; иначе улучшение и назад на карту
       if (s.o.flags.upgrading) return;

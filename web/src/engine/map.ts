@@ -9,8 +9,9 @@ import {
   structureFind, tile, tileAddDiff, tileGetDirectionPacked, tileGetDistance, tileMoveByDirection, tileGetDistancePacked, tileIsValid, tileMoveByRandom, unitFind, unpackTile,
   type Tile32, type Unit,
 } from "./core.ts";
+import { humanHouses, isHuman, isLocal } from "./core.ts";
 import { explosionStart } from "./explosion.ts";
-import { houseAreAllied, houseGet } from "./house.ts";
+import { houseAlliedToHuman, houseAreAllied, houseGet } from "./house.ts";
 import { objectGetByPackedTile } from "./object.ts";
 import { structureConnectWall, structureDamage, structureGetByPackedTile, structureHouseUnderAttack } from "./structure.ts";
 import { iconLandscape, structureInfo, tableMapDiff, tableTileDiff, unitInfo } from "./tables.ts";
@@ -79,7 +80,7 @@ function mapUpdateWall(packed: number): boolean {
 }
 
 export function alertNearbyBaseDefenders(structure: ReturnType<typeof structureGetByPackedTile>, attackerEncoded: number): void {
-  if (!structure || !houseAreAllied(structure.o.houseID, G.playerHouseID)) return;
+  if (!structure || !houseAlliedToHuman(structure.o.houseID)) return;
   let attackerHouse = -1;
   const attacker = indexGetUnit(attackerEncoded);
   if (attacker?.o.flags.allocated) attackerHouse = unitGetHouseID(attacker);
@@ -115,7 +116,7 @@ export function mapMakeExplosion(type: number, position: Tile32, hitpoints: numb
       }
       const infantryAttacker=indexGetUnit(unitOriginEncoded);
       if((hitpoints>>(distance>>2))>0&&infantryAttacker&&unitHarvesterDefend(u,infantryAttacker))continue;
-      if (u.o.houseID === G.playerHouseID) continue;
+      if (isHuman(u.o.houseID)) continue;
       let attackerHouse = -1;
       const us = indexGetUnit(unitOriginEncoded);
       if (us) {
@@ -196,7 +197,7 @@ export function mapBloomExplodeSpice(packed: number, houseID: number): void {
     G.map[packed].groundTileID = G.mapTileID[packed] & 0x1ff;
     mapMakeExplosion(EXPLOSION.SPICE_BLOOM_TREMOR, unpackTile(packed), 0, 0);
   }
-  if (houseID === G.playerHouseID) G.onFeedback(36);
+  if (isLocal(houseID)) G.onFeedback(36);
   mapFillCircleWithSpice(packed, 5);
 }
 
@@ -335,11 +336,11 @@ export function mapFindLocationTile(locationID: number, houseID: number): number
         break;
       case 4:
         ret = packXY(mi.minX + randomRange(0, mi.sizeX), mi.minY + randomRange(0, mi.sizeY));
-        if (houseID === G.playerHouseID && !mapIsValidPosition(ret)) ret = 0;
+        if (isHuman(houseID) && !mapIsValidPosition(ret)) ret = 0;
         break;
       case 5:
         ret = packXY(packedX(G.viewportPacked) + randomRange(0, 14), packedY(G.viewportPacked) + randomRange(0, 9));
-        if (houseID === G.playerHouseID && !mapIsValidPosition(ret)) ret = 0;
+        if (isHuman(houseID) && !mapIsValidPosition(ret)) ret = 0;
         break;
       case 6:
       case 7: {
@@ -351,7 +352,7 @@ export function mapFindLocationTile(locationID: number, houseID: number): number
           if (u) ret = packTile(tileMoveByRandom(u.o.position, 120, true));
           else ret = packXY(mi.minX + randomRange(0, mi.sizeX), mi.minY + randomRange(0, mi.sizeY));
         }
-        if (houseID === G.playerHouseID && !mapIsValidPosition(ret)) ret = 0;
+        if (isHuman(houseID) && !mapIsValidPosition(ret)) ret = 0;
         break;
       }
       default:
@@ -456,7 +457,7 @@ function mapUnveilTileNeighbour(packed: number): void {
   if (tileID !== 0) {
     if (tileID !== 15) {
       const u = unitGetByPackedTile(packed);
-      if (u) unitHouseUnitCountAdd(u, G.playerHouseID);
+      if (u) for (const h of humanHouses()) unitHouseUnitCountAdd(u, h);
     }
     tileID = G.iconGroups[7][tileID];
   }
@@ -464,7 +465,9 @@ function mapUnveilTileNeighbour(packed: number): void {
 }
 
 export function mapUnveilTile(packed: number, houseID: number): boolean {
-  if (houseID !== G.playerHouseID) return false;
+  // в сетевой игре первого этапа тумана нет: карта открыта всем с начала
+  if (G.net) return false;
+  if (!isHuman(houseID)) return false;
   if (isOutOfMap(packed)) return false;
   const t = G.map[packed];
   if (t.isUnveiled && tileIsUnveiled(t.overlayTileID)) return false;

@@ -242,6 +242,8 @@ export interface House {
   palacePosition: Tile32;
   timerUnitAttack: number;
   timerSandwormAttack: number;
+  /** кредиты без хранилища человека в сетевой игре (в кампании — G.playerCreditsNoSilo) */
+  creditsNoSilo: number;
   timerStructureAttack: number;
   starportTimeLeft: number;
   starportLinkedID: number;
@@ -301,7 +303,7 @@ export function newHouse(): House {
     index: 0, harvestersIncoming: 0, flags: { used: false, human: false, doneFullScaleAttack: false, isAIActive: false, radarActivated: false },
     unitCount: 0, unitCountMax: 0, unitCountEnemy: 0, unitCountAllied: 0, structuresBuilt: 0, credits: 0, creditsStorage: 0,
     powerProduction: 0, powerUsage: 0, windtrapCount: 0, creditsQuota: 0, palacePosition: { x: 0, y: 0 }, timerUnitAttack: 0,
-    timerSandwormAttack: 0, timerStructureAttack: 0, starportTimeLeft: 0, starportLinkedID: INDEX_INVALID,
+    timerSandwormAttack: 0, timerStructureAttack: 0, creditsNoSilo: 0, starportTimeLeft: 0, starportLinkedID: INDEX_INVALID,
     ai_structureRebuild: [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
   };
 }
@@ -343,6 +345,8 @@ export const G = {
   teamFind: [] as Team[],
   timerGame: 0,
   playerHouseID: 1,
+  /** сетевая игра (lockstep) или null — кампания; см. isHuman */
+  net: null as NetGame | null,
   mapScale: 0,
   campaignID: 1,
   scenarioID: 1,
@@ -442,6 +446,35 @@ export function newScenario(): ScenarioState {
 
 export const playerHouse = (): House => G.houses[G.playerHouseID];
 
+/**
+ * Сетевая игра (lockstep): каждый игрок считает симуляцию у себя, поэтому она не должна зависеть от того,
+ * кто смотрит. Дома людей — маска humans, союзы — номера команд team[дом]. G.playerHouseID в сети — только
+ * местный зритель: звуки, сообщения, экран.
+ */
+export interface NetGame {
+  humans: number;
+  team: number[];
+}
+/** Дом под управлением человека: в кампании — игрок, в сети — любой человек. */
+export const isHuman = (h: number): boolean => (G.net ? ((G.net.humans >> h) & 1) === 1 : h === G.playerHouseID);
+/** Дом местного игрока — только для звуков, сообщений и экрана, не для симуляции. */
+export const isLocal = (h: number): boolean => h === G.playerHouseID;
+/** Маска домов людей (в кампании — один игрок). */
+export const humanMask = (): number => (G.net ? G.net.humans : 1 << G.playerHouseID);
+/** Дома людей по возрастанию номера. */
+export function humanHouses(): number[] {
+  if (!G.net) return [G.playerHouseID];
+  const out: number[] = [];
+  for (let h = 0; h < HOUSE_MAX; h++) if ((G.net.humans >> h) & 1) out.push(h);
+  return out;
+}
+/** Кредиты, которые не сгорают без хранилищ (стартовые): в сети — у каждого человека свои. */
+export const creditsNoSilo = (h: House): number => (G.net ? h.creditsNoSilo : G.playerCreditsNoSilo);
+export function setCreditsNoSilo(h: House, value: number): void {
+  if (G.net) h.creditsNoSilo = value;
+  else G.playerCreditsNoSilo = value;
+}
+
 // ------------------------------------------------------------------ случайные числа (tools.c)
 const seed = [0, 0, 0, 0];
 let lcg = 0;
@@ -462,6 +495,11 @@ export function random256(): number {
   seed[1] = val16 >> 8;
   seed[2] = val16 & 0xff;
   return seed[0] ^ seed[1];
+}
+
+/** Состояние обоих генераторов одним числом — для контрольной суммы сетевой игры. */
+export function randomState(): number {
+  return (((seed[0] << 24) | (seed[1] << 16) | (seed[2] << 8) | seed[3]) ^ lcg) >>> 0;
 }
 
 export function randomLCGSeed(v: number): void {

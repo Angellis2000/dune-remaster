@@ -9,7 +9,8 @@ import {
   tileGetDirection, tileGetDistance, tileGetDistanceRoundedUp, tileIsValid, tileMoveByDirection, tileMoveByOrientation,
   tileMoveByRandom, u16, u8, unitAllocate, unitFind, unitFree, unpackTile, type Structure, type Team, type Tile32, type Unit,
 } from "./core.ts";
-import { houseAreAllied } from "./house.ts";
+import { humanHouses, humanMask, isHuman, isLocal } from "./core.ts";
+import { houseAlliedToHuman, houseAreAllied } from "./house.ts";
 import {refineryDock} from './refinery-dock.ts';
 import {tickCarryallFlight,carryallMovementScale,carryallDestination} from './carryall-flight.ts';
 import {tickDrone,tickLaser,tickDroneGrenades} from './advanced-units.ts';
@@ -114,7 +115,7 @@ function unitPatrolTick(unit: Unit): void {
     for (const enemy of G.units) {
       if (!enemy.o.flags.allocated || enemy.o.flags.isNotOnMap || enemy === unit) continue;
       if (houseAreAllied(unitGetHouseID(unit), unitGetHouseID(enemy))) continue;
-      if ((enemy.o.seenByHouses & (1 << G.playerHouseID)) === 0) continue;
+      if ((enemy.o.seenByHouses & (1 << (G.net ? unitGetHouseID(unit) : G.playerHouseID))) === 0) continue;
       const distance = tileGetDistance(unit.o.position, enemy.o.position);
       if (distance < nearestDistance) {
         nearest = enemy;
@@ -274,8 +275,9 @@ export function gameLoopUnit(): void {
       if (u.o.script.delay === 0) {
         if (scriptIsLoaded(u.o.script)) {
           let opcodesLeft = SCRIPT_UNIT_OPCODES_PER_TICK + 2;
-          if (!ui.o.flags.scriptNoSlowdown && !mapIsPositionInViewport(u.o.position)) opcodesLeft = 3;
-          u.o.script.variables[3] = G.playerHouseID;
+          // в сети скорость скриптов не зависит от экрана игрока — иначе симуляции разойдутся
+          if (!G.net && !ui.o.flags.scriptNoSlowdown && !mapIsPositionInViewport(u.o.position)) opcodesLeft = 3;
+          u.o.script.variables[3] = scriptPlayerHouse(u);
           for (; opcodesLeft > 0 && u.o.script.delay === 0; opcodesLeft--) {
             if (!scriptRun(u.o.script)) break;
           }
@@ -343,7 +345,7 @@ export function unitCreate(index: number, typeID: number, houseID: number, posit
     return u;
   }
   unitUpdateMap(1, u);
-  unitSetAction(u, houseID === G.playerHouseID ? ui.o.actionsPlayer[3] : ui.actionAI);
+  unitSetAction(u, isHuman(houseID) ? ui.o.actionsPlayer[3] : ui.actionAI);
   return u;
 }
 
@@ -446,9 +448,11 @@ export function unitGetTeam(u: Unit | null): Team | null {
 
 /** Unit_Sort: порядок отрисовки (снизу вверх) и счёт видимых юнитов игрока. */
 export function unitSort(): void {
-  const h = G.houses[G.playerHouseID];
-  h.unitCountEnemy = 0;
-  h.unitCountAllied = 0;
+  const humans = humanHouses();
+  for (const hid of humans) {
+    G.houses[hid].unitCountEnemy = 0;
+    G.houses[hid].unitCountAllied = 0;
+  }
   const arr = G.unitFind;
   for (let i = 0; i < arr.length - 1; i++) {
     const u1 = arr[i];
@@ -463,9 +467,11 @@ export function unitSort(): void {
     }
   }
   for (const u of arr) {
-    if ((u.o.seenByHouses & (1 << G.playerHouseID)) !== 0 && !u.o.flags.isNotOnMap) {
-      if (houseAreAllied(u.o.houseID, G.playerHouseID)) h.unitCountAllied++;
-      else h.unitCountEnemy++;
+    if (u.o.flags.isNotOnMap) continue;
+    for (const hid of humans) {
+      if ((u.o.seenByHouses & (1 << hid)) === 0) continue;
+      if (houseAreAllied(u.o.houseID, hid)) G.houses[hid].unitCountAllied++;
+      else G.houses[hid].unitCountEnemy++;
     }
   }
 }
@@ -535,7 +541,7 @@ export function unitGetTargetUnitPriority(unit: Unit | null, target: Unit | null
   if (!ti.o.flags.priority) return 0;
   if (ti.movementType === MOVEMENT.WINGER) {
     if (!ui.o.flags.targetAir) return 0;
-    if (target.o.houseID === G.playerHouseID && !mapIsPositionUnveiled(packTile(target.o.position))) return 0;
+    if (isHuman(target.o.houseID) && !mapIsPositionUnveiled(packTile(target.o.position))) return 0;
   }
   if (!mapIsValidPosition(packTile(target.o.position))) return 0;
   const distance = tileGetDistanceRoundedUp(unit.o.position, target.o.position);
@@ -597,9 +603,9 @@ export function unitSetPosition(u: Unit | null, position: Tile32): boolean {
   u.targetAttack = 0;
   if (G.map[packTile(u.o.position)].isUnveiled) {
     u.o.seenByHouses &= ~(1 << u.o.houseID);
-    unitHouseUnitCountAdd(u, G.playerHouseID);
+    for (const hid of humanHouses()) unitHouseUnitCountAdd(u, hid);
   }
-  if (u.o.houseID !== G.playerHouseID || u.o.type === UNIT.HARVESTER || u.o.type === UNIT.SABOTEUR) unitSetAction(u, ui.actionAI);
+  if (!isHuman(u.o.houseID) || u.o.type === UNIT.HARVESTER || u.o.type === UNIT.SABOTEUR) unitSetAction(u, ui.actionAI);
   else unitSetAction(u, ui.o.actionsPlayer[3]);
   u.spriteOffset = 0;
   unitUpdateMap(1, u);
@@ -745,7 +751,7 @@ export function unitDeviationDecrease(unit: Unit | null, amount: number): boolea
   unit.o.flags.bulletIsBig = true;
   unitUpdateMap(2, unit);
   unit.o.flags.bulletIsBig = false;
-  if (unit.o.houseID === G.playerHouseID) unitSetAction(unit, ui.o.actionsPlayer[3]);
+  if (isHuman(unit.o.houseID)) unitSetAction(unit, ui.o.actionsPlayer[3]);
   else unitSetAction(unit, ui.actionAI);
   unitUntargetMe(unit);
   unit.targetAttack = 0;
@@ -758,7 +764,7 @@ export function unitRemoveFog(unit: Unit | null): void {
   if (unit.o.flags.isNotOnMap) return;
   const p = unit.o.position;
   if ((p.x === 0xffff && p.y === 0xffff) || (p.x === 0 && p.y === 0)) return;
-  if (!houseAreAllied(unitGetHouseID(unit), G.playerHouseID)) return;
+  if (!houseAlliedToHuman(unitGetHouseID(unit))) return;
   const r = unitInfo[unit.o.type].o.fogUncoverRadius;
   if (r === 0) return;
   tileRemoveFogInRadius(unit.o.position, r);
@@ -771,12 +777,12 @@ export function unitDeviate(unit: Unit | null, probability: number, houseID: num
   if (unit.deviated !== 0) return false;
   if (ui.flags.isNotDeviatable) return false;
   if (probability === 0) probability = houseInfo[unit.o.houseID].toughness;
-  if (unit.o.houseID !== G.playerHouseID) probability -= idiv(probability, 8);
+  if (!isHuman(unit.o.houseID)) probability -= idiv(probability, 8);
   if (random256() >= probability) return false;
   unit.deviated = 120;
   unit.deviatedHouse = houseID;
   unitUpdateMap(2, unit);
-  if (G.playerHouseID === unit.deviatedHouse) unitSetAction(unit, ui.o.actionsPlayer[3]);
+  if (isHuman(unit.deviatedHouse)) unitSetAction(unit, ui.o.actionsPlayer[3]);
   else unitSetAction(unit, ui.actionAI);
   unitUntargetMe(unit);
   unit.targetAttack = 0;
@@ -928,20 +934,20 @@ export function unitDamage(unit: Unit | null, damage: number, range: number): bo
     Math.ceil(beforeHP/(ui.o.hitpoints/3))>Math.ceil(unit.o.hitpoints/(ui.o.hitpoints/3)))G.onSound(COMBAT_SFX.DRONE_EXPLOSION,unit.o.position);
   unitDeviationDecrease(unit, 0);
   const houseID = unitGetHouseID(unit);
-  if (houseID !== G.playerHouseID) G.houses[houseID].flags.isAIActive = true;
+  if (!isHuman(houseID)) G.houses[houseID].flags.isAIActive = true;
   if (unit.o.hitpoints === 0) {
     unitRemovePlayer(unit);
     if (unit.o.type === UNIT.HARVESTER) mapFillCircleWithSpice(packTile(unit.o.position), idiv(unit.amount, 32));
     if (unit.o.type === UNIT.SABOTEUR) {
       G.onFeedback(20);
     } else if (!ui.o.flags.noMessageOnDeath && alive) {
-      G.onFeedback(houseID === G.playerHouseID || G.campaignID > 3 ? houseID + 14 : 13);
+      G.onFeedback(isLocal(houseID) || G.campaignID > 3 ? houseID + 14 : 13);
     }
     unitSetAction(unit, ACTION.DIE);
     return true;
   }
   if (range !== 0) mapMakeExplosion(damage < 25 ? EXPLOSION.IMPACT_SMALL : EXPLOSION.IMPACT_MEDIUM, unit.o.position, 0, 0);
-  if (houseID !== G.playerHouseID && unit.actionID === ACTION.AMBUSH && unit.o.type !== UNIT.HARVESTER) unitSetAction(unit, ACTION.ATTACK);
+  if (!isHuman(houseID) && unit.actionID === ACTION.AMBUSH && unit.o.type !== UNIT.HARVESTER) unitSetAction(unit, ACTION.ATTACK);
   if (unit.o.hitpoints >= idiv(ui.o.hitpoints, 2)) return false;
   if (unit.o.type === UNIT.SANDWORM) unitSetAction(unit, ACTION.DIE);
   if (unit.o.type === UNIT.TROOPERS || unit.o.type === UNIT.INFANTRY) {
@@ -1005,7 +1011,7 @@ export function unitSelect(unit: Unit | null): void {
   if (unit === G.unitSelected) return;
   if (unit && !unit.o.flags.allocated) unit = null;
   if (unit && (unit.o.seenByHouses & (1 << G.playerHouseID)) === 0) unit = null;
-  if (G.unitSelected) unitUpdateMap(2, G.unitSelected);
+  if (G.unitSelected && !G.net) unitUpdateMap(2, G.unitSelected);
   if (!unit) {
     G.unitSelected = null;
     G.selectionType = SELECTION.STRUCTURE;
@@ -1024,7 +1030,7 @@ export function unitSelect(unit: Unit | null): void {
     G.unitSelected = unit;
     G.selectionType = SELECTION.UNIT;
   }
-  unitUpdateMap(2, G.unitSelected);
+  if (!G.net) unitUpdateMap(2, G.unitSelected);
   G.onSelect();
 }
 
@@ -1048,7 +1054,7 @@ export function unitCreateWrapper(houseID: number, typeID: number, destination: 
     if (typeID === UNIT.HARVESTER && h.harvestersIncoming === 0) h.harvestersIncoming++;
     return null;
   }
-  if (houseAreAllied(houseID, G.playerHouseID) || unitIsTypeOnMap(houseID, UNIT.CARRYALL)) carryall.o.flags.byScenario = true;
+  if (houseAlliedToHuman(houseID) || unitIsTypeOnMap(houseID, UNIT.CARRYALL)) carryall.o.flags.byScenario = true;
   t = { x: 0xffff, y: 0xffff };
   G.validateStrictIfZero++;
   const unit = unitCreate(INDEX_INVALID, typeID, houseID, t, 0);
@@ -1068,7 +1074,7 @@ export function unitCreateWrapper(houseID: number, typeID: number, destination: 
 const AROUND = [0, -1, 1, -64, 64, -65, -63, 65, 63];
 
 export function unitFindTargetAround(packed: number): number {
-  if (G.selectionType === SELECTION.PLACE) return packed;
+  if (!G.net && G.selectionType === SELECTION.PLACE) return packed;
   if (structureGetByPackedTile(packed)) return packed;
   if (mapGetLandscapeType(packed) === LST.BLOOM_FIELD) return packed;
   for (const d of AROUND) {
@@ -1342,7 +1348,7 @@ export function unitFindBestTargetEncoded(unit: Unit | null, mode: number): numb
 
 export function unitRemovePlayer(unit: Unit | null): void {
   if (!unit) return;
-  if (unitGetHouseID(unit) !== G.playerHouseID) return;
+  if (!isHuman(unitGetHouseID(unit))) return;
   if (!unit.o.flags.allocated) return;
   unit.o.flags.allocated = false;
   unitRemoveFromTeam(unit);
@@ -1366,10 +1372,10 @@ export function unitUpdateMap(type: number, unit: Unit | null): void {
   const position = unit.o.position;
   const packed = packTile(position);
   const t = G.map[packed];
-  if (t.isUnveiled || unit.o.houseID === G.playerHouseID) unitHouseUnitCountAdd(unit, G.playerHouseID);
+  if (t.isUnveiled || isHuman(unit.o.houseID)) for (const hid of humanHouses()) unitHouseUnitCountAdd(unit, hid);
   else unitHouseUnitCountRemove(unit);
   if (type === 1) {
-    if (houseAreAllied(unitGetHouseID(unit), G.playerHouseID) && !mapIsPositionUnveiled(packed) && unit.o.type !== UNIT.SANDWORM) {
+    if (houseAlliedToHuman(unitGetHouseID(unit)) && !mapIsPositionUnveiled(packed) && unit.o.type !== UNIT.SANDWORM) {
       tileRemoveFogInRadius(position, 1);
     }
     if (objectGetByPackedTile(packed) === null) {
@@ -1416,7 +1422,7 @@ export function unitLaunchHouseMissile(packed: number): void {
   let t = unpackTile(packed);
   t = tileMoveByRandom(t, 160, false);
   packed = packTile(t);
-  const isAI = m.o.houseID !== G.playerHouseID;
+  const isAI = !isLocal(m.o.houseID);
   unitFree(m);
   G.onFeedback(0xfffe);
   unitCreateBullet(h.palacePosition, m.o.type, m.o.houseID, 0x1f4, indexEncode(packed, IT.TILE));
@@ -1445,9 +1451,9 @@ export function unitHouseUnitCountRemove(unit: Unit | null): void {
 
 export function unitHouseUnitCountAdd(unit: Unit | null, houseID: number): void {
   if (!unit) return;
-  const hp = G.houses[G.playerHouseID];
   const ui = unitInfo[unit.o.type];
   const h = G.houses[houseID];
+  const hp = h;
   let houseIDBit = 1 << houseID;
   if (houseID === HOUSE.ATREIDES && unit.o.type !== UNIT.SANDWORM) houseIDBit |= 1 << HOUSE.FREMEN;
   if ((unit.o.seenByHouses & houseIDBit) !== 0 && h.flags.isAIActive) {
@@ -1465,21 +1471,27 @@ export function unitHouseUnitCountAdd(unit: Unit | null, houseID: number): void 
       G.houses[unitGetHouseID(unit)].flags.isAIActive = true;
     }
   }
-  if (houseID === G.playerHouseID && G.selectionType !== SELECTION.MENTAT) {
+  // в сети экран ментата у игрока свой и на симуляцию не влияет
+  if (isHuman(houseID) && (G.net !== null || G.selectionType !== SELECTION.MENTAT)) {
+    const local = isLocal(houseID);
     if (unit.o.type === UNIT.SANDWORM) {
       if (hp.timerSandwormAttack === 0) {
-        if (G.musicInBattle === 0) G.musicInBattle = 1;
-        G.onFeedback(37);
-        G.onMessage(msg.sandworms, 1);
+        if (local) {
+          if (G.musicInBattle === 0) G.musicInBattle = 1;
+          G.onFeedback(37);
+          G.onMessage(msg.sandworms, 1);
+        }
         hp.timerSandwormAttack = 8;
       }
-    } else if (!houseAreAllied(G.playerHouseID, unitGetHouseID(unit))) {
+    } else if (!houseAreAllied(houseID, unitGetHouseID(unit))) {
       if (hp.timerUnitAttack === 0) {
-        if (G.musicInBattle === 0) G.musicInBattle = 1;
-        if (unit.o.type === UNIT.SABOTEUR) {
+        if (local && G.musicInBattle === 0) G.musicInBattle = 1;
+        if (!local) {
+          // голос предупреждения — только своему игроку
+        } else if (unit.o.type === UNIT.SABOTEUR) {
           G.onFeedback(12);
         } else if (G.scenarioID < 3) {
-          const s = structureFind(findAll(G.playerHouseID, STRUCTURE.CONSTRUCTION_YARD));
+          const s = structureFind(findAll(houseID, STRUCTURE.CONSTRUCTION_YARD));
           let feedbackID: number;
           if (s) feedbackID = idiv((orientation8(tileGetDirection(s.o.position, unit.o.position)) + 1) & 7, 2) + 2;
           else feedbackID = 1;
@@ -1495,7 +1507,7 @@ export function unitHouseUnitCountAdd(unit: Unit | null, houseID: number): void 
     }
   }
   if (!houseAreAllied(houseID, unit.o.houseID) && unit.actionID === ACTION.AMBUSH) unitSetAction(unit, ACTION.HUNT);
-  if (unit.o.houseID === G.playerHouseID || (unit.o.houseID === HOUSE.FREMEN && G.playerHouseID === HOUSE.ATREIDES)) unit.o.seenByHouses = 0xff;
+  if (isHuman(unit.o.houseID) || (!G.net && unit.o.houseID === HOUSE.FREMEN && G.playerHouseID === HOUSE.ATREIDES)) unit.o.seenByHouses = 0xff;
   else unit.o.seenByHouses |= houseIDBit;
 }
 
@@ -1504,3 +1516,16 @@ export function unitFindAll(): Unit[] {
 }
 
 export { structureFree, indexGetPackedTile, structureHouseUnderAttack };
+
+/**
+ * Переменная 3 скрипта юнита — дом игрока (g_playerHouseID). В сети у юнита человека — его дом, у юнита ИИ —
+ * первый человек-противник: так скрипты различают «свой игрок» и «противник» одинаково у всех клиентов.
+ */
+function scriptPlayerHouse(u: Unit): number {
+  if (!G.net) return G.playerHouseID;
+  const own = unitGetHouseID(u);
+  if (isHuman(own)) return own;
+  const mask = humanMask();
+  for (let h = 0; h < 8; h++) if ((mask >> h) & 1 && !houseAreAllied(h, own)) return h;
+  return own;
+}

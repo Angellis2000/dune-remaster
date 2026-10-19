@@ -9,7 +9,8 @@ import {
   tileGetDirectionPacked, tileGetDistance, tileGetDistancePacked, tileGetDistanceRoundedUp, tileMoveByDirection, tileMoveByRandom,
   u16, unitFind, unpackTile, type ScriptEngine, type ScriptFunction, type Structure, type Tile32, type Unit,
 } from "./core.ts";
-import { houseAreAllied } from "./house.ts";
+import { humanMask, isHuman, isLocal } from "./core.ts";
+import { houseAlliedToHuman, houseAreAllied } from "./house.ts";
 import { mapChangeSpiceAmount, mapGetLandscapeType, mapIsValidPosition, mapMakeExplosion, mapSearchSpice, tileGetTileInDirectionOf } from "./map.ts";
 import { objectGetByPackedTile, objectGetDistanceToEncoded, objectScriptVariable4Clear, objectScriptVariable4Link, objectScriptVariable4Set } from "./object.ts";
 import { peek } from "./script.ts";
@@ -251,7 +252,7 @@ const unitTransportDeliver: ScriptFunction = (script) => {
   if (!mapIsValidPosition(packTile(tileCenter(u.o.position)))) return 0;
   const u2 = G.units[u.o.linkedID];
   if (!unitSetPosition(u2, tileCenter(u.o.position))) return 0;
-  if (u2.o.houseID === G.playerHouseID) G.onSound(24, u.o.position);
+  if (isLocal(u2.o.houseID)) G.onSound(24, u.o.position);
   unitSetOrientation(u2, u.orientation[0].current, true, 0);
   unitSetOrientation(u2, u.orientation[0].current, true, 1);
   unitSetSpeed(u2, 0);
@@ -298,7 +299,7 @@ const unitPickup: ScriptFunction = (script) => {
       if (s.o.linkedID === 0xff) structureSetState(s, STATE.IDLE);
       if (u2.targetLast.x !== 0 || u2.targetLast.y !== 0) {
         u.targetMove = indexEncode(packTile(u2.targetLast), IT.TILE);
-      } else if (u2.o.type === UNIT.HARVESTER && unitGetHouseID(u2) !== G.playerHouseID) {
+      } else if (u2.o.type === UNIT.HARVESTER && !isHuman(unitGetHouseID(u2))) {
         u.targetMove = indexEncode(mapSearchSpice(packTile(u.o.position), 20), IT.TILE);
       }
       unitUpdateMap(2, u);
@@ -404,10 +405,10 @@ const unitDie: ScriptFunction = () => {
   const u = cur();
   const ui = unitInfo[u.o.type];
   unitRemove(u);
-  if (u.o.houseID === G.playerHouseID && (u.o.type < UNIT.MISSILE_HOUSE || u.o.type === UNIT.LASER_TANK || u.o.type === UNIT.COMBAT_DRONE)) G.scenario.unitsLostAllied++;
+  if (isHuman(u.o.houseID) && (u.o.type < UNIT.MISSILE_HOUSE || u.o.type === UNIT.LASER_TANK || u.o.type === UNIT.COMBAT_DRONE)) G.scenario.unitsLostAllied++;
   if (ui.movementType !== MOVEMENT.WINGER) {
     const credits = Math.max(idiv(ui.o.buildCredits, 100), 1);
-    if (u.o.houseID === G.playerHouseID) {
+    if (isHuman(u.o.houseID)) {
       G.scenario.killedAllied++;
       // MD $044662: очков не меньше нуля
       G.scenario.score -= Math.min(credits, Math.max(0, G.scenario.score));
@@ -642,7 +643,7 @@ const unitSetTargetFn: ScriptFunction = (script) => {
 const unitSetActionFn: ScriptFunction = (script) => {
   const u = cur();
   const action = P(script, 1);
-  if (u.o.houseID === G.playerHouseID && action === ACTION.HARVEST && u.nextActionID !== ACTION.INVALID) return 0;
+  if (isHuman(u.o.houseID) && action === ACTION.HARVEST && u.nextActionID !== ACTION.INVALID) return 0;
   unitSetAction(u, action);
   return 0;
 };
@@ -690,7 +691,7 @@ const unitGetInfo: ScriptFunction = (script) => {
     case 0x10: return u.orientation[turret].current;
     case 0x11: return Math.abs(u.orientation[turret].target - u.orientation[turret].current);
     case 0x12: return (ui.movementType & 0x40) === 0 ? 0 : 1;
-    case 0x13: return (u.o.seenByHouses & (1 << G.playerHouseID)) === 0 ? 0 : 1;
+    case 0x13: return (u.o.seenByHouses & humanMask()) === 0 ? 0 : 1;
     default: return 0;
   }
 };
@@ -1129,7 +1130,7 @@ const unitMCVDeploy: ScriptFunction = () => {
       return 1;
     }
   }
-  if (unitGetHouseID(u) === G.playerHouseID) G.onMessage(msg.unableToDeploy, 0);
+  if (isLocal(unitGetHouseID(u))) G.onMessage(msg.unableToDeploy, 0);
   unitUpdateMap(1, u);
   return 0;
 };
@@ -1196,9 +1197,9 @@ const structureRefineSpice: ScriptFunction = () => {
   if (u.amount !== 0 && harvesterStep < 1) harvesterStep = 1;
   if (harvesterStep === 0) return 0;
   let creditsStep = 7;
-  if (u.o.houseID !== G.playerHouseID) creditsStep += (random256() % 4) - 1;
+  if (!isHuman(u.o.houseID)) creditsStep += (random256() % 4) - 1;
   creditsStep *= harvesterStep;
-  if (houseAreAllied(G.playerHouseID, s.o.houseID)) {
+  if (houseAlliedToHuman(s.o.houseID)) {
     G.scenario.harvestedAllied = Math.min(G.scenario.harvestedAllied + creditsStep, 65000);
   } else {
     G.scenario.harvestedEnemy = Math.min(G.scenario.harvestedEnemy + creditsStep, 65000);
@@ -1229,7 +1230,7 @@ const structureFindUnitByType: ScriptFunction = (script) => {
   const type = P(script, 1);
   const u = G.units[s.o.linkedID];
   const position = structureGroundExit(s,u,false);
-  if (G.playerHouseID === s.o.houseID && u.o.type === UNIT.HARVESTER && u.targetLast.x === 0 && u.targetLast.y === 0 && position !== 0) return IT.NONE;
+  if (isHuman(s.o.houseID) && u.o.type === UNIT.HARVESTER && u.targetLast.x === 0 && u.targetLast.y === 0 && position !== 0) return IT.NONE;
   const carryall = unitCallUnitByType(type, s.o.houseID, indexEncode(s.o.index, IT.STRUCTURE), position === 0);
   if (!carryall) return IT.NONE;
   const carryallIndex = indexEncode(carryall.o.index, IT.UNIT);
@@ -1257,7 +1258,7 @@ const structureUnknown0C5A: ScriptFunction = () => {
     if (s.o.linkedID === 0xff) structureSetState(s, STATE.IDLE);
     objectScriptVariable4Clear(s.o);
     // MD $0233c4: готовый юнит игрока — голос 1 ("Unit ready", GEMS seq 64)
-    if (s.o.houseID === G.playerHouseID) G.onFeedback(1);
+    if (isLocal(s.o.houseID)) G.onFeedback(1);
     return 1;
   }
   const position = structureGroundExit(s,u,u.o.type===UNIT.HARVESTER);
@@ -1279,10 +1280,10 @@ const structureUnknown0C5A: ScriptFunction = () => {
   u.o.linkedID = 0xff;
   unitSetOrientation(u, tileGetDirection(s.o.position, u.o.position) & 0xe0, true, 0);
   unitSetOrientation(u, u.orientation[0].current, true, 1);
-  if (u.o.houseID === G.playerHouseID && u.o.type === UNIT.HARVESTER) G.onMessage(msg.searchSpice, 1);
+  if (isLocal(u.o.houseID) && u.o.type === UNIT.HARVESTER) G.onMessage(msg.searchSpice, 1);
   if (s.o.linkedID === 0xff) structureSetState(s, STATE.IDLE);
   objectScriptVariable4Clear(s.o);
-  if (s.o.houseID !== G.playerHouseID) return 1;
+  if (!isLocal(s.o.houseID)) return 1;
   if (s.o.type === STRUCTURE.REPAIR) return 1;
   // MD $0233c4: готовый юнит игрока — голос 1 ("Unit ready", GEMS seq 64)
   G.onFeedback(1);
@@ -1353,7 +1354,7 @@ const structureUnknown11B9: ScriptFunction = (script) => {
 
 const structureVoicePlay: ScriptFunction = (script) => {
   const s = curS();
-  if (s.o.houseID !== G.playerHouseID) return 0;
+  if (!isLocal(s.o.houseID)) return 0;
   G.onSound(P(script, 1), s.o.position);
   return 0;
 };
@@ -1402,7 +1403,7 @@ const structureDestroyFn: ScriptFunction = () => {
     const u = unitCreate(INDEX_INVALID, UNIT.SOLDIER, s.o.houseID, t, random256());
     if (!u) continue;
     u.o.hitpoints = idiv(unitInfo[UNIT.SOLDIER].o.hitpoints * (random256() & 3), 256);
-    if (s.o.houseID !== G.playerHouseID) {
+    if (!isHuman(s.o.houseID)) {
       unitSetAction(u, ACTION.ATTACK);
       continue;
     }
@@ -1410,7 +1411,7 @@ const structureDestroyFn: ScriptFunction = () => {
     t = tileMoveByRandom(u.o.position, 32, true);
     u.targetMove = indexEncode(packTile(t), IT.TILE);
   }
-  if (s.o.houseID !== G.playerHouseID) return 0;
+  if (!isLocal(s.o.houseID)) return 0;
   G.onMessage(msg.destroyed(s.o.houseID, s.o.type, true), 0);
   return 0;
 };
@@ -1586,7 +1587,7 @@ const teamUnknown0788: ScriptFunction = () => {
 
 const teamDisplayText: ScriptFunction = (script) => {
   const t = curT();
-  if (t.houseID === G.playerHouseID) return 0;
+  if (isLocal(t.houseID)) return 0;
   const text = scriptText(script, P(script, 1));
   if (text) G.onMessage(text, 0);
   return 0;

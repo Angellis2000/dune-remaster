@@ -2,6 +2,7 @@
  * Дома: деньги, энергия, хранилища, подкрепления, космопорт, ракета дворца (OpenDUNE src/house.c).
  */
 import { G, HOUSE, HOUSE_INVALID, INDEX_INVALID, IT, STRUCTURE, UNIT, findAll, houseFind, idiv, indexEncode, randomRange, random256, structureFind, unitFind, unpackTile, type House, type Unit } from "./core.ts";
+import { creditsNoSilo, humanHouses, isHuman, isLocal, setCreditsNoSilo } from "./core.ts";
 import { mapFindLocationTile } from "./map.ts";
 import { msg } from "./strings.ts";
 import { houseInfo, structureInfo } from "./tables.ts";
@@ -113,21 +114,21 @@ export function gameLoopHouse(): void {
     const h = houseFind(find);
     if (!h) break;
     if (tickHouse) {
-      if (h.index !== G.playerHouseID) {
+      if (!isHuman(h.index)) {
         if (h.creditsStorage < h.credits) h.credits = h.creditsStorage;
       } else {
-        const maxCredits = Math.max(h.creditsStorage, G.playerCreditsNoSilo);
+        const maxCredits = Math.max(h.creditsStorage, creditsNoSilo(h));
         if (h.credits > maxCredits) {
           h.credits = maxCredits;
-          G.onMessage(msg.spiceLost, 1);
+          if (isLocal(h.index)) G.onMessage(msg.spiceLost, 1);
         }
       }
-      if (h.index === G.playerHouseID) {
-        if (h.creditsStorage > G.playerCreditsNoSilo) G.playerCreditsNoSilo = 0;
-        if (G.playerCreditsNoSilo === 0 && G.campaignID > 1 && h.credits !== 0) {
+      if (isHuman(h.index)) {
+        if (h.creditsStorage > creditsNoSilo(h)) setCreditsNoSilo(h, 0);
+        if (isLocal(h.index) && creditsNoSilo(h) === 0 && G.campaignID > 1 && h.credits !== 0) {
           if (h.creditsStorage !== 0 && idiv(h.credits * 256, h.creditsStorage) > 200) G.onMessage(msg.storageLow, 0);
         }
-        if (h.credits < 100 && G.playerCreditsNoSilo !== 0) G.onMessage(msg.creditsLow, 0);
+        if (isLocal(h.index) && h.credits < 100 && creditsNoSilo(h) !== 0) G.onMessage(msg.creditsLow, 0);
       }
     }
     if (tickHouse) houseEnsureHarvesterAvailable(h.index);
@@ -154,7 +155,7 @@ export function gameLoopHouse(): void {
           h.starportLinkedID = INDEX_INVALID;
           u.o.flags.inTransport = true;
           // MD $0236a6: прибытие фрегата космопорта игрока — голос 48 ($30, "Frigate has arrived", seq 66)
-          if (h.index === G.playerHouseID) G.onFeedback(48);
+          if (isLocal(h.index)) G.onFeedback(48);
         }
         h.starportTimeLeft = u ? houseInfo[h.index].starportDeliveryTime : 1;
       }
@@ -194,20 +195,22 @@ function houseEnsureHarvesterAvailable(houseID: number): void {
   const s = structureFind(findAll(houseID, STRUCTURE.REFINERY));
   if (!s) return;
   if (!unitCreateWrapper(houseID, UNIT.HARVESTER, indexEncode(s.o.index, IT.STRUCTURE))) return;
-  if (houseID !== G.playerHouseID) return;
+  if (!isLocal(houseID)) return;
   G.onMessage(msg.harvesterHeading, 0);
 }
 
 export function houseAreAllied(houseID1: number, houseID2: number): boolean {
   if (houseID1 === HOUSE_INVALID || houseID2 === HOUSE_INVALID) return false;
   if (houseID1 === houseID2) return true;
+  // сеть: союзники — игроки одной команды
+  if (G.net) return G.net.team[houseID1] !== undefined && G.net.team[houseID1] === G.net.team[houseID2];
   if (houseID1 === HOUSE.FREMEN || houseID2 === HOUSE.FREMEN) return houseID1 === HOUSE.ATREIDES || houseID2 === HOUSE.ATREIDES;
   return houseID1 !== G.playerHouseID && houseID2 !== G.playerHouseID;
 }
 
 /** Радар (аванпост + энергии хватает). Заставка «помехи» из PC не нужна — меняется только флаг. */
 export function houseUpdateRadarState(h: House | null): boolean {
-  if (!h || h.index !== G.playerHouseID) return false;
+  if (!h || !isHuman(h.index)) return false;
   let activate = h.flags.radarActivated;
   const hasOutpost = (h.structuresBuilt & (1 << STRUCTURE.OUTPOST)) !== 0;
   if (h.flags.radarActivated) {
@@ -216,7 +219,7 @@ export function houseUpdateRadarState(h: House | null): boolean {
     activate = true;
   }
   if (h.flags.radarActivated === activate) return false;
-  G.onFeedback(activate ? 28 : 29);
+  if (isLocal(h.index)) G.onFeedback(activate ? 28 : 29);
   h.flags.radarActivated = activate;
   return activate;
 }
@@ -261,8 +264,14 @@ export function houseCalculatePowerAndCredit(h: House | null): void {
     }
     h.powerProduction += idiv(-si.powerUsage * s.o.hitpoints, si.o.hitpoints);
   }
-  if (h.index === G.playerHouseID && h.powerUsage > h.powerProduction) G.onMessage(msg.insufficientPower, 1);
-  if (h.index === G.playerHouseID && h.structuresBuilt === 0 && G.validateStrictIfZero === 0) G.playerCreditsNoSilo = 0;
+  if (isLocal(h.index) && h.powerUsage > h.powerProduction) G.onMessage(msg.insufficientPower, 1);
+  if (isHuman(h.index) && h.structuresBuilt === 0 && G.validateStrictIfZero === 0) setCreditsNoSilo(h, 0);
 }
 
 export const HOUSE_IDS = HOUSE;
+
+/** Союзник кого-то из людей (в кампании — союзник игрока, как houseAreAllied(x, g_playerHouseID)). */
+export function houseAlliedToHuman(houseID: number): boolean {
+  for (const h of humanHouses()) if (houseAreAllied(houseID, h)) return true;
+  return false;
+}

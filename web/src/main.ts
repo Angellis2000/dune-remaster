@@ -28,7 +28,9 @@ import { Minimap } from "./ui/minimap.ts";
 import { forgetRom, loadStoredRom, storeRom } from "./ui/romstore.ts";
 import { FactoryWindow } from "./ui/factory.ts";
 import { FrontEnd } from "./ui/frontend.ts";
-import {NetworkMenu} from './ui/network.ts';
+import {NetworkMenu,type LobbyMap} from './ui/network.ts';
+import { NetSession, defaultEndpoint, type MatchStart } from './net/session.ts';
+import { installNetControls } from './net/controls.ts';
 import { HOUSE_INDEX, MentatScreen } from "./ui/mentat.ts";
 import { EndPicture, Flyby, FLYBY_FRAMES } from "./ui/endgame.ts";
 import { ScoreScreen, type MissionStats } from "./ui/score.ts";
@@ -255,6 +257,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       G.onMessage(`Не удалось загрузить локацию ${normalized}: ${error instanceof Error ? error.message : "ошибка данных миссии"}`, 0);
       return false;
     }
+    endNetMatch();
     dismissMissionScreens();
     sound.playMusic(MUSIC.STOP);
     sound.useBank("game");
@@ -307,6 +310,10 @@ async function startGame(rom: DuneRom): Promise<void> {
     return enemy;
   };
   world.game.onEnd = (result) => {
+    if (net.inMatch) {
+      onNetEnd(result);
+      return;
+    }
     message.hidden = true;
     clearSelection();
     world.game.afterEnd = FLYBY_FRAMES;
@@ -395,9 +402,10 @@ async function startGame(rom: DuneRom): Promise<void> {
       minimap.canvas.hidden = !on;
       savePrefs();
     },
-    restart: () => loadMission(current),
+    restart: () => (net.inMatch ? leaveNetMatch() : loadMission(current)),
     // «ВЫБРАТЬ ДРУГОЙ ДОМ» в оригинале ведёт на экран выбора дома
     chooseHouse: () => {
+      endNetMatch();
       settings.close();
       paused = true;
       frontend.openHouse();
@@ -486,7 +494,143 @@ async function startGame(rom: DuneRom): Promise<void> {
     },
   });
   stage.append(frontend.root);
-  const networkMenu=new NetworkMenu({back:()=>frontend.openTitle(),ui:sequence=>sound.menuUi(sequence??0x28)});
+  // ---------------------------------------------------------------- сетевая игра (net/session.ts, server/dune-net.mjs)
+  /** Карты ROM для лобби: превью — средний цвет иконок клеток (как радар), подпись — миссии, где карта встречается. */
+  let romMapCache: LobbyMap[] | null = null;
+  const romMapList = (): LobbyMap[] => {
+    if (romMapCache) return romMapCache;
+    const usedIn = new Map<number, string[]>();
+    const houseName: Record<string, string> = { A: "Атрейдесы", O: "Ордосы", H: "Харконнены" };
+    for (const h of ["A", "O", "H"]) {
+      for (let mission = 1; mission <= 9; mission++) {
+        try {
+          const sc = rom.scenario(h, mission);
+          usedIn.set(sc.mapIndex, [...(usedIn.get(sc.mapIndex) ?? []), `${houseName[h]} ${mission}`]);
+        } catch {
+          /* миссии нет */
+        }
+      }
+    }
+    const list: LobbyMap[] = [];
+    for (let n = 1; n <= 27; n++) {
+      const map = rom.missionMap(n);
+      const b = map.bounds;
+      const k = Math.max(4, Math.floor(256 / b.w));
+      const c = document.createElement("canvas");
+      c.width = b.w * k;
+      c.height = b.h * k;
+      const g = c.getContext("2d")!;
+      for (let y = 0; y < b.h; y++) for (let x = 0; x < b.w; x++) {
+        g.fillStyle = icons.averageColor[map.ground[((y + b.y) << 6) | (x + b.x)]] ?? "#000";
+        g.fillRect(x * k, y * k, k, k);
+      }
+      const preview = c.toDataURL();
+      const where = usedIn.get(n);
+      for (let teamSize = 1; teamSize <= 3; teamSize++) {
+        list.push({
+          id: `rom-${n}`, name: `Карта ${n} · ${b.w}×${b.h}`, width: b.w, height: b.h, teamSize, capacity: teamSize * 2, preview, data: "",
+          description: where ? `Карта кампании: ${where.join(", ")}` : "Карта кампании",
+        });
+      }
+    }
+    return (romMapCache = list);
+  };
+  const net = new NetSession();
+  let netRestore: (() => void) | null = null;
+  let netClock = 0;
+  const networkMenu=new NetworkMenu({
+    back:()=>{net.close();frontend.openTitle();},
+    ui:sequence=>sound.menuUi(sequence??0x28),
+    romMaps: romMapList,
+    connect: (name) => net.connect(defaultEndpoint(), name),
+    refreshRooms: () => net.listRooms(),
+    joinRoom: (id, role, password) => net.join(id, password ?? "", role, networkMenu.ownHouse()),
+    leaveObservation: () => net.leave(),
+    createRoom: (c) => net.create(c.roomName, c.password, { map: c.map, teamSize: c.teamSize, credits: c.credits }, c.house),
+    leaveRoom: () => net.leave(),
+    setOwn: (c) => net.setOwn(c),
+    setConfig: (c) => net.setConfig(c),
+    startMatch: () => net.startMatch(),
+  });
+  net.onRooms = (rooms) => networkMenu.setServerRooms(rooms);
+  net.onRoom = (room, you) => {
+    if (!net.inMatch) networkMenu.setRoom(room, you);
+  };
+  net.onError = (text) => {
+    networkMenu.setStatus(text);
+    if (net.inMatch) G.onMessage(text, 0);
+  };
+  net.onStatus = (text) => networkMenu.setStatus(text);
+  net.onDesync = (turn) => G.onMessage(`Внимание: игра у игроков разошлась (ход ${turn}). Матч может идти по-разному.`, 0);
+  net.onClosed = () => {
+    if (net.inMatch) G.onMessage("Связь с сервером потеряна — матч остановлен. Start → «Начать сначала» — в лобби.", 0);
+  };
+  /** Начать матч: у всех одинаковое зерно, карта и состав — дальше игра идёт по ходам сервера. */
+  const startNetMatch = (start: MatchStart): void => {
+    const local = start.you === null ? -1 : (start.players.find((p) => p.slot === start.you)?.house ?? -1);
+    networkMenu.close();
+    frontend.close();
+    settings.close();
+    dismissMissionScreens();
+    sound.playMusic(MUSIC.STOP);
+    sound.useBank("game");
+    completedConstructionYard = null;
+    queuedPlacementYard = null;
+    clearSelection();
+    netRestore?.();
+    const res = world.loadNetwork({ map: start.config.map, seed: start.seed, credits: start.config.credits, players: start.players.map((p) => ({ ...p })), local });
+    netRestore = installNetControls(world.game, (c) => net.command(c), () => G.playerHouseID);
+    net.bind(
+      (slot, c) => {
+        const p = start.players.find((x) => x.slot === slot);
+        if (p) world.game.execNet(p.house, c);
+        if (c.k === "left" && p) G.onMessage(`${p.name} покинул матч`, 0);
+      },
+      () => world.game.tick(),
+      () => world.game.netHash(),
+    );
+    netClock = performance.now();
+    view.setWorld(world, res.cursor.x * CELL_PX + CELL_PX / 2, res.cursor.y * CELL_PX + CELL_PX / 2);
+    minimap.setMap(world.map);
+    minimap.draw();
+    paused = false;
+    pausedBanner.hidden = true;
+    endBanner.hidden = true;
+    ending = null;
+    flyby.stop();
+    minimap.canvas.hidden = !prefs.radar;
+    hud.credits.reset(world.houses.get(world.player)?.credits ?? 0);
+    updateHud();
+    inMission = true;
+    sound.battleMusic();
+    G.onMessage(start.you === null ? "Вы наблюдаете за матчем" : `Матч начался · игроков: ${start.players.length}`, 0);
+  };
+  net.onStart = (start) => startNetMatch(start);
+  /** Свой результат: победа или поражение; у остальных игра продолжается, поэтому симуляция не останавливается. */
+  const onNetEnd = (result: "won" | "lost"): void => {
+    net.reportOver(result);
+    endBanner.textContent = result === "won" ? "ПОБЕДА · Start → «Начать сначала» — выйти в лобби" : "ПОРАЖЕНИЕ · Start → «Начать сначала» — выйти в лобби";
+    endBanner.hidden = false;
+    sound.playMusic((result === "won" ? MUSIC.WIN : MUSIC.LOSE)[world.player] ?? 0);
+  };
+  /** Выйти из сетевого матча (без перехода куда-либо). */
+  const endNetMatch = (): void => {
+    if (!net.inMatch && !netRestore) return;
+    net.leave();
+    netRestore?.();
+    netRestore = null;
+    endBanner.hidden = true;
+  };
+  /** Выйти из матча в сетевое лобби. */
+  const leaveNetMatch = (): void => {
+    endNetMatch();
+    settings.close();
+    paused = true;
+    inMission = false;
+    sound.useBank("game");
+    sound.playMusic(MUSIC.HOUSE_SELECT);
+    void networkMenu.open();
+  };
   stage.append(networkMenu.root);
   const tutorial = new TutorialScreen(rom, sound);
   const finale = new FinaleScreen(rom, sound, screens.art);
@@ -736,8 +880,15 @@ async function startGame(rom: DuneRom): Promise<void> {
         afterEnding(r);
       }
     }
-    if (!paused) {
-      world.step();
+    // сетевой матч: такты — по ходам сервера и часам, без паузы (у других игроков игра идёт)
+    const netActive = net.inMatch;
+    if (netActive) {
+      const now = performance.now();
+      net.advance(Math.min(250, now - netClock));
+      netClock = now;
+    }
+    if (!paused || netActive) {
+      if (!netActive) world.step();
       world.sync();
       const readyYard = completedConstructionYard;
       completedConstructionYard = null;

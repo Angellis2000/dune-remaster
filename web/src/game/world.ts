@@ -8,7 +8,7 @@ import type { Scenario } from "../rom/scenario.ts";
 import { G, LST, MAP_INFOS, MOVEMENT, STRUCTURE, packTile, packXY, type Structure as EStructure, type Unit as EUnit } from "../engine/core.ts";
 import { explosions } from "../engine/explosion.ts";
 import { mapGetLandscapeType } from "../engine/map.ts";
-import { Game } from "../engine/game.ts";
+import { Game, type NetSetup } from "../engine/game.ts";
 import { layoutSize, structureInfo, unitInfo } from "../engine/tables.ts";
 import { MAP_SIZE } from "../rom/dune.ts";
 import type { UnitDrawState } from "../gfx/sprites.ts";
@@ -106,6 +106,24 @@ export class World {
     this.unitViews.clear();
     this.structureViews.clear();
     this.sync();
+  }
+
+  /** Сетевой матч на карте ROM (Game.loadNetwork) — вместо сценария кампании. */
+  loadNetwork(setup: NetSetup): { cursor: { x: number; y: number } } {
+    const res = this.game.loadNetwork(setup);
+    const mi = MAP_INFOS[G.mapScale];
+    this.map.bounds = { x: mi.minX, y: mi.minY, w: mi.sizeX, h: mi.sizeY };
+    this.map.index = setup.map;
+    this.scenario = {
+      name: "NET", losePicture: "", winPicture: "", briefPicture: "", timeOut: 0, mapScale: G.mapScale, mapIndex: setup.map,
+      cursor: res.cursor, tactical: res.cursor, loseFlags: 0, winFlags: 0, bloom: [], field: [],
+      houses: setup.players.map((p) => ({ id: p.house, credits: setup.credits, quota: 0, brain: p.house === G.playerHouseID ? "human" as const : "cpu" as const, maxUnits: 0 })),
+      choam: new Map(), teams: [], units: [], structures: [], reinforcements: [],
+    };
+    this.unitViews.clear();
+    this.structureViews.clear();
+    this.sync();
+    return { cursor: res.cursor };
   }
 
   step(): void {
