@@ -238,7 +238,8 @@ button[aria-pressed="true"] {
   position: absolute;
   right: max(12px, env(safe-area-inset-right, 0px));
   bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-  width: 220px;
+  width: 252px;
+  box-sizing: border-box;
   height: auto;
   image-rendering: pixelated;
   border: 1px solid var(--line);
@@ -515,10 +516,11 @@ button[aria-pressed="true"] {
 /* ---------------------------------------------------------------- меню C */
 .command {
   position: absolute;
-  top: 110px;
+  top: 130px;
   right: max(12px, env(safe-area-inset-right, 0px));
   width: 252px;
-  max-height: calc(100% - 350px);
+  box-sizing: border-box;
+  max-height: calc(100% - 410px);
   min-height: 120px;
   display: grid;
   grid-template-rows: auto 1fr;
@@ -667,8 +669,24 @@ button[aria-pressed="true"] {
   pointer-events: none;
 }
 
-.command-list button:not(:has(img)) {
+.command-list button:not(:has(img)):not(:has(.command-icon)) {
   grid-template-columns: 1fr auto;
+}
+
+/* значок приказа: в цвет надписи, у активного — золотой, как рамка */
+.command-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 2px;
+  background: #0f1216;
+  box-shadow: inset 0 0 0 1px #4a464d;
+  color: #c3b89e;
+}
+.command-list button.active .command-icon {
+  color: #f2d59a;
+  box-shadow: inset 0 0 0 1px #8b7650;
 }
 
 .command-list button small {

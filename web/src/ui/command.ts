@@ -19,10 +19,35 @@ export const ACTION_NAMES = [
   "Диверсия", "Погибнуть", "Охота", "Развернуть", "Самоуничтожение", "Патрулировать",
 ];
 
+/**
+ * Значки приказов (SVG 16×16, цвет — как у надписи): прицел, стрелка, отход, щит, щит с кругом, спайс, база, стоп,
+ * засада (глаз), диверсия (бомба), охота, развернуть, самоуничтожение, патруль (туда-обратно).
+ */
+const svg = (body: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+export const ACTION_ICONS: Record<number, string> = {
+  0: svg('<circle cx="8" cy="8" r="4.6"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3"/><circle cx="8" cy="8" r=".6" fill="currentColor"/>'),
+  1: svg('<path d="M2 8h11M9 4l4 4-4 4"/>'),
+  2: svg('<path d="M13 8H3M7 4L3 8l4 4"/><path d="M13 4v8" opacity=".55"/>'),
+  3: svg('<path d="M8 1.8l5 2v4c0 3.2-2.2 5.3-5 6.4-2.8-1.1-5-3.2-5-6.4v-4z"/>'),
+  4: svg('<path d="M8 3.5l3.2 1.3v2.6c0 2-1.4 3.4-3.2 4.1-1.8-.7-3.2-2.1-3.2-4.1V4.8z"/><circle cx="8" cy="8" r="7" stroke-dasharray="2 2" opacity=".6"/>'),
+  5: svg('<path d="M8 2c2.4 3 3.8 5.1 3.8 7a3.8 3.8 0 0 1-7.6 0C4.2 7.1 5.6 5 8 2z"/>'),
+  6: svg('<path d="M2.5 8L8 3l5.5 5"/><path d="M4 7v6h8V7"/>'),
+  7: svg('<rect x="3.5" y="3.5" width="9" height="9" rx="1"/>'),
+  8: svg('<path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4z"/><circle cx="8" cy="8" r="1.8"/>'),
+  9: svg('<circle cx="7" cy="9.5" r="4.3"/><path d="M10 6.5l2-2M12 4.5l1.5-1"/>'),
+  10: svg('<path d="M3 3l10 10M13 3L3 13"/>'),
+  11: svg('<circle cx="7" cy="9" r="4"/><path d="M10 6l4-4M11 2h3v3"/>'),
+  12: svg('<path d="M8 2v7M5 6l3 3 3-3"/><path d="M2.5 11.5h11v2h-11z"/>'),
+  13: svg('<path d="M8 1.5l1.4 3.6 3.6-1.4-1.4 3.6 3.4 1.7-3.6 1 .9 3.8-3.4-2-2.6 3-.6-3.9-3.9.3 2.6-3L2 5.6l3.8.5z"/>'),
+  14: svg('<path d="M2 5.5h10M9 2.5l3 3-3 3"/><path d="M14 10.5H4M7 7.5l-3 3 3 3"/>'),
+};
+
 const SPECIAL_NAMES: Record<number, string> = { 1: "Запустить ракету", 2: "Позвать фрименов", 3: "Выпустить диверсанта" };
 
 interface Item {
   label: string;
+  /** значок приказа (SVG из ACTION_ICONS) */
+  icon?: string;
   note?: string;
   picture?: string;
   disabled?: boolean;
@@ -219,7 +244,7 @@ export class CommandPanel {
       }
       b.disabled = !!it.disabled;
       b.className = [it.active ? "active" : "", this.focused && i === this.index ? "cursor" : ""].join(" ").trim();
-      const key = `${it.picture ?? ""}|${it.label}|${it.note ?? ""}|${it.quantity ?? ""}`;
+      const key = `${it.picture ?? ""}|${it.icon ? 1 : 0}|${it.label}|${it.note ?? ""}|${it.quantity ?? ""}`;
       if (b.dataset.key === key) return;
       b.dataset.key = key;
       const parts: Node[] = [];
@@ -237,6 +262,12 @@ export class CommandPanel {
           media.append(badge);
         }
         parts.push(media);
+      }
+      if (it.icon && !it.picture) {
+        const icon = document.createElement("span");
+        icon.className = "command-icon";
+        icon.innerHTML = it.icon; // строки из ACTION_ICONS, не из данных игры
+        parts.push(icon);
       }
       parts.push(text("span", it.label));
       if (it.note) parts.push(text("small", it.note));
@@ -259,6 +290,7 @@ export class CommandPanel {
       if (action >= ACTION.MAX) continue;
       this.items.push({
         label: ACTION_NAMES[action],
+        icon: ACTION_ICONS[action],
         active: !u.patrolActive && action === current,
         run: () => {
           const needsTarget = this.world.game.unitCommand(u, action);
@@ -275,6 +307,7 @@ export class CommandPanel {
     if (actions.includes(ACTION.MOVE) && actions.includes(ACTION.ATTACK)) {
       this.items.push({
         label: ACTION_NAMES[ACTION.PATROL],
+        icon: ACTION_ICONS[ACTION.PATROL],
         active: u.patrolActive,
         run: () => {
           const needsTarget = this.world.game.unitCommand(u, ACTION.PATROL);

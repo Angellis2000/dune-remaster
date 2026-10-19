@@ -15,6 +15,7 @@ import { blitTile, readU16, readU32 } from "../rom/md.ts";
 import type { DuneRom } from "../rom/dune.ts";
 import type {Portraits} from '../gfx/portraits.ts';
 import {drawConsoleSymbol} from '../gfx/console-symbols.ts';
+import {dayPhase,desertLight} from '../gfx/world-atmosphere.ts';
 
 export const HUD_ROM = {
   /** таблица кадров: 8 байт — указатель на сырые тайлы, байт +4: FE — строка палитры 1, FF — строка 3 */
@@ -68,6 +69,16 @@ const EMPTY: HudState = { portrait: null, hp: null, order: null, bar: null, proh
 
 /** Вторая полоса: под иконкой заказа ($06A7E2, y=112) или сразу под прочностью ($06A7E8, y=80). */
 const BAR_LOW = 112;
+/** Часы суток в панели «СПАЙС» (смена дня и ночи — украшение ремейка, gfx/world-atmosphere.ts). */
+export let HUD_DAY = true;
+export function setHudDay(on: boolean): void { HUD_DAY = on; }
+function dayRow(): { text: string; icon: 'sun' | 'moon' } {
+  const tick = Math.max(0, G.timerGame - G.tickScenarioStart), light = desertLight(tick), phase = dayPhase(tick);
+  const hh = Math.floor(light.hour), mm = Math.floor((light.hour - hh) * 60), left = Math.ceil(phase.secondsLeft);
+  const time = String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+  return { text: time + ' ' + phase.name.toUpperCase() + ' · ' + phase.next.toUpperCase() + ' ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0'),
+    icon: light.hour >= 6 && light.hour < 18 ? 'sun' : 'moon' };
+}
 const BAR_HIGH = 80;
 
 /**
@@ -359,11 +370,14 @@ export class Hud {
   draw(state: HudState | null, stats: HudStats = { buildings: 0, buildingsLost: 0, units: 0, unitsLost: 0 }): void {
     this.warning.hidden = !this.credits.noMoney.drawn;
     const text = String(this.credits.shown).padStart(6, " ");
-    const key = `${G.playerHouseID}|${text}|${JSON.stringify(state)}|${JSON.stringify(stats)}`;
+    const day = HUD_DAY ? dayRow() : null;
+    const key = `${G.playerHouseID}|${text}|${JSON.stringify(state)}|${JSON.stringify(stats)}|${day?.text}|${day?.icon}`;
     if (key === this.key) return;
     this.key = key;
     const g=this.g;g.clearRect(0,0,504,512);g.save();g.scale(4,4);g.imageSmoothingEnabled=true;
-    g.fillStyle='#101820ed';g.fillRect(0,0,126,46);g.strokeStyle='#8b7650';g.lineWidth=.5;g.strokeRect(.5,.5,125,45);
+    // панель «СПАЙС»; с часами суток — на строку выше, всё ниже сдвигается на OFF
+    const H=day?56:46,OFF=H-46;
+    g.fillStyle='#101820ed';g.fillRect(0,0,126,H);g.strokeStyle='#8b7650';g.lineWidth=.5;g.strokeRect(.5,.5,125,H-1);
     g.textAlign='left';g.font='700 7px "Segoe UI", sans-serif';g.fillStyle='#c3b89e';g.fillText('СПАЙС',7,11);
     g.textAlign='right';g.font=`700 ${G.net?Math.min(16,110/(text.trim().length*.62)):16}px "IBM Plex Mono", monospace`;g.fillStyle='#ffe4aa';
     g.shadowColor='#000';g.shadowBlur=2;g.fillText(text.trim(),119,23);g.shadowBlur=0;
@@ -373,22 +387,33 @@ export class Hud {
     g.textAlign='right';g.fillStyle='#f2d59a';
     g.fillText(`${String(stats.buildings).padStart(2,'0')}  −${String(stats.buildingsLost).padStart(2,'0')}`,119,35);
     g.fillText(`${String(stats.units).padStart(2,'0')}  −${String(stats.unitsLost).padStart(2,'0')}`,119,44);
+    if(day)this.dayRow(day);
     if (state) {
-      if (state.portrait !== null) this.frame(state.portrait, 48);
+      if (state.portrait !== null) this.frame(state.portrait, 48+OFF);
       if (state.hp) {
         const p = barFill(state.hp.value, state.hp.max);
-        if (p >= 0) this.bar(p, state.hp.value/state.hp.max>.5?'#76ba76':state.hp.value/state.hp.max>.25?'#e6b859':'#df6954', 80);
+        if (p >= 0) this.bar(p, state.hp.value/state.hp.max>.5?'#76ba76':state.hp.value/state.hp.max>.25?'#e6b859':'#df6954', 80+OFF);
       }
-      if (state.order !== null) this.frame(state.order, 88);
+      if (state.order !== null) this.frame(state.order, 88+OFF);
       if (state.prohibited) {
-        g.strokeStyle='#ff866e';g.lineWidth=1.5;g.beginPath();g.arc(32,104,8,0,Math.PI*2);g.moveTo(26,98);g.lineTo(38,110);g.stroke();
+        g.strokeStyle='#ff866e';g.lineWidth=1.5;g.beginPath();g.arc(32,104+OFF,8,0,Math.PI*2);g.moveTo(26,98+OFF);g.lineTo(38,110+OFF);g.stroke();
       }
       if (state.bar) {
         const p = barFill(state.bar.value, state.bar.max);
-        if (p >= 0) this.bar(p,state.bar.color===3?'#d9ab58':'#65b2d5',state.bar.y===BAR_LOW?112:80);
+        if (p >= 0) this.bar(p,state.bar.color===3?'#d9ab58':'#65b2d5',(state.bar.y===BAR_LOW?112:80)+OFF);
       }
     }
     g.restore();
+  }
+
+  /** Строка «ВРЕМЯ» в панели «СПАЙС»: солнце или луна, часы, фаза и какая следующая через сколько. */
+  private dayRow(day:{text:string;icon:'sun'|'moon'}):void{
+    const g=this.g;
+    g.strokeStyle='#514733';g.lineWidth=.5;g.beginPath();g.moveTo(6,47.5);g.lineTo(120,47.5);g.stroke();
+    g.textAlign='left';g.font='600 5.5px "IBM Plex Mono", monospace';g.fillStyle='#c3b89e';g.fillText('ВРЕМЯ',7,53.5);
+    if(day.icon==='sun'){g.fillStyle='#ffd25a';g.beginPath();g.arc(32,51.5,2.2,0,Math.PI*2);g.fill();}
+    else{g.fillStyle='#e8eef8';g.beginPath();g.arc(32,51.5,2.1,0,Math.PI*2);g.fill();g.fillStyle='#101820';g.beginPath();g.arc(33,50.9,1.8,0,Math.PI*2);g.fill();}
+    g.textAlign='right';g.fillStyle='#f2d59a';g.fillText(day.text,119,53.5);
   }
 
   /** Кадр 4×3 тайла из таблицы $060E8C (тайлы по столбцам, как у спрайта VDP). */

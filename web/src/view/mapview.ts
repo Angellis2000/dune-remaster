@@ -105,8 +105,8 @@ export class MapView {
   private acc = 0;
   private tracks = new VehicleTracks();
   private atmosphere = new WorldAtmosphere();
-  /** часы суток в левом верхнем углу карты */
-  showDayClock = true;
+  /** отдельная плашка часов над картой; по умолчанию часы — строкой в панели «СПАЙС» (ui/hud.ts) */
+  showDayClock = false;
 
   constructor(
     canvas: HTMLCanvasElement,
