@@ -30,7 +30,7 @@ import {configureNetworkPools} from './core.ts';
 import {NETWORK_UNIT_LIMIT} from './network-rules.ts';
 import { netBuildAIBase, netCreateAITeams, netHandOver, netSetupAIHouse } from "./net-ai.ts";
 import {
-  gameLoopUnit, unitCreate, unitCreateWrapper, unitDeviationDecrease, unitFindTargetAround, unitGetByPackedTile, unitGetHouseID,
+  gameLoopUnit, unitCreate, unitCreateWrapper, unitDeviationDecrease, unitFindTargetAround, unitGetByPackedTile, unitGetHouseID, unitGetTileEnterScore,
   unitHouseUnitCountAdd, unitLaunchHouseMissile, unitRemoveFog, unitResetTimers, unitSelect, unitSetAction, unitSetDestination,
   unitSetOrientation, unitSetSpeed, unitSetTarget, unitSort, unitUpdateMap,
 } from "./unit.ts";
@@ -603,6 +603,46 @@ export class Game {
   }
 
   /** Указана цель для выбранного действия. */
+  /**
+   * Клетки для группы у точки приказа: смещение каждого от центра группы сохраняется, но сжимается до радиуса
+   * ~√N клеток (не больше 3); дальше — ближайшая к желаемой свободная проходимая клетка, без повторов.
+   * Только целые числа и порядок по номеру юнита — у всех клиентов в сети одинаково.
+   */
+  private static spreadPoints(units: Unit[], packed: number): Map<Unit, number> {
+    const out = new Map<Unit, number>();
+    if (units.length < 2) return out;
+    const tiles = units.map((u) => packTile(u.o.position));
+    const cx = Math.round(tiles.reduce((s, q) => s + (q & 63), 0) / tiles.length);
+    const cy = Math.round(tiles.reduce((s, q) => s + (q >> 6), 0) / tiles.length);
+    const cap = Math.min(3, Math.ceil(Math.sqrt(units.length)));
+    const tx = packed & 63, ty = packed >> 6;
+    const taken = new Set<number>();
+    for (const u of [...units].sort((a, b) => a.o.index - b.o.index)) {
+      const at = packTile(u.o.position);
+      let dx = (at & 63) - cx, dy = (at >> 6) - cy;
+      const len = Math.max(Math.abs(dx), Math.abs(dy));
+      if (len > cap) { dx = Math.round((dx * cap) / len); dy = Math.round((dy * cap) / len); }
+      const wx = Math.max(0, Math.min(63, tx + dx)), wy = Math.max(0, Math.min(63, ty + dy));
+      let best = -1, bestScore = Infinity;
+      for (let r = 0; r <= 4 && best < 0; r++) {
+        for (let y = wy - r; y <= wy + r; y++) for (let x = wx - r; x <= wx + r; x++) {
+          if (x < 0 || y < 0 || x > 63 || y > 63 || Math.max(Math.abs(x - wx), Math.abs(y - wy)) !== r) continue;
+          const q = packXY(x, y);
+          if (taken.has(q) || !mapIsValidPosition(q) || structureGetByPackedTile(q)) continue;
+          const other = objectGetByPackedTile(q);
+          if (other && other !== u.o) continue;
+          if (unitGetTileEnterScore(u, q, 0) >= 256) continue;
+          const score = (x - wx) ** 2 + (y - wy) ** 2;
+          if (score < bestScore) { best = q; bestScore = score; }
+        }
+      }
+      if (best < 0) continue;
+      taken.add(best);
+      out.set(u, best);
+    }
+    return out;
+  }
+
   /** Цель выбрана: приказ активному юниту и (others) остальным выделенным — одной группой. */
   targetClick(packed: number, others: Unit[] = []): void {
     if (G.unitHouseMissile) {
@@ -623,7 +663,11 @@ export class Game {
    * съезжаться к цели вплотную. Методы — именно класса: в сети интерфейс подменяет их отправкой команд.
    */
   orderGroup(units: Unit[], action: number, packed: number, house = G.playerHouseID): void {
-    for (const u of units) Game.prototype.order.call(this, u, action, packed, house);
+    // движение и патруль в пустую клетку: каждому своя клетка рядом (в одну клетку толпа не влезет и толкается)
+    const spread = (action === ACTION.MOVE || action === ACTION.PATROL) && units.length > 1 && objectGetByPackedTile(packed) === null
+      ? Game.spreadPoints(units.filter((u) => unitGetHouseID(u) === house && unitInfo[u.o.type].movementType !== MOVEMENT.WINGER), packed)
+      : null;
+    for (const u of units) Game.prototype.order.call(this, u, action, spread?.get(u) ?? packed, house);
     if (action !== ACTION.ATTACK || units.length < 2) return;
     const attackers = units.filter((u) => unitGetHouseID(u) === house && u.actionID === ACTION.ATTACK && u.targetAttack !== 0);
     const target = attackers[0]?.targetAttack ?? 0;

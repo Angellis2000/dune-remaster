@@ -440,7 +440,9 @@ const unitExplosionMultiple: ScriptFunction = (script) => {
   return 0;
 };
 
-function friendlyStructureOnRay(from: Tile32, to: Tile32, houseID: number): boolean {
+/** Свои/союзные здание или стена на линии огня. Само здание-цель (приказ атаковать своё, как в MD) не мешает. */
+function friendlyStructureOnRay(from: Tile32, to: Tile32, houseID: number, target = 0): boolean {
+  const targetStructure = indexGetStructure(target);
   let x = packTile(from) & 63;
   let y = packTile(from) >> 6;
   const endX = packTile(to) & 63;
@@ -458,7 +460,7 @@ function friendlyStructureOnRay(from: Tile32, to: Tile32, houseID: number): bool
     const packed=packXY(x,y);
     if(mapGetLandscapeType(packed)===LST.WALL&&houseAreAllied(G.map[packed].houseID,houseID))return true;
     const structure = structureGetByPackedTile(packed);
-    if (structure && houseAreAllied(structure.o.houseID, houseID)) return true;
+    if (structure && structure !== targetStructure && houseAreAllied(structure.o.houseID, houseID)) return true;
   }
   return false;
 }
@@ -478,7 +480,7 @@ function unitFindClearShotTile(unit: Unit, target: number): number {
       if (unitGetTileEnterScore(unit, packed, 0) >= 256) continue;
       const point = tileCenter(unpackTile(packed));
       if (tileGetDistance(point, targetPosition) > range * 256) continue;
-      if (friendlyStructureOnRay(point, targetPosition, unitGetHouseID(unit))) continue;
+      if (friendlyStructureOnRay(point, targetPosition, unitGetHouseID(unit), target)) continue;
       const distance = tileGetDistance(unit.o.position, point);
       if (distance < bestDistance) {
         best = packed;
@@ -509,7 +511,7 @@ function findAttackSpot(unit: Unit, target: number, taken: Set<number>): number 
       if (unitGetTileEnterScore(unit, packed, 0) >= 256) continue;
       const point = tileCenter(unpackTile(packed));
       if (pointGetDistanceToEncoded(point, target) >= range) continue;
-      if (friendlyStructureOnRay(point, targetPosition, unitGetHouseID(unit))) continue;
+      if (friendlyStructureOnRay(point, targetPosition, unitGetHouseID(unit), target)) continue;
       const distance = tileGetDistance(unit.o.position, point);
       if (distance < bestDistance) {
         best = packed;
@@ -592,7 +594,7 @@ const unitFire: ScriptFunction = (script) => {
     if (diff >= 8) return 0;
   }
   if (ui.bulletType !== UNIT.SANDWORM && ui.bulletType !== UNIT.INVALID && ui.movementType !== MOVEMENT.WINGER &&
-      friendlyStructureOnRay(u.o.position, indexGetTile(target), unitGetHouseID(u))) {
+      friendlyStructureOnRay(u.o.position, indexGetTile(target), unitGetHouseID(u), target)) {
     if (u.speed === 0 && u.currentDestination.x === 0 && u.currentDestination.y === 0) {
       const detour = unitFindClearShotTile(u, target);
       if (detour !== 0) unitSetDestination(u, indexEncode(detour, IT.TILE));

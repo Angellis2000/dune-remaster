@@ -279,6 +279,10 @@ export function mapChangeSpiceAmount(packed: number, dir: number): void {
   else type = type === LST.THICK_SPICE ? LST.SPICE : LST.NORMAL_SAND;
   if (type === LST.NORMAL_SAND) {
     G.mapTileID[packed] &= 0x7fff;
+    // В PC под спайсом в mapTileID лежит песок; в картах MD спайс нарисован в самой клетке, и «вернуть исходную»
+    // значило вернуть спайс — выработанный и разбитый взрывами спайс не пропадал. Тогда кладём песок ландшафта.
+    const base = iconLandscape[G.mapTileID[packed] & 0x1ff];
+    if (base === LST.SPICE || base === LST.THICK_SPICE) G.mapTileID[packed] = (G.mapTileID[packed] & ~0x1ff) | landscapeIcon(0);
     G.map[packed].groundTileID = G.mapTileID[packed] & 0x1ff;
   } else {
     let spriteID = type === LST.SPICE ? 49 : 65;

@@ -844,9 +844,9 @@ async function startGame(rom: DuneRom): Promise<void> {
     if (mine.length) {
       if (unit && mine.includes(unit.ref)) {
         if(!world.game.activateSelf(unit.ref))clearSelection();
-      } else if (unit && unit.house === world.player && !unit.air) {
-        selectUnits([unit]);
       } else {
+        // как в MD: A по своему юниту — приказ «двигаться» на его клетку; движок (unitSetDestination) делает из неё
+        // цель-юнит, и выбранные едут за ним. Другой юнит выбирают после B (снять выбор).
         orderSelected(mine, packed);
         view.flashOrders(mine);
         clearSelection();

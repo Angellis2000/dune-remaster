@@ -540,8 +540,9 @@ export class MapView {
     const visible = world.units.filter(
       (u) => u.x > this.camX - margin && u.x < this.camX + v.w + margin && u.y > this.camY - margin && u.y < this.camY + v.h + margin,
     );
-    // наземные снизу вверх, затем воздушные — поверх всех
-    visible.sort((a, b) => (a.air ? 100000 : 0) + a.y - ((b.air ? 100000 : 0) + b.y));
+    // червь — под всеми (он в песке, юниты над ним), наземные снизу вверх, затем воздушные — поверх всех
+    const layer = (u: Unit) => (u.air ? 100000 : u.type === 25 ? -100000 : 0) + u.y;
+    visible.sort((a, b) => layer(a) - layer(b));
     const drawEffect = (spriteID: number, x: number, y: number, seed = 0) => {
       const img = this.sprites.effect(spriteID);
       if (!img) return;
@@ -561,13 +562,18 @@ export class MapView {
     };
     // взрывы — под воздушными юнитами, как в оригинале
     const drawBlasts = () => {
+      for (const b of world.blasts) if (b.type !== 13) drawEffect(b.spriteID, b.x, b.y, (b.x * 8) ^ (b.type * 997));
+      drawParticles('air');
+    };
+    // пасть червя (взрыв 13) — тоже под наземными юнитами, как сам червь
+    const drawWormMouths = () => {
       for (const b of world.blasts) {
-        if (b.type === 13 && this.sprites.wormArt) {
+        if (b.type !== 13) continue;
+        if (this.sprites.wormArt) {
           ctx.save(); ctx.setTransform(z,0,0,z,-ox,-oy);
           this.sprites.wormArt.swallow(ctx,b.x,b.y,b.age); ctx.restore();
         } else drawEffect(b.spriteID, b.x, b.y, (b.x * 8) ^ (b.type * 997));
       }
-      drawParticles('air');
     };
     const drawParticles = (layer: 'ground' | 'air') => {
       if (!this.particles) return;
@@ -576,6 +582,7 @@ export class MapView {
       ctx.restore();
     };
     drawParticles('ground');
+    drawWormMouths();
     let blastsDrawn = false;
     for (const u of visible) {
       if (u.air && !blastsDrawn) {
