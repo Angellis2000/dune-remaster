@@ -1,0 +1,29 @@
+{
+  "tool": "built-in image_gen",
+  "assets": [
+    {
+      "name": "laser-hull",
+      "source": "C:\\Users\\Admin\\.codex\\generated_images\\01a14eb3-be5c-7531-a765-77307948a05a\\exec-7cb734cb-52fb-47a8-8746-1fb2dd4f753c.png",
+      "asset": "web/src/gfx/assets/vehicles-hd/laser-hull.png",
+      "prompt": "Create ONE new production RTS game sprite of a futuristic tracked laser tank HULL ONLY with NO turret and NO gun. The attached sprite atlas is style reference only, DO NOT copy the atlas layout or make a sheet. Strict orthographic straight overhead top-down view, nose pointing UP at twelve o'clock, left-right symmetrical, matching the realistic detailed sand-beige weathered armor and cobalt BLUE house-color panels of the reference tanks. Broad black segmented tracks, heavy but sleek low hull, rear capacitor racks and cooling vents, empty circular central turret bearing. Clear readable silhouette, crisp fine metal panel details, subtle upper-left lighting, NO cast ground shadow. Single isolated centered vehicle occupying 84% of a square canvas with generous even transparent margins; actual alpha transparent background, no text, no UI, no perspective, no surroundings. This is a game-ready separate hull layer designed for a rotating laser turret."
+    },
+    {
+      "name": "laser-turret",
+      "source": "C:\\Users\\Admin\\.codex\\generated_images\\01a14eb3-be5c-7531-a765-77307948a05a\\exec-4faea686-b411-43b6-8b8a-c48fab8afa5a.png",
+      "asset": "web/src/gfx/assets/vehicles-hd/laser-turret.png",
+      "prompt": "Create ONE isolated production RTS sprite: rotating LASER TANK TURRET ONLY, no hull, no tracks. Style matches attached game atlas realistic weathered beige armor and cobalt BLUE accent panels. Strict orthographic straight overhead top-down view, barrel aimed straight UP twelve o'clock. Compact oval armored turret, rear twin capacitor banks, a single slim rectangular laser emitter extending from turret towards top, small recessed cyan focusing lens precisely on central axis at the tip. Modern industrial sci-fi, no magic effects, no beam, no glow cloud, no ground shadow. Turret centered on square canvas, emitter straight and symmetrical, crisp panel lines and cooling grilles. True alpha transparency everywhere outside turret, even 12% margins, no text, no atlas, only one sprite. Must visually belong on the reference tank hulls as an independent rotating layer."
+    },
+    {
+      "name": "drone",
+      "source": "C:\\Users\\Admin\\.codex\\generated_images\\01a14eb3-be5c-7531-a765-77307948a05a\\exec-3e5a1e00-d9dc-4ace-bf74-f24ad01e7b29.png",
+      "asset": "web/src/gfx/assets/vehicles-hd/drone.png",
+      "prompt": "Create ONE isolated production RTS flying combat drone sprite, not a sheet. Style and materials match reference desert RTS vehicles: realistic worn sand-beige armor, cobalt BLUE house-color panels, black mechanical recesses. Strict orthographic overhead top-down view, nose pointing straight UP, bilateral symmetry. Small compact unmanned aircraft with four short corner arms and FOUR visibly open ducted fan housings; keep circular fans clearly readable so moving rotors can be drawn separately. Small forward camera and twin tiny downward weapon pods, no cockpit, no pilot, no insect wings. Modern purposeful military industrial sci-fi, crisp detailed panel texture with clean readable silhouette, no ground shadow or beam effects. Single centered drone occupies 78% square canvas, true alpha transparent background, generous even margins. No text, no logo, no UI, no background scenery."
+    },
+    {
+      "name": "drone-pad",
+      "source": "C:\\Users\\Admin\\.codex\\generated_images\\01a14eb3-be5c-7531-a765-77307948a05a\\exec-8f3033e1-dc6c-4105-b366-02ab36f13875.png",
+      "asset": "web/src/gfx/assets/drone-pad.png",
+      "prompt": "Generate one new final RTS building sprite: DRONE CONTROL AND REARMING PAD, in the exact realistic detailed top-down industrial desert RTS style of the attached game vehicles and combat drone. Orthographic straight overhead camera, square 2x2 tile footprint, centered exact symmetrical rectangular foundation, generous transparent 6% exterior margins. A compact low silver-gray armored control block and communications aerials along the upper quarter; the remaining middle/lower area is a dark steel open landing and maintenance apron with THREE small circular docking pads in triangular formation: approx centers at (42%,45%), (58%,45%), (50%,59%) of canvas. Keep the pads EMPTY for real animated game drones. Add restrained yellow safety stripes, charging connectors, small sealed ammo lockers at outer edges, cobalt BLUE house-color trim, worn brushed metal, fine sharp panel seams, matching vehicle materials. Architecture has a strong readable overhead silhouette, believable depth without isometric distortion. NO green ground, no sand square background, no painted vehicles, no drones, no words, no letters, no logo, no UI. Actual alpha transparent outside the building and tight neutral contact shadow only. This is a production game sprite, not a mockup or concept sheet."
+    }
+  ]
+}

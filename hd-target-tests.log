@@ -1,0 +1,44 @@
+
+> dune-remaster-web@0.1.0 test
+> node --experimental-strip-types --test test/*.test.ts
+
+TAP version 13
+# Subtest: LCW: потоки из ROM распаковываются как в эталоне
+ok 1 - LCW: потоки из ROM распаковываются как в эталоне
+  ---
+  duration_ms: 2.0588
+  type: 'test'
+  ...
+# Subtest: LCW: мусор даёт ошибку, а не зависание
+ok 2 - LCW: мусор даёт ошибку, а не зависание
+  ---
+  duration_ms: 0.2307
+  type: 'test'
+  ...
+# Subtest: harvesting only changes the spice layer, never the underlying terrain
+ok 3 - harvesting only changes the spice layer, never the underlying terrain
+  ---
+  duration_ms: 1.9072
+  type: 'test'
+  ...
+# Subtest: rock coastlines and dune relief come from the original graphics
+ok 4 - rock coastlines and dune relief come from the original graphics
+  ---
+  duration_ms: 1.8264
+  type: 'test'
+  ...
+# Subtest: visual variation stays stable and independent of the game random generator
+ok 5 - visual variation stays stable and independent of the game random generator
+  ---
+  duration_ms: 0.3096
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 149.3931

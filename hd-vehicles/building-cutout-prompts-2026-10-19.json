@@ -1,0 +1,25 @@
+{
+  "tool": "built-in image_gen",
+  "assets": [
+    {
+      "name": "radar-outpost",
+      "source": "C:\\Users\\Admin\\.codex\\generated_images\\01a14eb3-be5c-7531-a765-77307948a05a\\exec-c2a36327-b5cc-468e-87bc-f1cd90949c2a.png",
+      "prompt": "Edit target: attached existing RTS building sprite radar-outpost. Use case background-extraction. Remove ONLY ALL flat olive green ground/background, including olive gaps BETWEEN machinery and pipes and around the outside. Replace removed ground with genuine alpha transparency. Preserve every building pixel's composition, exact top-down camera, framing, silhouette, metal colors, pipes, domes, panel edges and foundation/platform that is an actual part of the building. Preserve dark contact shadows as translucent neutral dark shadows, never green. No new objects, no redesign, no new concrete or sand background. Keep exact full-canvas registration and aspect ratio of source. Particularly preserve refinery right-hand unloading platform and all machinery. Output clean sharp production PNG cutout with true transparent background."
+    },
+    {
+      "name": "spice-silo",
+      "source": "C:\\Users\\Admin\\.codex\\generated_images\\01a14eb3-be5c-7531-a765-77307948a05a\\exec-1cfd04b1-ad0e-4459-bed9-ecec999e4482.png",
+      "prompt": "Edit target: attached existing RTS building sprite spice-silo. Use case background-extraction. Remove ONLY ALL flat olive green ground/background, including olive gaps BETWEEN machinery and pipes and around the outside. Replace removed ground with genuine alpha transparency. Preserve every building pixel's composition, exact top-down camera, framing, silhouette, metal colors, pipes, domes, panel edges and foundation/platform that is an actual part of the building. Preserve dark contact shadows as translucent neutral dark shadows, never green. No new objects, no redesign, no new concrete or sand background. Keep exact full-canvas registration and aspect ratio of source. Particularly preserve refinery right-hand unloading platform and all machinery. Output clean sharp production PNG cutout with true transparent background."
+    },
+    {
+      "name": "vehicle-factory",
+      "source": "C:\\Users\\Admin\\.codex\\generated_images\\01a14eb3-be5c-7531-a765-77307948a05a\\exec-2079c2ad-594d-44e2-9947-64db5e56b238.png",
+      "prompt": "Edit target: attached existing RTS building sprite vehicle-factory. Use case background-extraction. Remove ONLY ALL flat olive green ground/background, including olive gaps BETWEEN machinery and pipes and around the outside. Replace removed ground with genuine alpha transparency. Preserve every building pixel's composition, exact top-down camera, framing, silhouette, metal colors, pipes, domes, panel edges and foundation/platform that is an actual part of the building. Preserve dark contact shadows as translucent neutral dark shadows, never green. No new objects, no redesign, no new concrete or sand background. Keep exact full-canvas registration and aspect ratio of source. Particularly preserve refinery right-hand unloading platform and all machinery. Output clean sharp production PNG cutout with true transparent background."
+    },
+    {
+      "name": "refinery",
+      "source": "C:\\Users\\Admin\\.codex\\generated_images\\01a14eb3-be5c-7531-a765-77307948a05a\\exec-cfc97565-006f-4a4f-b17c-ec1c59d5bac7.png",
+      "prompt": "Edit target: attached existing RTS building sprite refinery. Use case background-extraction. Remove ONLY ALL flat olive green ground/background, including olive gaps BETWEEN machinery and pipes and around the outside. Replace removed ground with genuine alpha transparency. Preserve every building pixel's composition, exact top-down camera, framing, silhouette, metal colors, pipes, domes, panel edges and foundation/platform that is an actual part of the building. Preserve dark contact shadows as translucent neutral dark shadows, never green. No new objects, no redesign, no new concrete or sand background. Keep exact full-canvas registration and aspect ratio of source. Particularly preserve refinery right-hand unloading platform and all machinery. Output clean sharp production PNG cutout with true transparent background."
+    }
+  ]
+}

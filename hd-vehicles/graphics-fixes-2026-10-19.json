@@ -1,0 +1,21 @@
+{
+  "tool": "built-in image_gen",
+  "mode": "edit",
+  "assets": [
+    {
+      "reference": "web/src/gfx/assets/map-hd/bloom.png",
+      "saved": "web/src/gfx/assets/map-hd/bloom-transparent.png",
+      "prompt": "Edit target: supplied Dune RTS spice bloom image. Remove ONLY the square sand background surrounding the small central rounded rocky sand mound. Preserve the same central mound, shape, top-down camera, warm ochre sand/stone material and original lighting. Repaint its small pebbles sharply, but do not redesign. Output one isolated mound centered on a genuinely transparent canvas, with an irregular natural feathered edge fading to full transparency around its scattered pebbles. No surrounding smooth sand field, no square patch, no opaque backdrop, no checkerboard painted into image. Mound plus scattered pebbles should occupy the central 65% of a square image, leaving fully transparent margin on all four sides. This is a ground decal placed over existing detailed sand texture."
+    },
+    {
+      "reference": "web/src/gfx/assets/map-hd/bloom-alt.png",
+      "saved": "web/src/gfx/assets/map-hd/bloom-alt-transparent.png",
+      "prompt": "Edit target: supplied Dune RTS alternate spice bloom image. Remove ONLY the square sand background around the central lumpy rocky sand mound. Preserve the central mound, top-down view, warm ochre sandy material, size and original upper-left light. Refine pebbles sharply without redesign. Output one isolated mound on genuine transparent background, irregular natural edge fading to transparency through scattered pebbles. No smooth sand field, no square patch, no opaque backdrop, no painted checkerboard. Mound and pebbles occupy central 65% with fully transparent margin on all four sides. Ground decal to overlay existing detailed sand."
+    },
+    {
+      "reference": "web/src/gfx/assets/map-hd/destruction-decals.png",
+      "saved": "web/src/gfx/assets/map-hd/crater-hd.png",
+      "prompt": "Reference: existing Dune RTS crater sprite atlas. Create ONE clean complete circular blast crater as an isolated transparent ground decal, top-down RTS camera. Match the reference warm ochre sandstone, dark deep uneven central depression, broken jagged rim, small scattered rocks, upper-left desert sunlight. This must be one WHOLE crater with every part of the rim visible, not an atlas or collage. Realistic sharp finely detailed sandstone, restrained dark soot, no lava, no fire, no smoke, no metal debris. Center the crater in a square canvas, total visible crater and scattered fragments inside the central 72%, leaving generous entirely transparent margins on all four sides. Outside irregular scattered rocks fully transparent, no surrounding solid sand or square background, no checkerboard pattern, no text."
+    }
+  ]
+}

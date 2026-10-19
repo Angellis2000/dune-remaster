@@ -1,0 +1,16 @@
+{"plane":{"p":{"x":6913,"y":5812},"target":0,"pc":1878,"delay":0,"flight":{"height":11.99999999999999,"serviceKey":"0:43","serviceSince":-1,"lastTick":12000}},"unit":{"p":{"x":65535,"y":65535},"hidden":true,"link":255}}
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Original EMC must actually deliver it to a free tile, structure 12
+    at file:///C:/Users/Admin/Downloads/dune-remaster-main/dune-remaster-main/tools/probe-blocked-flight.mjs:75:250 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+
+Node.js v22.22.0

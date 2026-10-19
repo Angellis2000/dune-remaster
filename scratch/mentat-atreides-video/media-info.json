@@ -1,0 +1,24 @@
+﻿{
+    "programs": [
+
+    ],
+    "stream_groups": [
+
+    ],
+    "streams": [
+        {
+            "index": 0,
+            "codec_name": "vp9",
+            "codec_type": "video",
+            "width": 512,
+            "height": 384,
+            "tags": {
+                "alpha_mode": "1"
+            }
+        }
+    ],
+    "format": {
+        "duration": "19.417000",
+        "size": "2303867"
+    }
+}

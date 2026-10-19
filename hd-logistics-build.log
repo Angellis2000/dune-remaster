@@ -1,0 +1,73 @@
+
+> dune-remaster-web@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 149 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/assets/destruction-ids-DAVOKVc6.json                          0.13 kB │ gzip:   0.09 kB
+dist/index.html                                                    0.63 kB │ gzip:   0.37 kB
+dist/assets/effects-meta-CshI5sqf.json                            15.69 kB │ gzip:   0.95 kB
+dist/assets/worklet-BIHCSrdc.js                                   22.37 kB
+dist/assets/concrete-BNjOsJWu.png                                 38.78 kB
+dist/assets/sega-C8EyNO6T.png                                    172.99 kB
+dist/assets/radar-dish-BSG8m6_c.png                              374.69 kB
+dist/assets/publishers-BZuI76po.png                              863.14 kB
+dist/assets/laser-turret-UAVRCUaO.png                            882.00 kB
+dist/assets/arrakis-wide-DZ2o8Rkw.png                            957.38 kB
+dist/assets/effects-Dkh370h4.png                                 990.46 kB
+dist/assets/infantry-CCvqwdCy.png                              1,009.92 kB
+dist/assets/mounts-BO5hLMGw.png                                1,164.40 kB
+dist/assets/house-crests-modern-yf2Y--1b.png                   1,215.22 kB
+dist/assets/intro-ships-CsTL7IrP.png                           1,305.76 kB
+dist/assets/operations-console-hd-2hO22naZ.png                 1,425.25 kB
+dist/assets/destruction-decals-CoYbyG_M.png                    1,605.64 kB
+dist/assets/bloom-transparent-C9Hxn2dV.png                     1,657.99 kB
+dist/assets/bloom-alt-transparent-ChYqL0MF.png                 1,670.20 kB
+dist/assets/turret-directions-transparent-BTyDqBmK.png         1,672.75 kB
+dist/assets/particles-Bj3631Ol.png                             1,687.89 kB
+dist/assets/bodies-B4VArCcp.png                                1,703.62 kB
+dist/assets/radar-base-6rVg4BfQ.png                            1,709.17 kB
+dist/assets/password-wide-aHzgJGo8.png                         1,710.40 kB
+dist/assets/windtrap-C3OfCgrX.png                              1,813.26 kB
+dist/assets/mentat-ordos-hd-BcW7oPCf.png                       1,883.22 kB
+dist/assets/drone-BaAMUpYs.png                                 1,945.75 kB
+dist/assets/vehicle-factory-transparent-CwmJ2fup.png           1,972.42 kB
+dist/assets/spice-silo-transparent-zS8FE9qs.png                1,990.41 kB
+dist/assets/rocket-turret-directions-transparent-Ccpuu-xQ.png  1,992.81 kB
+dist/assets/crater-hd-D7Sv_YEZ.png                             1,995.25 kB
+dist/assets/production-console-hd-BezG6xYh.png                 2,023.11 kB
+dist/assets/laser-hull-BI6x3ZpI.png                            2,047.83 kB
+dist/assets/mentat-atreides-hd-BudWRZAO.png                    2,066.72 kB
+dist/assets/refinery-transparent-CCTSym8F.png                  2,112.25 kB
+dist/assets/repair-facility-DJeol2RO.png                       2,152.04 kB
+dist/assets/mentat-harkonnen-hd-Cibudlut.png                   2,235.26 kB
+dist/assets/starport-BDsIGHzJ.png                              2,263.85 kB
+dist/assets/settings-wide-DT1OBpBz.png                         2,300.23 kB
+dist/assets/hightech-factory-CsiNbuiN.png                      2,322.46 kB
+dist/assets/drone-pad-REKdlJfz.png                             2,450.27 kB
+dist/assets/palace-CGf6QJAg.png                                2,516.28 kB
+dist/assets/building-portraits-d-CSk3IGUt.png                  2,516.90 kB
+dist/assets/barracks-BBmZaAOK.png                              2,603.97 kB
+dist/assets/building-portraits-b-4Sus2IGQ.png                  2,644.98 kB
+dist/assets/construction-site-hd-C72BlBvl.png                  2,656.58 kB
+dist/assets/building-portraits-c-Ddu5KjJg.png                  2,714.06 kB
+dist/assets/construction-yard-B5uXQCzU.png                     2,768.80 kB
+dist/assets/defeat-hd-CyiSmLSB.png                             2,780.09 kB
+dist/assets/building-icons-b-BBrJqFnu.png                      2,782.92 kB
+dist/assets/victory-hd-BOxaXHfY.png                            2,828.24 kB
+dist/assets/building-icons-a-DY0VvXNA.png                      2,947.60 kB
+dist/assets/building-portraits-a-DStIbwvw.png                  3,044.99 kB
+dist/assets/sandworm-hd-DPgNS2y0.png                           3,304.58 kB
+dist/assets/strategic-relief-hd-BR1ALAhi.png                   3,588.24 kB
+dist/assets/materials-DVKYXFTJ.png                             4,415.67 kB
+dist/assets/ground-detail-CCQp3V1H.png                         9,800.15 kB
+dist/assets/index-DDhICHV8.js                                    517.59 kB │ gzip: 163.70 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 1.17s

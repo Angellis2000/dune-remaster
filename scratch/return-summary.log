@@ -1,0 +1,226 @@
+[
+  {
+    "blocked": false,
+    "withPlane": true,
+    "unloaded": true,
+    "carried": true,
+    "samples": [
+      {
+        "i": 0,
+        "amount": 100,
+        "position": 1624,
+        "action": 6,
+        "target": 0,
+        "link": 0,
+        "pc": 933,
+        "delay": 0,
+        "refinery": {
+          "state": 0,
+          "link": 255,
+          "v4": 0
+        },
+        "plane": {
+          "pc": 1977,
+          "delay": 0,
+          "orientation": {
+            "speed": 0,
+            "target": 0,
+            "current": 0
+          },
+          "destination": {
+            "x": 0,
+            "y": 0
+          },
+          "pos": 1616,
+          "target": 0,
+          "link": 255,
+          "used": true
+        }
+      },
+      {
+        "i": 4200,
+        "amount": 3,
+        "position": 1624,
+        "action": 6,
+        "target": 0,
+        "link": 0,
+        "pc": -1,
+        "delay": 5,
+        "refinery": {
+          "state": 2,
+          "link": 43,
+          "v4": 0
+        },
+        "plane": {
+          "pc": -1,
+          "delay": 4,
+          "orientation": {
+            "speed": 0,
+            "target": 0,
+            "current": 0
+          },
+          "destination": {
+            "x": 4224,
+            "y": 6528
+          },
+          "pos": 18,
+          "target": 0,
+          "link": 255,
+          "used": false
+        }
+      }
+    ]
+  },
+  {
+    "blocked": true,
+    "withPlane": true,
+    "unloaded": true,
+    "carried": true,
+    "samples": [
+      {
+        "i": 0,
+        "amount": 100,
+        "position": 1624,
+        "action": 6,
+        "target": 0,
+        "link": 0,
+        "pc": 933,
+        "delay": 0,
+        "refinery": {
+          "state": 0,
+          "link": 255,
+          "v4": 0
+        },
+        "plane": {
+          "pc": 1977,
+          "delay": 0,
+          "orientation": {
+            "speed": 0,
+            "target": 0,
+            "current": 0
+          },
+          "destination": {
+            "x": 0,
+            "y": 0
+          },
+          "pos": 1616,
+          "target": 0,
+          "link": 255,
+          "used": true
+        }
+      },
+      {
+        "i": 4200,
+        "amount": 3,
+        "position": 1624,
+        "action": 6,
+        "target": 0,
+        "link": 0,
+        "pc": -1,
+        "delay": 5,
+        "refinery": {
+          "state": 2,
+          "link": 43,
+          "v4": 0
+        },
+        "plane": {
+          "pc": -1,
+          "delay": 12,
+          "orientation": {
+            "speed": 0,
+            "target": 48,
+            "current": 48
+          },
+          "destination": {
+            "x": 4224,
+            "y": 6528
+          },
+          "pos": 703,
+          "target": 0,
+          "link": 255,
+          "used": false
+        }
+      }
+    ]
+  },
+  {
+    "blocked": false,
+    "withPlane": false,
+    "unloaded": true,
+    "carried": false,
+    "samples": [
+      {
+        "i": 0,
+        "amount": 100,
+        "position": 1624,
+        "action": 6,
+        "target": 0,
+        "link": 0,
+        "pc": 933,
+        "delay": 0,
+        "refinery": {
+          "state": 0,
+          "link": 255,
+          "v4": 0
+        },
+        "plane": null
+      },
+      {
+        "i": 4200,
+        "amount": 1,
+        "position": 1366,
+        "action": 1,
+        "target": 32769,
+        "link": 0,
+        "pc": -1,
+        "delay": 2,
+        "refinery": {
+          "state": 2,
+          "link": 43,
+          "v4": 0
+        },
+        "plane": null
+      }
+    ]
+  },
+  {
+    "blocked": true,
+    "withPlane": false,
+    "unloaded": true,
+    "carried": true,
+    "samples": [
+      {
+        "i": 0,
+        "amount": 100,
+        "position": 1624,
+        "action": 6,
+        "target": 0,
+        "link": 0,
+        "pc": 933,
+        "delay": 0,
+        "refinery": {
+          "state": 0,
+          "link": 255,
+          "v4": 0
+        },
+        "plane": null
+      },
+      {
+        "i": 4200,
+        "amount": 10,
+        "position": 1624,
+        "action": 6,
+        "target": 0,
+        "link": 0,
+        "pc": -1,
+        "delay": 5,
+        "refinery": {
+          "state": 2,
+          "link": 43,
+          "v4": 0
+        },
+        "plane": null
+      }
+    ]
+  }
+]

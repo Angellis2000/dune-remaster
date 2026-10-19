@@ -1,0 +1,18 @@
+{
+  "tool": "built-in image_gen",
+  "crests": {
+    "prompt": "Use case: style-transfer. Asset type: game faction heraldry sprite sheet for an improved Dune RTS. Input image 1 is the edit target, preserve its exact 1536x1024 layout and locations: three rectangular house crests centered at approximately (345,450), (763,450), (1183,450), with blank separate nameplates directly below, on a pure black background. Modernize all three crests into beautifully crafted, restrained cinematic science-fiction heraldry matching a dark industrial Dune command console. LEFT: Atreides blue falcon/eagle head and laurel; MIDDLE: Ordos green serpent; RIGHT: Harkonnen imposing ram head with red accents. Preserve these exact recognizable animals and faction order, blue/green/red identity, front-on view, equal scale and all source rectangle boundaries. Replace ornate baroque gold decoration with precise dark gunmetal frames, brushed titanium, thin warm brass bevels, subtle blue/green/red luminous accents, realistic metal relief and sculpted detailed emblems. Strong clean readable silhouettes at small icon size. No excessive ornamental curls, no neon cyberpunk, no cartoon or pixel art. Leave the three original nameplate areas blank, made of dark metal with narrow brass edge. All outside regions remain pure black; do not move or resize any crest or plate and do not add text or lettering.",
+    "source": "web/src/gfx/assets/frontend/house-crests.png",
+    "output": "web/src/gfx/assets/frontend/house-crests-modern.png"
+  },
+  "turrets": [
+    {
+      "name": "turret",
+      "prompt": "Use case: background-extraction. Asset type: RTS game turret sprite atlas, exact 4 columns by 2 rows. Edit target: the referenced image. Remove ONLY the olive green flat background around the eight turrets, replace it with genuine transparent alpha. Preserve the eight turrets, metal, olive armor, barrels, missile pods, shapes, scale, grid, spacing and exact orientation and placement without any redesign or cropping. Preserve contact shadows as translucent black alpha, no opaque green surrounding ground. Keep complete barrels and all eight cells. Do not add text, background or new objects."
+    },
+    {
+      "name": "rocket-turret",
+      "prompt": "Use case: background-extraction. Asset type: RTS game turret sprite atlas, exact 4 columns by 2 rows. Edit target: the referenced image. Remove ONLY the olive green flat background around the eight turrets, replace it with genuine transparent alpha. Preserve the eight turrets, metal, olive armor, barrels, missile pods, shapes, scale, grid, spacing and exact orientation and placement without any redesign or cropping. Preserve contact shadows as translucent black alpha, no opaque green surrounding ground. Keep complete barrels and all eight cells. Do not add text, background or new objects."
+    }
+  ]
+}

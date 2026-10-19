@@ -1,0 +1,29 @@
+{
+  "tool": "built-in image_gen",
+  "assets": [
+    {
+      "name": "refinery-pad-edit",
+      "asset": "web/src/gfx/assets/refinery-transparent.png",
+      "source": "C:\\Users\\Admin\\.codex\\generated_images\\01a14eb3-be5c-7531-a765-77307948a05a\\exec-eb118fe7-caaf-4979-aefb-9fa3c798469a.png",
+      "prompt": "Edit target is this existing transparent RTS refinery sprite, 1536x1024. Precise object edit only. Preserve exact camera, canvas registration, machinery, all three left fans and pipes, and the right-hand metal unloading platform. On that right metal unloading platform remove ONLY (1) the small black triangular vent at its upper left and (2) the single extra round vent at the far upper right. Fill those two removed vent areas with matching solid brushed silver metal platform, no holes. The ten other round vents must remain in TWO straight columns and FIVE rows, exactly at existing positions. Remove any wide glow or ambient halo surrounding the building; keep only a tight subtle translucent neutral contact shadow. All non-building background and gaps between machinery must be genuine alpha transparency. No green backdrop, no ground, no new lights, no text, no redesign. Keep original image aspect ratio and exact building size/position."
+    },
+    {
+      "name": "factory-empty-edit",
+      "asset": "web/src/gfx/assets/vehicle-factory-transparent.png",
+      "source": "C:\\Users\\Admin\\.codex\\generated_images\\01a14eb3-be5c-7531-a765-77307948a05a\\exec-6dc27d76-b6d7-470b-8194-653574dedad0.png",
+      "prompt": "Precise edit of existing RTS vehicle factory sprite. Preserve every factory wall, fan, pipe, panel, vent, yellow trim, camera angle, canvas registration and building size. REMOVE ONLY the TWO small yellow four-wheeled vehicles painted on the lower-right dark blue rectangular assembly platform. Reconstruct the dark blue brushed metal floor under them seamlessly; this entire lower-right platform must be EMPTY, ready for animated game units to be drawn on it. Do not add tools or vehicles. Also eliminate any wide gray glow/halo outside the building, keeping only a tight natural neutral contact shadow. All exterior ground and gaps between machinery remain genuinely transparent, no green background. Keep the exact original 1536x1024 composition and metal foundation outline. Output transparent PNG."
+    },
+    {
+      "name": "radar-base",
+      "asset": "web/src/gfx/assets/radar-base.png",
+      "source": "C:\\Users\\Admin\\.codex\\generated_images\\01a14eb3-be5c-7531-a765-77307948a05a\\exec-1437691a-1795-4a7c-9f84-5e7dd38dfba1.png",
+      "prompt": "Precise production sprite layer edit. Original attached RTS radar outpost sprite is the ONLY reference. Keep canvas 1254x1254, exact composition and all pixels of the large silver building at right, ALL pipes, conduits, olive equipment boxes, and the dark octagonal bearing base below the satellite dish at upper left. REMOVE the entire tilted satellite dish assembly at upper left: the silver bowl, black mesh, central feed, silver rods and the YELLOW triangular moving bracket. Reconstruct ONLY the stationary dark octagonal pedestal under it with a clean circular dark steel bearing cap centered near original dish center x300,y340. The area above and around the bearing not occupied by stationary structure is transparent. No dish may remain painted on this base layer, because a separate rotating layer will be composited there. Keep genuine alpha everywhere outside machinery. Do not move, resize, redesign other building parts. No wide halo, no backdrop, no text."
+    },
+    {
+      "name": "radar-dish",
+      "asset": "web/src/gfx/assets/radar-dish.png",
+      "source": "C:\\Users\\Admin\\.codex\\generated_images\\01a14eb3-be5c-7531-a765-77307948a05a\\exec-2965aaab-2256-4f44-8f13-88fb6c14d7f8.png",
+      "prompt": "Extract a separate animation layer from this precise RTS radar sprite. Output 1254x1254 PNG with genuine alpha transparency. KEEP ONLY the tilted satellite receiving dish assembly at upper left, including silver rim/bowl, black mesh, central feed cone, silver feed rods and its yellow triangular mounting bracket. Keep it at EXACT source pixel position and size (dish occupies approximately x140..485,y145..500), same fixed camera, crisp matching materials. Remove the large silver building at right, every pipe and equipment box, and the dark stationary octagonal base/pedestal below the dish. Entire rest of the large canvas must be transparent; do not center or enlarge the cutout. No extra dish, no background, no shadow halo. It will be rotated as a layer above its original stationary pedestal."
+    }
+  ]
+}

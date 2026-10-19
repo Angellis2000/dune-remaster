@@ -1,0 +1,1 @@
+PASS: actual infantry damage triggers player harvester crush, tracked collision kills attacker and spice accumulation resumes; armor/allies ignored, manual orders win, vanished targets and timeout resume harvesting.
