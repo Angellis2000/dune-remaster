@@ -228,6 +228,9 @@ export class NetSession {
         if (!this.start) return;
         this.turns.set(msg.n, msg.c);
         if (msg.n > this.lastTurn) this.lastTurn = msg.n;
+        // requestAnimationFrame pauses in hidden tabs; incoming turns keep the
+        // simulation moving without relying on a throttled background timer.
+        if (typeof document !== "undefined" && document.hidden) this.advance(this.start.turnMs);
         return;
       case "desync":
         return this.onDesync(msg.turn);
