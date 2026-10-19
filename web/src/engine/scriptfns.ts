@@ -294,7 +294,7 @@ const unitPickup: ScriptFunction = (script) => {
       objectScriptVariable4Clear(u.o);
       u.targetMove = 0;
       const u2 = G.units[stored ? s.readyUnits!.shift()! : s.o.linkedID];
-      u.o.linkedID = u2.o.index & 0xff;
+      u.o.linkedID = u2.o.index;
       if (!stored) s.o.linkedID = u2.o.linkedID;
       u2.o.linkedID = 0xff;
       if (!stored && s.o.linkedID === 0xff) structureSetState(s, STATE.IDLE);
@@ -330,7 +330,7 @@ const unitPickup: ScriptFunction = (script) => {
       }
       if (!s) return 0;
       if (u2 === G.unitSelected) unitSelect(null);
-      u.o.linkedID = u2.o.index & 0xff;
+      u.o.linkedID = u2.o.index;
       u.o.flags.inTransport = true;
       unitUpdateMap(0, u2);
       unitHide(u2);

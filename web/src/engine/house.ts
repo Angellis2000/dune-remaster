@@ -86,7 +86,7 @@ export function gameLoopHouse(): void {
         }
         if (nu) {
           u.o.linkedID = nu.o.linkedID;
-          nu.o.linkedID = u.o.index & 0xff;
+          nu.o.linkedID = u.o.index;
           nu.o.flags.inTransport = true;
           r.unitID = INDEX_INVALID;
           deployed = true;
@@ -114,9 +114,9 @@ export function gameLoopHouse(): void {
     const h = houseFind(find);
     if (!h) break;
     if (tickHouse) {
-      if (!isHuman(h.index)) {
+      if (!G.net && !isHuman(h.index)) {
         if (h.creditsStorage < h.credits) h.credits = h.creditsStorage;
-      } else {
+      } else if (!G.net) {
         const maxCredits = Math.max(h.creditsStorage, creditsNoSilo(h));
         if (h.credits > maxCredits) {
           h.credits = maxCredits;
@@ -125,7 +125,7 @@ export function gameLoopHouse(): void {
       }
       if (isHuman(h.index)) {
         if (h.creditsStorage > creditsNoSilo(h)) setCreditsNoSilo(h, 0);
-        if (isLocal(h.index) && creditsNoSilo(h) === 0 && G.campaignID > 1 && h.credits !== 0) {
+        if (!G.net && isLocal(h.index) && creditsNoSilo(h) === 0 && G.campaignID > 1 && h.credits !== 0) {
           if (h.creditsStorage !== 0 && idiv(h.credits * 256, h.creditsStorage) > 200) G.onMessage(msg.storageLow, 0);
         }
         if (isLocal(h.index) && h.credits < 100 && creditsNoSilo(h) !== 0) G.onMessage(msg.creditsLow, 0);
@@ -151,7 +151,7 @@ export function gameLoopHouse(): void {
           }
         }
         if (u) {
-          u.o.linkedID = h.starportLinkedID & 0xff;
+          u.o.linkedID = h.starportLinkedID;
           h.starportLinkedID = INDEX_INVALID;
           u.o.flags.inTransport = true;
           // MD $0236a6: прибытие фрегата космопорта игрока — голос 48 ($30, "Frigate has arrived", seq 66)

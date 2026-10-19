@@ -1,4 +1,4 @@
-import consoleUrl from '../gfx/assets/frontend/operations-console-hd.png?url';
+import consoleUrl from '../gfx/assets/frontend/network-arrakis-observatory-v1.png?url';
 import crestsUrl from '../gfx/assets/frontend/house-crests-modern.png?url';
 import type {Button} from '../input/pad.ts';
 let nextChoicePopupId=0;
@@ -65,6 +65,7 @@ export class NetworkMenu {
     leaveRoom?():void;setOwn?(c:{house?:string;team?:number}):void;setConfig?(c:{map:number;teamSize:number;credits:number}):void;startMatch?():void}){
     this.root.hidden=true;this.root.setAttribute('role','dialog');this.root.setAttribute('aria-modal','true');this.root.setAttribute('aria-label','Сетевая игра');
     this.dialog.style.setProperty('--network-console',`url("${consoleUrl}")`);
+    this.root.style.setProperty('--network-backdrop',`url("${consoleUrl}")`);
     this.root.style.setProperty('--network-crests',`url("${crestsUrl}")`);
     const header=node('header','network-heading');header.append(node('div','network-eyebrow','ARRAKIS · КОМАНДНЫЙ ЦЕНТР'),node('h1','','СЕТЕВАЯ ИГРА'),node('span','network-capacity','4 × 4 / 8 МЕСТ'));
     const back=node('button','network-back','Назад');back.type='button';back.addEventListener('click',()=>this.back());header.append(back);
@@ -114,6 +115,16 @@ export class NetworkMenu {
       teams.append(section);
     }
     const roster=node('div','network-roster'),matchRules=node('div','network-match-rules');
+    const sections=node('nav','network-compact-nav');sections.setAttribute('aria-label','Раздел настроек');
+    this.root.dataset.section='map';
+    for(const [id,label]of [['map','Карта'],['players','Игроки'],['rules','Правила']]){
+      const button=node('button','network-section-tab',label);button.type='button';button.dataset.section=id;button.setAttribute('aria-pressed',String(id==='map'));
+      button.addEventListener('click',()=>{
+        this.root.dataset.section=id;
+        sections.querySelectorAll<HTMLButtonElement>('button').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));
+      });sections.append(button);
+    }
+    this.lobby.append(sections);
     matchRules.append(random,rules,sidebar.querySelector('.network-friendly-fire')!,node('p','network-friendly-fire','Месторождения спайса не истощаются'));
     roster.append(teams,matchRules);layout.append(sidebar,roster);
     const footer=node('footer','network-footer');
@@ -263,7 +274,7 @@ export class NetworkMenu {
     for(const room of this.rooms){
       const button=node('button','network-room');button.type='button';button.dataset.roomId=room.id;button.setAttribute('aria-pressed',String(this.selectedRoom===room.id));
       const map=this.mapList.find(item=>item.id===room.map);
-      button.append(node('strong','',room.name),node('span','',`${map?.name??'Арракис'} · ${room.capacity/2} × ${room.capacity/2}`),node('span','',`${room.players} / ${room.capacity}`),node('span','',room.state==='waiting'?'Ожидание':room.state==='playing'?'Идёт игра':'Завершена'));
+      button.append(node('strong','',room.name),node('span','network-room-map',`${map?.name??'Арракис'} · ${room.capacity/2} × ${room.capacity/2}`),node('span','network-room-population',`${room.players} / ${room.capacity}`),node('span',`network-room-state state-${room.state}`,room.state==='waiting'?'Ожидание':room.state==='playing'?'Идёт игра':'Завершена'));
       button.addEventListener('click',()=>{this.selectedRoom=room.id;this.roomList.querySelectorAll<HTMLElement>('button').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));this.updateRoomActions();});
       button.addEventListener('dblclick',()=>{this.selectedRoom=room.id;this.joinSelected();});this.roomList.append(button);
     }this.updateRoomActions();
@@ -298,7 +309,7 @@ export class NetworkMenu {
   }
   private chooseOption(index:number){const select=this.choiceSelect;if(!select||select.options[index]?.disabled)return;select.selectedIndex=index;this.closeChoice();select.dispatchEvent(new Event('change',{bubbles:true}));}
   private closeChoice(focus=true){const select=this.choiceSelect;this.choiceSelect=null;this.choicePopup.hidden=true;if(select){select.setAttribute('aria-expanded','false');select.removeAttribute('aria-activedescendant');if(focus)select.focus();}}
-  private focusable(){const scope=this.choiceSelect?this.choicePopup:!this.passwordDialog.hidden?this.passwordDialog:this.viewer.hidden?this.root:this.viewer;return [...scope.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),[role="button"]')].filter(element=>!element.closest('[hidden]'));}
+  private focusable(){const scope=this.choiceSelect?this.choicePopup:!this.passwordDialog.hidden?this.passwordDialog:this.viewer.hidden?this.root:this.viewer;return [...scope.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),[role="button"]')].filter(element=>!element.closest('[hidden]')&&element.getClientRects().length>0);}
   handlePad(button:Button){
     if(!this.isOpen)return false;
     if(this.choiceSelect){
@@ -311,7 +322,10 @@ export class NetworkMenu {
     const focused=document.activeElement as HTMLInputElement|HTMLSelectElement|HTMLButtonElement;
     if(button==='left'||button==='right'){
       const direction=button==='left'?-1:1;
-      if(focused?.tagName==='SELECT'){
+      if(focused?.classList.contains('network-section-tab')){
+        const tabs=[...focused.parentElement!.querySelectorAll<HTMLButtonElement>('button')],index=tabs.indexOf(focused as HTMLButtonElement);
+        const next=tabs[(index+direction+tabs.length)%tabs.length];next.click();next.focus();
+      }else if(focused?.tagName==='SELECT'){
         const select=focused as HTMLSelectElement;select.selectedIndex=(select.selectedIndex+direction+select.options.length)%select.options.length;select.dispatchEvent(new Event('change',{bubbles:true}));
       }else if(focused?.tagName==='INPUT'&&(focused as HTMLInputElement).type==='checkbox'){
         const input=focused as HTMLInputElement;input.checked=!input.checked;input.dispatchEvent(new Event('change',{bubbles:true}));

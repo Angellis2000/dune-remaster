@@ -275,12 +275,22 @@ export class CreditsTicker {
   /** Режим 0 — раз в кадр. */
   tick(credits: number): void {
     // $011F76: пока досчитанное меньше 50 — надпись «НЕТ ДЕНЕГ»
-    if (this.reached >>> 0 < 50) this.noMoney.update(this.reached === credits);
+    if ((G.net ? this.reached : this.reached >>> 0) < 50) this.noMoney.update(this.reached === credits);
     if (this.reached === credits || this.old === credits) return;
     this.step(credits);
   }
 
   private step(credits: number): void {
+    if (G.net) {
+      // Network balances exceed the ROM's signed 16-bit counter. Keep the
+      // original campaign ticker and use bounded easing for larger balances.
+      const diff=credits-this.old;
+      this.old+=Math.sign(diff)*Math.min(Math.abs(diff),Math.max(1,Math.ceil(Math.abs(diff)/5)));
+      this.reached=this.shown=this.old;
+      this.offset=0;
+      if(diff!==0&&(this.soundTicks++&3)===0)this.onSound(diff>0?0x34:0x35);
+      return;
+    }
     const diff = ((credits - this.old) << 16) >> 16;
     if (diff === 0) this.offset = 0;
     else {
@@ -355,7 +365,7 @@ export class Hud {
     const g=this.g;g.clearRect(0,0,504,512);g.save();g.scale(4,4);g.imageSmoothingEnabled=true;
     g.fillStyle='#101820ed';g.fillRect(0,0,126,46);g.strokeStyle='#8b7650';g.lineWidth=.5;g.strokeRect(.5,.5,125,45);
     g.textAlign='left';g.font='700 7px "Segoe UI", sans-serif';g.fillStyle='#c3b89e';g.fillText('СПАЙС',7,11);
-    g.textAlign='right';g.font='700 16px "IBM Plex Mono", monospace';g.fillStyle='#ffe4aa';
+    g.textAlign='right';g.font=`700 ${G.net?Math.min(16,110/(text.trim().length*.62)):16}px "IBM Plex Mono", monospace`;g.fillStyle='#ffe4aa';
     g.shadowColor='#000';g.shadowBlur=2;g.fillText(text.trim(),119,23);g.shadowBlur=0;
     g.strokeStyle='#514733';g.lineWidth=.5;g.beginPath();g.moveTo(6,26);g.lineTo(120,26);g.stroke();
     g.textAlign='left';g.font='600 5.5px "IBM Plex Mono", monospace';g.fillStyle='#c3b89e';

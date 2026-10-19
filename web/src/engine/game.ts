@@ -26,6 +26,8 @@ import {
 } from "./structure.ts";
 import { actionInfo, applyRomTables, landscapeInfo, structureInfo, unitInfo } from "./tables.ts";
 import { gameLoopTeam, teamCreate, teamResetTimers } from "./team.ts";
+import {configureNetworkPools} from './core.ts';
+import {NETWORK_UNIT_LIMIT} from './network-rules.ts';
 import {
   gameLoopUnit, unitCreate, unitCreateWrapper, unitDeviationDecrease, unitFindTargetAround, unitGetByPackedTile, unitGetHouseID,
   unitHouseUnitCountAdd, unitLaunchHouseMissile, unitRemoveFog, unitResetTimers, unitSelect, unitSetAction, unitSetDestination,
@@ -164,6 +166,7 @@ export class Game {
   /** Game_LoadScenario + Scenario_Load + Game_Prepare */
   load(house: "A" | "O" | "H", mission: number): Scenario {
     G.net = null;
+    configureNetworkPools(false);
     G.infiniteSpice=false;
     G.droneGrenades.length=0;
     G.difficulty = Math.max(0, Math.min(2, Math.round(this.difficulty)));
@@ -709,8 +712,9 @@ export class Game {
     const index=cy.readyBuildings?.findIndex(item=>type===undefined||item.type===type)??-1;
     if(index>=0){
       const item=cy.readyBuildings![index];
+      cy.readyBuildings!.splice(index,1);
       const built=structureCreate(INDEX_INVALID,item.type,cy.o.houseID,INDEX_INVALID);
-      if(!built)return false;
+      if(!built){cy.readyBuildings!.splice(index,0,item);return false;}
       built.spent=item.cost;
       // Slabs and walls share singleton pool entries in the original ROM. A
       // separate ghost lets their next order build while this one is on cursor.
@@ -718,7 +722,6 @@ export class Game {
       G.structureActive=singleton?structuredClone(built):built;
       if(singleton)structureFree(built);
       G.structureActiveType=item.type;
-      cy.readyBuildings!.splice(index,1);
       G.structureActivePosition=packTile(cy.o.position);
       G.selectionType=SELECTION.PLACE;
       return true;
@@ -871,6 +874,7 @@ export class Game {
     const team = new Array<number>(8).fill(-1);
     for (const p of setup.players) team[p.house] = p.team;
     G.net = { humans, team };
+    configureNetworkPools(true);
     G.playerHouseID = setup.local >= 0 ? setup.local : setup.players[0].house;
     G.infiniteSpice = true;
     G.droneGrenades.length = 0;
@@ -926,7 +930,7 @@ export class Game {
       t.overlayTileID = 0;
     }
 
-    const unitMax = Math.max(8, Math.floor(70 / setup.players.length));
+    const unitMax = NETWORK_UNIT_LIMIT;
     for (const p of setup.players) {
       const h = houseAllocate(p.house);
       if (!h) continue;

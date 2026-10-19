@@ -5,6 +5,7 @@
  */
 
 import { layoutTileDiff, structureInfo, unitInfo } from "./tables.ts";
+import {NETWORK_ARMY_POOL_END,NETWORK_UNIT_LIMIT,NETWORK_UNIT_POOL_SIZE,NETWORK_STRUCTURE_POOL_SIZE} from './network-rules.ts';
 
 // ------------------------------------------------------------------ целые как в C
 export const u8 = (v: number): number => v & 0xff;
@@ -26,12 +27,12 @@ export const enum IT {
   STRUCTURE = 3,
 }
 
-export const UNIT_INDEX_MAX = 102;
-export const STRUCTURE_INDEX_MAX_SOFT = 79;
-export const STRUCTURE_INDEX_MAX_HARD = 82;
-export const STRUCTURE_INDEX_WALL = 79;
-export const STRUCTURE_INDEX_SLAB_2x2 = 80;
-export const STRUCTURE_INDEX_SLAB_1x1 = 81;
+export let UNIT_INDEX_MAX = 102;
+export let STRUCTURE_INDEX_MAX_SOFT = 79;
+export let STRUCTURE_INDEX_MAX_HARD = 82;
+export let STRUCTURE_INDEX_WALL = 79;
+export let STRUCTURE_INDEX_SLAB_2x2 = 80;
+export let STRUCTURE_INDEX_SLAB_1x1 = 81;
 export const TEAM_INDEX_MAX = 16;
 export const HOUSE_MAX = 6;
 export const INDEX_INVALID = 0xffff;
@@ -790,7 +791,7 @@ export function structureAllocate(index: number, type: number): Structure | null
   else if (type === STRUCTURE.WALL) index = STRUCTURE_INDEX_WALL;
   else {
     if (index === INDEX_INVALID) {
-      for (index = 0; index < STRUCTURE_INDEX_MAX_SOFT; index++) if (!G.structures[index].o.flags.used) break;
+      for (index = 0; index < STRUCTURE_INDEX_MAX_SOFT; index++) if ((!G.net||index!==0xff)&&!G.structures[index].o.flags.used) break;
       if (index === STRUCTURE_INDEX_MAX_SOFT) return null;
     } else if (G.structures[index].o.flags.used) return null;
   }
@@ -821,17 +822,33 @@ export function structureFree(s: Structure): void {
 }
 
 /** Unit_Allocate (pool/unit.c) */
+export function configureNetworkPools(network:boolean):void{
+  UNIT_INDEX_MAX=network?NETWORK_UNIT_POOL_SIZE:102;
+  STRUCTURE_INDEX_MAX_SOFT=network?NETWORK_STRUCTURE_POOL_SIZE:79;
+  STRUCTURE_INDEX_WALL=STRUCTURE_INDEX_MAX_SOFT;
+  STRUCTURE_INDEX_SLAB_2x2=STRUCTURE_INDEX_MAX_SOFT+1;
+  STRUCTURE_INDEX_SLAB_1x1=STRUCTURE_INDEX_MAX_SOFT+2;
+  STRUCTURE_INDEX_MAX_HARD=STRUCTURE_INDEX_MAX_SOFT+3;
+  if(G.units.length!==UNIT_INDEX_MAX)G.units=Array.from({length:UNIT_INDEX_MAX},newUnit);
+  if(G.structures.length!==STRUCTURE_INDEX_MAX_HARD)G.structures=Array.from({length:STRUCTURE_INDEX_MAX_HARD},newStructure);
+}
+export const isNetworkArmyType=(type:number):boolean=>type<=UNIT.MCV||type===UNIT.LASER_TANK||type===UNIT.COMBAT_DRONE;
+export const networkUnitCount=(house:number):number=>G.unitFind.filter(u=>u.o.flags.used&&u.o.houseID===house&&isNetworkArmyType(u.o.type)&&!(u.o.type===UNIT.CARRYALL&&u.o.flags.byScenario)).length;
+
 export function unitAllocate(index: number, type: number, houseID: number): Unit | null {
   if (type === 0xff || houseID === 0xff) return null;
   const h = G.houses[houseID];
-  if (h.unitCount >= h.unitCountMax) {
+  const supportCarryall=!!G.net&&type===UNIT.CARRYALL&&G.validateStrictIfZero>0;
+  if(G.net&&isNetworkArmyType(type)&&!supportCarryall&&networkUnitCount(houseID)>=NETWORK_UNIT_LIMIT)return null;
+  if (!G.net && h.unitCount >= h.unitCountMax) {
     const mt = unitInfo[type].movementType;
     if ((mt !== MOVEMENT.WINGER && mt !== MOVEMENT.SLITHER || type===UNIT.COMBAT_DRONE) && G.validateStrictIfZero === 0) return null;
   }
   let u: Unit;
   if (index === 0 || index === INDEX_INVALID) {
-    const { indexStart, indexEnd } = unitInfo[type];
-    for (index = indexStart; index <= indexEnd; index++) if (!G.units[index].o.flags.used) break;
+    const army=isNetworkArmyType(type)&&!supportCarryall;
+    const {indexStart,indexEnd}=G.net?{indexStart:army?0:NETWORK_ARMY_POOL_END,indexEnd:army?NETWORK_ARMY_POOL_END-1:UNIT_INDEX_MAX-1}:unitInfo[type];
+    for (index = indexStart; index <= indexEnd; index++) if ((!G.net||index!==0xff)&&!G.units[index].o.flags.used) break;
     if (index > indexEnd) return null;
     u = G.units[index];
   } else {

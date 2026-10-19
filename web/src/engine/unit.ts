@@ -1065,7 +1065,7 @@ export function unitCreateWrapper(houseID: number, typeID: number, destination: 
     return null;
   }
   carryall.o.flags.inTransport = true;
-  carryall.o.linkedID = unit.o.index & 0xff;
+  carryall.o.linkedID = unit.o.index;
   if (typeID === UNIT.HARVESTER) unit.amount = 1;
   if (destination !== 0) unitSetDestination(carryall, destination);
   return unit;
@@ -1236,7 +1236,7 @@ export function unitEnterStructure(unit: Unit | null, s: Structure | null): void
       unit.spriteOffset = 0;
     }
     unit.o.linkedID = s.o.linkedID;
-    s.o.linkedID = unit.o.index & 0xff;
+    s.o.linkedID = unit.o.index;
     return;
   }
   if (unit.o.type === UNIT.SABOTEUR) {

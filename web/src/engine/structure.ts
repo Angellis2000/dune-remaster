@@ -24,6 +24,8 @@ import {
   layoutTilesAround, structureInfo, tableMapDiff, unitInfo,
 } from "./tables.ts";
 import { unitCreate, unitGetByPackedTile, unitGetHouseID, unitLaunchHouseMissile, unitRemove, unitSetAction } from "./unit.ts";
+import {networkUnitCount} from './core.ts';
+import {NETWORK_ARMY_POOL_END,NETWORK_STRUCTURE_LIMIT,NETWORK_UNIT_LIMIT} from './network-rules.ts';
 
 const ticks = { degrade: 0, structure: 0, script: 0, palace: 0 };
 let releaseProducedUnit: (s: Structure, u: Unit) => boolean = () => false;
@@ -248,6 +250,7 @@ export function gameLoopStructure(): void {
 export function structureCreate(index: number, typeID: number, houseID: number, position: number): Structure | null {
   if (houseID >= 6) return null;
   if (typeID >= STRUCTURE.MAX) return null;
+  if(G.net&&!isSlabOrWall(typeID)&&networkStructureCount(houseID)>=NETWORK_STRUCTURE_LIMIT)return null;
   const si = structureInfo[typeID];
   const s = structureAllocate(index, typeID);
   if (!s) return null;
@@ -926,7 +929,7 @@ export function structureStarportPrepare(s: Structure): void {
         if (u) {
           loop = true;
           u.o.linkedID = linkedID;
-          linkedID = u.o.index & 0xff;
+          linkedID = u.o.index;
           availableUnits[i]++;
           unitInfo[i].o.available = availableUnits[i];
         } else if (availableUnits[i] === 0) unitInfo[i].o.available = -1;
@@ -954,7 +957,7 @@ export function structureStarportBuy(s: Structure, items: number[]): void {
     }
     G.structureIndex = s.o.index;
     if (h.starportTimeLeft === 0) h.starportTimeLeft = houseInfo[h.index].starportDeliveryTime;
-    u.o.linkedID = h.starportLinkedID & 0xff;
+    u.o.linkedID = h.starportLinkedID === INDEX_INVALID ? 0xff : h.starportLinkedID;
     h.starportLinkedID = u.o.index;
     G.starportAvailable[objectType]--;
     if (G.starportAvailable[objectType] <= 0) G.starportAvailable[objectType] = -1;
@@ -1023,7 +1026,7 @@ export function structureBuildObject(s: Structure | null, objectType: number, qu
   }
   s.o.flags.onHold = false;
   if (o) {
-    s.o.linkedID = o.index & 0xff;
+    s.o.linkedID = o.index;
     s.objectType = objectType;
     s.spent = 0;
     s.countDown = oi.buildTime << 8;
@@ -1045,6 +1048,7 @@ export function structureCanQueueUnits(s:Structure):boolean{
 export function structureEnqueueUnit(s:Structure,type:number):boolean{
   if(!s.o.flags.allocated||!structureCanQueueUnits(s)||type<0||type>=UNIT.MAX||!(structureGetBuildable(s)&(1<<type)))return false;
   const queue=s.unitQueue??=[],cost=unitInfo[type].o.buildCredits,h=G.houses[s.o.houseID];
+  if(G.net&&networkUnitCount(s.o.houseID)+G.structureFind.filter(st=>st.o.houseID===s.o.houseID).reduce((n,st)=>n+(st.unitQueue?.length??0),0)>=NETWORK_UNIT_LIMIT)return false;
   if(queue.length+(s.readyUnits?.length??0)+(s.o.linkedID!==0xff?1:0)>=20||h.credits<cost)return false;
   h.credits-=cost;queue.push({type,cost});s.unitQueue=queue;structureStartNextUnit(s);return true;
 }
@@ -1066,6 +1070,7 @@ export function structureEnqueueBuilding(s:Structure,type:number):boolean{
   const queue=s.buildingQueue??[],active=s.o.linkedID!==0xff;
   const available=structureGetBuildable(s),current=active&&s.objectType===type;
   if(!current&&(available&(1<<type))===0)return false;
+  if(G.net&&!isSlabOrWall(type)&&networkStructureCount(s.o.houseID)+G.structureFind.filter(st=>st.o.houseID===s.o.houseID).reduce((n,st)=>n+(st.buildingQueue?.filter(item=>!isSlabOrWall(item.type)).length??0),0)>=NETWORK_STRUCTURE_LIMIT)return false;
   // Дворец и космопорт можно зарезервировать только один раз на весь дом,
   // включая стройку и очереди у других строительных дворов.
   if(type===STRUCTURE.PALACE||type===STRUCTURE.STARPORT){
@@ -1247,6 +1252,16 @@ export function structureCount(houseID: number, type: number): number {
   return n;
 }
 
+export function networkStructureCount(houseID:number):number{
+  let count=0;
+  for(const s of G.structureFind){
+    if(!s.o.flags.used||s.o.houseID!==houseID)continue;
+    if(!isSlabOrWall(s.o.type))count++;
+    count+=s.readyBuildings?.filter(item=>!isSlabOrWall(item.type)).length??0;
+  }
+  return count;
+}
+
 /**
  * MD: пул построек $FFBEA2 — 70 мест на всех, плиты и стены мест не занимают (таблица $0204D4).
  * Место берётся при создании здания ($00E5F4) и возвращается при удалении ($00BA9C).
@@ -1259,16 +1274,16 @@ export function structurePoolFull(): boolean {
     const t = st.o.type;
     if (t !== STRUCTURE.SLAB_1x1 && t !== STRUCTURE.SLAB_2x2 && t !== STRUCTURE.WALL) n++;
   }
-  return n >= STRUCTURE_POOL_MD;
+  return n >= (G.net?NETWORK_STRUCTURE_LIMIT*8:STRUCTURE_POOL_MD);
 }
 
 /** MD: свободен ли номер юнита в диапазоне пула (воздух 0–10, наземные 25–101, $04337E…$043412). */
 function unitPoolHasFree(first: number, last: number): boolean {
-  for (let i = first; i <= last; i++) if (!G.units[i].o.flags.used) return true;
+  for (let i = first; i <= last; i++) if ((!G.net||i!==0xff)&&!G.units[i].o.flags.used) return true;
   return false;
 }
-export const unitAirSlotFree = () => unitPoolHasFree(0, 10);
-export const unitGroundPoolFull = () => !unitPoolHasFree(25, 101);
+export const unitAirSlotFree = () => unitPoolHasFree(0, G.net?NETWORK_ARMY_POOL_END-1:10);
+export const unitGroundPoolFull = () => !unitPoolHasFree(G.net?0:25, G.net?NETWORK_ARMY_POOL_END-1:101);
 
 /**
  * Бит 8 слова $6 здания игрока — «упёрлись в предел» ($00DC60…$00DDF2): двор — 70 построек,
@@ -1277,6 +1292,10 @@ export const unitGroundPoolFull = () => !unitPoolHasFree(25, 101);
  */
 export function structureLimitReached(s: Structure): boolean {
   const h = G.houses[s.o.houseID];
+  if(G.net){
+    if(s.o.type===STRUCTURE.CONSTRUCTION_YARD)return networkStructureCount(s.o.houseID)>=NETWORK_STRUCTURE_LIMIT||structurePoolFull();
+    if(s.o.type===STRUCTURE.PALACE||structureCanQueueUnits(s)||s.o.type===STRUCTURE.STARPORT)return networkUnitCount(s.o.houseID)>=NETWORK_UNIT_LIMIT||unitGroundPoolFull();
+  }
   switch (s.o.type) {
     case STRUCTURE.CONSTRUCTION_YARD:
       return structurePoolFull();
