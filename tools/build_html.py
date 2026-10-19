@@ -13,17 +13,17 @@ import re
 
 def bundle(destination: Path, lossless_webp: bool = False) -> None:
     root = Path(__file__).resolve().parents[1] / "web" / "dist"
-    html = (root / "index.html").read_text()
+    html = (root / "index.html").read_text(encoding="utf-8")
     tag = re.search(r'<script\b[^>]*src="([^"]+)"[^>]*></script>', html)
     if not tag:
         raise ValueError("Built entry script not found; run npm run build in web")
     entry = root / tag[1].removeprefix("./")
-    js = entry.read_text()
+    js = entry.read_text(encoding="utf-8")
 
     def inline(match: re.Match) -> str:
         name = match[1]
         asset = entry.parent / name
-        mime = {".png": "image/png", ".js": "text/javascript", ".woff2": "font/woff2"}.get(asset.suffix)
+        mime = {".png": "image/png", ".js": "text/javascript", ".json": "application/json", ".woff2": "font/woff2", ".mp4": "video/mp4"}.get(asset.suffix)
         if not mime:
             raise ValueError(f"Unsupported asset: {name}")
         data = asset.read_bytes()
@@ -50,7 +50,7 @@ def bundle(destination: Path, lossless_webp: bool = False) -> None:
     js = js.replace("</script", "<\\/script")
     html = re.sub(r'<script\b[^>]*src="[^"]+"[^>]*></script>', lambda _: '<script type="module">' + js + '</script>', html)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(html)
+    destination.write_text(html, encoding="utf-8")
     print(f"{destination}: {destination.stat().st_size:,} bytes, ROM not included")
 
 

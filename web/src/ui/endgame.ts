@@ -14,6 +14,8 @@ import { SCREEN_H, SCREEN_W } from "../gfx/screens.ts";
 import { menuText, prepareMenu } from "../gfx/menu-canvas.ts";
 import type { ScreenArt } from "../gfx/screen-art.ts";
 import type { Button } from "../input/pad.ts";
+import victoryVideoUrl from '../gfx/assets/frontend/victory-video.mp4?url';
+import defeatVideoUrl from '../gfx/assets/frontend/defeat-video.mp4?url';
 import type { VehicleArt } from "../gfx/vehicle-art.ts";
 
 export const END_ROM = {
@@ -121,6 +123,7 @@ export class EndPicture {
   private cram = new Uint16Array(64);
   private target = new Uint16Array(64);
   private pressed = false;
+  private video = document.createElement('video');
 
   constructor(private rom: DuneRom, private art?: ScreenArt) {
     this.root = document.createElement("section");
@@ -133,7 +136,12 @@ export class EndPicture {
     this.lowCanvas.height = SCREEN_H;
     this.lowCtx = this.lowCanvas.getContext("2d")!;
     this.img = this.lowCtx.createImageData(SCREEN_W, SCREEN_H);
-    this.root.append(this.canvas);
+    this.video.className = 'endpicture-video';
+    this.video.muted = true;
+    this.video.playsInline = true;
+    this.video.preload = 'metadata';
+    this.video.setAttribute('aria-hidden', 'true');
+    this.root.append(this.video, this.canvas);
     this.canvas.addEventListener("click", () => (this.pressed = true));
   }
 
@@ -142,6 +150,7 @@ export class EndPicture {
   }
 
   open(result: "won" | "lost", done: () => void): void {
+    this.close();
     const b = this.rom.bytes;
     const R = END_ROM[result];
     this.result = result;
@@ -162,6 +171,8 @@ export class EndPicture {
     this.textWait = 0;
     this.pressed = false;
     this.root.hidden = false;
+    this.video.src = result === 'won' ? victoryVideoUrl : defeatVideoUrl;
+    void this.video.play().catch(() => { /* The existing artwork remains available if playback is blocked. */ });
     cancelAnimationFrame(this.raf);
     this.last = performance.now();
     this.acc = 0;
@@ -177,6 +188,10 @@ export class EndPicture {
   close(): void {
     this.root.hidden = true;
     cancelAnimationFrame(this.raf);
+    this.video.pause();
+    this.video.removeAttribute('src');
+    this.video.load();
+    this.done = null;
   }
 
   /** Для автотестов: прогнать n кадров без своего цикла. */
@@ -215,20 +230,29 @@ export class EndPicture {
     }
     if (this.pressed) {
       this.pressed = false;
+      const done = this.done;
       this.close();
-      this.done?.();
+      done?.();
     }
   }
 
   private draw(): void {
     const key = this.result === "won" ? "victory" : "defeat";
-    if (this.art?.get(key)) {
+    const videoReady = !this.video.error && this.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+    if (videoReady || this.art?.get(key)) {
       const out = prepareMenu(this.canvas);
       out.save();
       out.globalAlpha = Math.min(1, this.frame / 7);
-      this.art.background(out, key);
+      if (videoReady) {
+        // Cover the native-resolution canvas without stretching the 16:9 clip.
+        out.save();out.setTransform(1, 0, 0, 1, 0, 0);
+        const scale = Math.max(this.canvas.width / this.video.videoWidth, this.canvas.height / this.video.videoHeight);
+        const w = this.video.videoWidth * scale, h = this.video.videoHeight * scale;
+        out.drawImage(this.video, (this.canvas.width-w)/2, (this.canvas.height-h)/2, w, h);
+        out.restore();
+      } else this.art?.background(out, key);
       // Пыль и угольки движутся независимо от картинки; она остаётся чёткой.
-      for (let i = 0; i < 32; i++) {
+      for (let i = 0; !videoReady && i < 32; i++) {
         const t = this.frame / 60;
         const x = ((i * 43.7 + t * (2 + i % 5)) % 460) - 70;
         const y = 224 - ((i * 19.1 + t * (this.result === "lost" ? 9 : 2)) % 180);
