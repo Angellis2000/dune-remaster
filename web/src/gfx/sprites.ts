@@ -9,12 +9,16 @@ import { ROM } from "../rom/dune.ts";
 import { readU16, readU32 } from "../rom/md.ts";
 import { unitBox, unitStem } from "./pack.ts";
 import type { Skins } from "./skins.ts";
+import type { MapEffects } from "./map-effects.ts";
 
 export interface SpriteImage {
   canvas: HTMLCanvasElement;
   /** смещение левого верхнего угла картинки от центра объекта */
   ox: number;
   oy: number;
+  /** HD frame resolution is independent of its original world-space size. */
+  worldWidth?: number;
+  worldHeight?: number;
 }
 
 export interface FrameRef {
@@ -52,6 +56,8 @@ export class SpriteSet {
 
   /** своя графика юнитов (если загружена) */
   skins: Skins | null = null;
+  mapEffects: MapEffects | null = null;
+  wormArt: import('./worm-art.ts').WormArt | null = null;
   private boxes = new Map<number, number>();
 
   constructor(private rom: DuneRom) {
@@ -76,6 +82,7 @@ export class SpriteSet {
 
   /** Кадры юнита по ориентации корпуса и башни 0..255 (0 — север). */
   unitFrames(type: number, orientation: number, anim = 0, turret = orientation, state: UnitDrawState = {}): FrameRef[] {
+    if(type===27)type=9;else if(type===28)type=1;
     const refs = this.unitFramesBase(type, orientation, anim, turret, state);
     // как GUI_Widget_Viewport_Draw: вторая анимация ракет, транспортник с грузом, большая пуля
     const extra = (state.flip ? 5 : 0) + (state.carrying ? 3 : 0) + (state.big ? 1 : 0);
@@ -97,6 +104,13 @@ export class SpriteSet {
     if (type === 24) {
       const d = ((orientation + 8) & 0xff) >> 4;
       return [{ frame: readU16(b, ROM.sonicFrames + d * 2), flip: 0 }];
+    }
+    if (type === 25) {
+      // Песчаный червь: в MD всегда кадр 213 (песчаный холмик/бурун).
+      // Кадров 214-217 в ROM нет (они были только в PC-версии).
+      const d = ((orientation + 16) & 0xff) >> 5;
+      const flip = readU16(b, ROM.dir8 + d * 4 + 2) ^ ((anim & 1) ? 1 : 0);
+      return [{ frame: 213, flip }];
     }
     if (mode === 5) {
       // орнитоптер: по 3 кадра крыльев на направление
@@ -129,6 +143,8 @@ export class SpriteSet {
 
   /** Кадр эффекта (взрыв, дым, пыль) по номеру спрайта движка; своя палитра кадра, без цвета дома. */
   effect(spriteID: number): SpriteImage | null {
+    const hd = this.mapEffects?.frame(`frame:${spriteID}`);
+    if (hd) return hd;
     let id = spriteID;
     if (!this.hasFrame(id)) id = EFFECT_FALLBACK[id] ?? -1;
     if (id < 0 || !this.hasFrame(id)) return null;
@@ -145,6 +161,8 @@ export class SpriteSet {
    * смещение от харвестера заложено в самом описании.
    */
   harvestDust(dir: number, frame: number): SpriteImage {
+    const hd = this.mapEffects?.frame(`dust:${dir & 7}:${frame}`);
+    if (hd) return hd;
     return this.statusDef(readU32(this.rom.bytes, 0x0641ee + frame * 32 + (dir & 7) * 4));
   }
 

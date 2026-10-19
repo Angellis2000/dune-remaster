@@ -11,8 +11,9 @@ import type { HouseCode } from "./settings.ts";
 import { Intro } from "./intro.ts";
 import { menuArrow, menuPoint, menuText, prepareMenu } from "../gfx/menu-canvas.ts";
 
-const MENU_ITEMS = 3;
+const MENU_ITEMS = 4;
 const ARROW = { x: 120, y: 160, step: 8 };
+const DIFFICULTY_LABELS = ["Легко", "Нормально", "Сложно"] as const;
 /** дома слева направо */
 const HOUSES: HouseCode[] = ["A", "O", "H"];
 const HOUSE_FRAME = { x: 32, step: 88, y: 136 };
@@ -25,12 +26,19 @@ export interface FrontEndHost {
   screen?(mode: "intro" | "title" | "house"): void;
   /** звук заставки ($02DD26) */
   introSound?(seq: number): void;
+  /** остановка звука заставки ($02DDCC) */
+  introStop?(seq: number): void;
+  openingTime?(): number;
   /** звук интерфейса ($02DDB6) */
   ui?(seq: number): void;
   /** звук выбора пункта: $02DD26, только если звуки включены ($017980) */
   select?(seq: number): void;
   options(): void;
-  tutorial(): void;
+  network?():void;
+  tutorial?(): void;
+  difficulty?(): number;
+  difficultyChanged?(level: number): void;
+  frame?(): void;
 }
 
 export class FrontEnd {
@@ -39,16 +47,19 @@ export class FrontEnd {
   private mode: "intro" | "title" | "house" = "title";
   private intro: Intro;
   private item = 0;
+  private difficulty = 2;
   private house = 0;
   /** сколько точек рамке ещё ехать до выбранного дома ($FFBF02), знак — направление */
   private slide = 0;
   private frame = 0;
+  private titleStartFrame = 0;
   private raf = 0;
 
   constructor(
     private gfx: ScreenGfx,
     private host: FrontEndHost,
   ) {
+    this.difficulty = Math.max(0, Math.min(2, Math.round(host.difficulty?.() ?? 2)));
     this.root = document.createElement("section");
     this.root.className = "settings frontend hd-menu";
     this.root.setAttribute("role", "dialog");
@@ -58,7 +69,13 @@ export class FrontEnd {
     this.canvas.height = SCREEN_H;
     this.root.append(this.canvas);
     this.canvas.addEventListener("click", (e) => this.onClick(e));
-    this.intro = new Intro(gfx, (seq) => this.host.introSound?.(seq));
+    this.intro = new Intro(
+      gfx,
+      (seq) => this.host.introSound?.(seq),
+      (seq) => this.host.introStop?.(seq),
+      () => this.host.openingTime?.() ?? this.frame / 60,
+      () => this.difficultyText(),
+    );
   }
 
   /** Заставка при включении; кончится или любая кнопка — главное меню. */
@@ -81,6 +98,11 @@ export class FrontEnd {
   }
 
   openTitle(): void {
+    if (this.mode === "intro") {
+      const titleElapsed = this.intro.titleElapsedSeconds();
+      this.titleStartFrame = this.frame - Math.round(titleElapsed * 60);
+    }
+    this.intro.stopVideo();
     this.mode = "title";
     this.item = 0;
     this.show();
@@ -103,6 +125,7 @@ export class FrontEnd {
   }
 
   close(): void {
+    this.intro.stopVideo();
     this.root.hidden = true;
     cancelAnimationFrame(this.raf);
   }
@@ -118,7 +141,10 @@ export class FrontEnd {
       // $017A9E: стрелка — звук $0B, выбор — $0C
       if (b === "up") (this.item = (this.item + MENU_ITEMS - 1) % MENU_ITEMS), this.host.ui?.(0x0b);
       else if (b === "down") (this.item = (this.item + 1) % MENU_ITEMS), this.host.ui?.(0x0b);
-      else if (b === "a" || b === "c" || b === "start") (this.host.select?.(0x0c), this.chooseItem());
+      else if ((b === "left" || b === "right") && this.item === 3) {
+        this.changeDifficulty(b === "right" ? 1 : -1);
+        this.host.ui?.(0x0b);
+      } else if (b === "a" || b === "c" || b === "start") (this.host.select?.(0x0c), this.chooseItem());
     } else {
       // $004934: пока рамка едет, кнопки не действуют
       if (this.slide) return true;
@@ -134,8 +160,18 @@ export class FrontEnd {
 
   private chooseItem(): void {
     if (this.item === 0) this.openHouse();
-    else if (this.item === 1) this.host.options();
-    else this.host.tutorial();
+    else if (this.item === 1) this.host.network?.();
+    else if (this.item === 2) this.host.options();
+    else this.changeDifficulty(1);
+  }
+
+  private changeDifficulty(direction: number): void {
+    this.difficulty = (this.difficulty + direction + DIFFICULTY_LABELS.length) % DIFFICULTY_LABELS.length;
+    this.host.difficultyChanged?.(this.difficulty);
+  }
+
+  private difficultyText(): string {
+    return `Сложность: ${DIFFICULTY_LABELS[this.difficulty]}`;
   }
 
   private onClick(e: MouseEvent): void {
@@ -160,6 +196,7 @@ export class FrontEnd {
 
   private loop(): void {
     this.frame++;
+    this.host.frame?.();
     if (this.mode === "intro" && !this.intro.tick()) this.openTitle();
     if (this.mode === "house" && this.slide) {
       this.slide -= Math.sign(this.slide) * HOUSE_SLIDE;
@@ -172,9 +209,12 @@ export class FrontEnd {
 
   private draw(): void {
     const g = prepareMenu(this.canvas);
-    if (this.mode === "intro") this.intro.draw(g);
-    else if (this.mode === "title") {
-      if (this.gfx.art.background(g, "arrakis")) this.gfx.drawTitleLettering(g);
+    if (this.mode === "intro") {
+      this.intro.draw(g);
+    } else if (this.mode === "title") {
+      if (this.intro.drawBackdrop(g, this.frame)) this.gfx.drawTitleLettering(
+        g, (this.frame - this.titleStartFrame) / 60, this.host.openingTime?.() ?? this.frame / 60, this.difficultyText(),
+      );
       else g.drawImage(this.gfx.titleScreen(), 0, 0);
       menuArrow(g, ARROW.x, ARROW.y + this.item * ARROW.step, this.frame);
     } else {
@@ -186,7 +226,7 @@ export class FrontEnd {
         menuText(g, russian ? "ВЫБЕРИ СЕБЕ ДОМ" : "CHOOSE YOUR HOUSE", 160, 36,
           { size: 10, color: "#f7d479", align: "center", serif: true });
         [1, 2, 0].forEach((id, i) => menuText(g, strings.houses[id], 72 + i * 88, 139,
-          { size: 7.4, color: "#2b1a07", align: "center", maxWidth: 72, shadow: false }));
+          { size: 7.4, color: "#f5db9d", align: "center", maxWidth: 72, shadow: true }));
         g.strokeStyle = ["#fff1ad", "#e8b63c", "#a86d16", "#e8b63c"][(this.frame & 31) >> 3];
         g.lineWidth = 0.8;
         g.strokeRect(HOUSE_FRAME.x + this.house * HOUSE_FRAME.step - this.slide, HOUSE_FRAME.y, 80, 16);

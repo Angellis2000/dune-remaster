@@ -4,6 +4,7 @@
  * scriptUnit/scriptStructure/scriptTeam в том же порядке, что у PC-версии.
  */
 import { G, s8, s16, u16, type ScriptEngine, type ScriptInfo } from "./core.ts";
+import {customScriptType} from './custom-unit-defs.ts';
 
 const OPCODES_PER_TICK = 50;
 export { OPCODES_PER_TICK as SCRIPT_UNIT_OPCODES_PER_TICK };
@@ -52,7 +53,7 @@ export function scriptLoad(script: ScriptEngine, typeID: number): void {
   const info = script.scriptInfo;
   if (!info) return;
   scriptReset(script, info);
-  script.pc = info.offsets[typeID];
+  script.pc = info.offsets[info===G.scriptUnit?customScriptType(typeID):info===G.scriptStructure&&typeID===19?5:typeID];
 }
 
 export function scriptLoadAsSubroutine(script: ScriptEngine, typeID: number): void {
@@ -61,7 +62,7 @@ export function scriptLoadAsSubroutine(script: ScriptEngine, typeID: number): vo
   script.isSubroutine = 1;
   push(script, script.pc);
   push(script, script.returnValue);
-  script.pc = script.scriptInfo!.offsets[typeID];
+  script.pc = script.scriptInfo!.offsets[script.scriptInfo===G.scriptUnit?customScriptType(typeID):script.scriptInfo===G.scriptStructure&&typeID===19?5:typeID];
 }
 
 export const scriptIsLoaded = (script: ScriptEngine): boolean => script.pc >= 0 && script.scriptInfo !== null;

@@ -9,7 +9,7 @@ import { G, LST, MAP_INFOS, MOVEMENT, STRUCTURE, packTile, packXY, type Structur
 import { explosions } from "../engine/explosion.ts";
 import { mapGetLandscapeType } from "../engine/map.ts";
 import { Game } from "../engine/game.ts";
-import { layoutSize, structureInfo, tableTileDiff, unitInfo } from "../engine/tables.ts";
+import { layoutSize, structureInfo, unitInfo } from "../engine/tables.ts";
 import { MAP_SIZE } from "../rom/dune.ts";
 import type { UnitDrawState } from "../gfx/sprites.ts";
 
@@ -136,13 +136,13 @@ export class World {
         this.unitViews.set(u, v);
       }
       const ui = unitInfo[u.o.type];
-      const wob = tableTileDiff[0][u.wobbleIndex] ?? { x: 0, y: 0 };
       v.type = u.o.type;
       v.house = u.deviated !== 0 ? u.deviatedHouse : u.o.houseID;
       v.hp = Math.round((u.o.hitpoints * 256) / Math.max(1, ui.o.hitpoints));
       // движок двигает юниты раз в 3 кадра — на экране сглаживаем, чтобы ход был плавным
-      const tx = u.o.position.x / 8 + wob.x * 2;
-      const ty = u.o.position.y / 8 + wob.y * 2;
+      // Follow the actual path. Random sprite wobble became a visible sideways jump at HD zoom.
+      const tx = u.o.position.x / 8;
+      const ty = u.o.position.y / 8;
       if (Math.abs(tx - v.x) > 40 || Math.abs(ty - v.y) > 40) {
         v.x = tx;
         v.y = ty;

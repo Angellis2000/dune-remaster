@@ -9,13 +9,16 @@
 import type { DuneRom } from "../rom/dune.ts";
 import { loadSkinFiles, storeSkinFile } from "../ui/romstore.ts";
 import type { IconSet } from "./icons.ts";
-import { structureShape } from "./pack.ts";
 import { STRUCTURE_ART, type StructureArt } from "./structure-art.ts";
+import {drawRadarDish} from './radar-motion.ts';
 
 interface Skin {
   image: ImageBitmap;
   scaled: Map<string, HTMLCanvasElement>;
   directions?: boolean;
+  align?: {x:number;y:number};
+  layer?:ImageBitmap;
+  motion?:Map<string,HTMLCanvasElement>;
 }
 
 export class Skins {
@@ -25,14 +28,14 @@ export class Skins {
   readonly iconOverridden = new Uint8Array(512);
   onChange: () => void = () => {};
 
-  async load(rom: DuneRom, icons: IconSet): Promise<void> {
+  async load(_rom: DuneRom, _icons: IconSet): Promise<void> {
     // Общие картинки заводов/казарм декодируются один раз; независимые здания грузятся параллельно.
     const pending = new Map<string, Promise<Skin>>();
     await Promise.all(STRUCTURE_ART.map(async (art) => {
       try {
         let task = pending.get(art.url);
         if (!task) {
-          task = this.loadDefault(art, rom, icons);
+          task = this.loadDefault(art);
           pending.set(art.url, task);
         }
         this.defaults.set(`structure:${art.type}`, await task);
@@ -49,37 +52,17 @@ export class Skins {
     }
   }
 
-  private async loadDefault(art: StructureArt, rom: DuneRom, icons: IconSet): Promise<Skin> {
+  private async loadDefault(art: StructureArt): Promise<Skin> {
     const response = await fetch(art.url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    let image = await createImageBitmap(await response.blob());
-    if (art.type !== 8) {
-      // В ROM площадки непрозрачны. Под HD-деталями сохраняем исходную площадку,
-      // чтобы прозрачность PNG не убирала фон и не оставляла дыр между частями здания.
-      const shape = structureShape(rom, art.type);
-      const canvas = document.createElement("canvas");
-      canvas.width = image.width;
-      canvas.height = image.height;
-      const g = canvas.getContext("2d")!;
-      g.imageSmoothingEnabled = false;
-      const columns = art.directions ? 4 : 1;
-      const rows = art.directions ? 2 : 1;
-      const frameW = canvas.width / columns;
-      const frameH = canvas.height / rows;
-      for (let frame = 0; frame < columns * rows; frame++) {
-        shape.icons[2].forEach((id, i) => {
-          const s = icons.source(id + (art.directions ? frame : 0));
-          const x = (frame % columns) * frameW + (i % shape.w) * frameW / shape.w;
-          const y = Math.floor(frame / columns) * frameH + Math.floor(i / shape.w) * frameH / shape.h;
-          g.drawImage(s.image, s.sx, s.sy, s.sw, s.sh, x, y, frameW / shape.w, frameH / shape.h);
-        });
-      }
-      g.drawImage(image, 0, 0);
-      const composed = await createImageBitmap(canvas);
-      image.close();
-      image = composed;
+    // Keep the authored alpha: original ROM tiles otherwise reintroduce the flat green backdrop.
+    const image = await createImageBitmap(await response.blob());
+    let layer:ImageBitmap|undefined;
+    if(art.layerUrl){
+      const r=await fetch(art.layerUrl);if(!r.ok)throw new Error(`Layer HTTP ${r.status}`);
+      layer=await createImageBitmap(await r.blob());
     }
-    return { image, scaled: new Map(), directions: art.directions };
+    return { image, scaled: new Map(), directions: art.directions, align:art.align,layer };
   }
 
   private put(key: string, image: ImageBitmap | null): void {
@@ -122,13 +105,13 @@ export class Skins {
   }
 
   /** Картинка, уменьшенная ровно до w×h экранных пикселей. */
-  scaled(key: string, w: number, h: number, direction = 0): HTMLCanvasElement | null {
+  scaled(key: string, w: number, h: number, direction = 0,withLayer=true): HTMLCanvasElement | null {
     const s = this.skins.get(key) ?? this.defaults.get(key);
     if (!s) return null;
     w = Math.max(1, Math.round(w));
     h = Math.max(1, Math.round(h));
     const frame = s.directions ? direction & 7 : 0;
-    const k = `${w}x${h}:${frame}`;
+    const k = `${w}x${h}:${frame}:${withLayer}`;
     let c = s.scaled.get(k);
     if (!c) {
       if (s.directions) {
@@ -139,6 +122,12 @@ export class Skins {
           s.image.width / 4, s.image.height / 2, 0, 0, crop.width, crop.height);
         c = downscale(crop, w, h);
       } else c = downscale(s.image, w, h);
+      if(s.align){
+        const aligned=document.createElement('canvas');aligned.width=w;aligned.height=h;
+        aligned.getContext('2d')!.drawImage(c,s.align.x*w,s.align.y*h);
+        c=aligned;
+      }
+      if(s.layer&&withLayer)drawRadarDish(c.getContext('2d')!,s.layer,w,h);
       if (s.scaled.size > (s.directions ? 64 : 16)) s.scaled.clear();
       s.scaled.set(k, c);
     }
@@ -158,8 +147,16 @@ export class Skins {
   clearStructure(type: number): Promise<void> {
     return this.clear(`structure:${type}`);
   }
-  structure(type: number, w: number, h: number, direction = 0): HTMLCanvasElement | null {
-    return this.scaled(`structure:${type}`, w, h, direction);
+  structure(type: number, w: number, h: number, direction = 0,tick?:number): HTMLCanvasElement | null {
+    const key=`structure:${type}`,skin=this.skins.get(key)??this.defaults.get(key);
+    if(tick===undefined||!skin?.layer)return this.scaled(key,w,h,direction);
+    const base=this.scaled(key,w,h,direction,false)!;
+    const size=`${base.width}x${base.height}`;
+    skin.motion??=new Map();let c=skin.motion.get(size);
+    if(!c){c=document.createElement('canvas');c.width=base.width;c.height=base.height;
+      if(skin.motion.size>4)skin.motion.clear();skin.motion.set(size,c);}
+    const ctx=c.getContext('2d')!;ctx.clearRect(0,0,c.width,c.height);ctx.drawImage(base,0,0);
+    drawRadarDish(ctx,skin.layer,c.width,c.height,tick);return c;
   }
 }
 

@@ -2,12 +2,26 @@
 import arrakis from "./assets/frontend/arrakis-wide.png?url";
 import settings from "./assets/frontend/settings-wide.png?url";
 import password from "./assets/frontend/password-wide.png?url";
-import houses from "./assets/frontend/house-crests.png?url";
+import houses from "./assets/frontend/house-crests-modern.png?url";
 import sega from "./assets/frontend/sega.png?url";
 import publishers from "./assets/frontend/publishers.png?url";
 import ships from "./assets/frontend/intro-ships.png?url";
+import victory from "./assets/frontend/victory-hd.png?url";
+import defeat from "./assets/frontend/defeat-hd.png?url";
+import mentatAtreides from "./assets/frontend/mentat-atreides-hd.png?url";
+import mentatOrdos from "./assets/frontend/mentat-ordos-hd.png?url";
+import mentatHarkonnen from "./assets/frontend/mentat-harkonnen-hd.png?url";
+import strategicSurface from "./assets/frontend/strategic-relief-hd.png?url";
+import operationsConsole from "./assets/frontend/operations-console-hd.png?url";
+import productionConsole from "./assets/frontend/production-console-hd.png?url";
+import buildingPortraitsA from './assets/frontend/building-portraits-a.png?url';
+import buildingPortraitsB from './assets/frontend/building-portraits-b.png?url';
+import buildingPortraitsC from './assets/frontend/building-portraits-c.png?url';
+import buildingPortraitsD from './assets/frontend/building-portraits-d.png?url';
+import buildingIconsA from './assets/frontend/building-icons-a.png?url';
+import buildingIconsB from './assets/frontend/building-icons-b.png?url';
 
-export const SCREEN_ART = { arrakis, settings, password, houses, sega, publishers, ships };
+export const SCREEN_ART = { arrakis, settings, password, houses, sega, publishers, ships, victory, defeat, mentatAtreides, mentatOrdos, mentatHarkonnen, strategicSurface, operationsConsole, productionConsole, buildingPortraitsA, buildingPortraitsB, buildingPortraitsC, buildingPortraitsD, buildingIconsA, buildingIconsB };
 export type ScreenArtKey = keyof typeof SCREEN_ART;
 
 export class ScreenArt {

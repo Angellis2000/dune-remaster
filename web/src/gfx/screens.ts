@@ -124,6 +124,16 @@ export function decodeText(bytes: Uint8Array, at: number, max = 32): string {
   return s.trimEnd();
 }
 
+/** Decode text already split into the same byte codes used by ROM pages. */
+export function decodeTextCodes(codes: readonly number[]): string {
+  let s="";
+  for(const c of codes){
+    if(c===0x0d){s+='\n';continue;}
+    s+=c>=0x60&&c<0x60+CYRILLIC.length?CYRILLIC[c-0x60]:String.fromCharCode(c);
+  }
+  return s.trimEnd();
+}
+
 export class ScreenGfx {
   readonly palette: Uint32Array;
   readonly art = new ScreenArt();
@@ -302,29 +312,101 @@ export class ScreenGfx {
   }
 
   /** Логотип и пункты меню — гладкие буквы с расположением оригинала, поверх HD-фона. */
-  drawTitleLettering(ctx: CanvasRenderingContext2D): void {
+  drawTitleLettering(ctx: CanvasRenderingContext2D, elapsed = 0, musicTime = elapsed, difficultyText?: string): void {
     ctx.save();
-    ctx.font = '400 52px "Times New Roman", serif';
+    ctx.font = '300 58px "Segoe UI Light", "Segoe UI", "Helvetica Neue", Arial, sans-serif';
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    const gradient = ctx.createLinearGradient(0, 52, 0, 110);
+    gradient.addColorStop(0, "#fff9e7");
+    gradient.addColorStop(0.28, "#ead39d");
+    gradient.addColorStop(0.58, "#c49b58");
+    gradient.addColorStop(0.8, "#f7e7bd");
+    gradient.addColorStop(1, "#d5b474");
+    const letters = [..."DUNE"];
+    const gap = 12;
+    const widths = letters.map((letter) => ctx.measureText(letter).width);
+    const totalWidth = widths.reduce((sum, width) => sum + width, 0) + gap * (letters.length - 1);
+    let targetX = 160 - totalWidth / 2;
+    const entryOffsets = [[-46, -16], [-18, 20], [20, -18], [46, 14]];
+    const rotations = [-0.09, 0.06, -0.055, 0.085];
+    const glowPulse = (1 + Math.sin(elapsed * 2.2)) / 2;
+    letters.forEach((letter, i) => {
+      const width = widths[i];
+      const centerX = targetX + width / 2;
+      const p = Math.max(0, Math.min(1, (elapsed - i * 0.12) / 0.72));
+      if (p > 0) {
+        const ease = 1 - Math.pow(1 - p, 4);
+        const [offsetX, offsetY] = entryOffsets[i];
+        ctx.save();
+        ctx.globalAlpha = ease;
+        ctx.shadowColor = `rgba(255, 213, 142, ${0.45 + glowPulse * 0.2})`;
+        ctx.shadowBlur = 12 + glowPulse * 6;
+        ctx.translate(centerX + offsetX * (1 - ease), 82 + offsetY * (1 - ease));
+        ctx.rotate(rotations[i] * (1 - ease));
+        ctx.scale(0.94 + 0.06 * ease, 0.94 + 0.06 * ease);
+        ctx.fillStyle = gradient;
+        ctx.fillText(letter, 0, 0);
+        ctx.restore();
+      }
+      targetX += width + gap;
+    });
+    const underlineAlpha = Math.max(0, Math.min(1, (elapsed - 1.05) / 0.32));
+    if (underlineAlpha > 0) {
+      ctx.save();
+      const underline = ctx.createLinearGradient(72, 0, 248, 0);
+      underline.addColorStop(0, "rgba(226, 186, 112, 0)");
+      underline.addColorStop(0.5, `rgba(255, 231, 177, ${0.78 + glowPulse * 0.22})`);
+      underline.addColorStop(1, "rgba(226, 186, 112, 0)");
+      ctx.globalAlpha = underlineAlpha;
+      ctx.strokeStyle = underline;
+      ctx.lineWidth = 0.75;
+      ctx.shadowColor = "rgba(255, 208, 130, 0.8)";
+      ctx.shadowBlur = 5 + glowPulse * 4;
+      ctx.beginPath();
+      ctx.moveTo(72, 109);
+      ctx.lineTo(248, 109);
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+    menuText(ctx, "TM", 255, 54, { size: 5, color: "#ead39d" });
+    const titleWords = ["The", "Battle", "for", "Arrakis"];
+    ctx.save();
+    ctx.font = '600 18px Georgia, "Times New Roman", serif';
     ctx.textBaseline = "alphabetic";
-    ctx.lineWidth = 0.35;
-    ctx.strokeStyle = "#090100";
-    const gradient = ctx.createLinearGradient(0, 70, 0, 108);
-    gradient.addColorStop(0, "#f36346");
-    gradient.addColorStop(0.42, "#a52b20");
-    gradient.addColorStop(1, "#e35a31");
-    ctx.fillStyle = gradient;
-    [..."DUNE"].forEach((letter, i) => {
-      ctx.strokeText(letter, [38, 106, 175, 248][i], 107);
-      ctx.fillText(letter, [38, 106, 175, 248][i], 107);
+    ctx.textAlign = "left";
+    const fullTitle = titleWords.join(" ");
+    const fullWidth = ctx.measureText(fullTitle).width;
+    let cursor = 160 - fullWidth / 2;
+    const beatPulse = (1 + Math.cos(musicTime * Math.PI * 4)) / 2;
+    const titleClock = musicTime > 0 ? musicTime : elapsed;
+    // Opening.mp3 vocal, word onsets measured from the track: “The Battle for Arrakis”.
+    const wordCues = musicTime > 0 ? [31.7, 32.46, 32.78, 33.2] : [0, 0.48, 0.96, 1.44];
+    ctx.fillStyle = "#ffe7b2";
+    ctx.shadowColor = `rgba(255,164,66,${0.35 + beatPulse * 0.55})`;
+    ctx.shadowBlur = 1.5 + beatPulse * 3.5;
+    titleWords.forEach((word, i) => {
+      const start = wordCues[i];
+      const progress = Math.max(0, Math.min(1, (titleClock - start) / 0.24));
+      if (progress > 0) {
+        const voiceHit = Math.max(0, 1 - Math.abs(titleClock - start) / 0.2);
+        const width = ctx.measureText(word).width;
+        ctx.globalAlpha = progress;
+        ctx.shadowBlur = 1.5 + beatPulse * 2 + voiceHit * 7;
+        ctx.save();
+        ctx.translate(cursor + width / 2, 126 - (1 - progress) * 3);
+        ctx.scale(0.92 + progress * 0.08, 0.92 + progress * 0.08);
+        ctx.fillText(word, -width / 2, 0);
+        ctx.restore();
+      }
+      cursor += ctx.measureText(word + " ").width;
     });
     ctx.restore();
-    menuText(ctx, "TM", 283, 70, { size: 5.5 });
-    menuText(ctx, "The Battle for Arrakis", 160, 126,
-      { size: 18, weight: "600", serif: true, align: "center", maxWidth: 248 });
-    const items = this.titleStrings();
+    const original=this.titleStrings();
+    const items=[original[0],'СЕТЕВАЯ ИГРА',original[1],difficultyText??'Сложность: Сложно'];
     items.forEach((text, i) => menuText(ctx, text, 128, 160 + i * 8, { size: 8, maxWidth: 164 }));
-    const russian = /[А-Я]/.test(items.join(""));
-    menuText(ctx, russian ? 'ГРУППА ПЕРЕВОДА «ШЕДЕВР», 2003 г.' : "© 1994 VIRGIN INTERACTIVE ENTERTAINMENT / WESTWOOD STUDIOS",
+    menuText(ctx, "TALCO design studio · 2026",
       160, 204, { size: 4.6, align: "center", maxWidth: 280 });
   }
 
@@ -448,6 +530,11 @@ export class ScreenGfx {
       readU16(b, at) === opcode ? decodeText(b, at + 2 + ((readU16(b, at + 2) << 16) >> 16)) : fallback;
     const housesAt = readU16(b, 0x026f6a) === 0x41f9 ? (readU16(b, 0x026f6c) << 16) | readU16(b, 0x026f6e) : -1;
     const fallbackHouses = ["ХАРКОННЕНЫ", "АТРЕЙДЕСЫ", "ОРДОСЫ"];
+    const houses = [0, 1, 2].map((i) => (housesAt > 0 ? decodeText(b, housesAt + i * 9, 9) : fallbackHouses[i]));
+    // В русской таблице ROM название дома написано с ошибкой («АТРИДЕСЫ»).
+    // Это общее место для экрана выбора дома и настроек, поэтому исправление
+    // применяется ко всем интерфейсным надписям, сохраняя английский ROM.
+    if (/[А-ЯЁ]/i.test(houses[1])) houses[1] = "АТРЕЙДЕСЫ";
     return {
       yes: pcRel(0x020e5a, 0x43fa, "ДА"),
       no: pcRel(0x020e60, 0x43fa, "НЕТ"),
@@ -456,7 +543,7 @@ export class ScreenGfx {
       // VERSIONNUM: строка версии, которую код $021A1E пишет в поле ввода пароля
       version: pcRel(0x021a1e, 0x487a, "VERSION"),
       // 9 байт на дом, по номеру дома: 0 — Харконнены, 1 — Атрейдесы, 2 — Ордосы
-      houses: [0, 1, 2].map((i) => (housesAt > 0 ? decodeText(b, housesAt + i * 9, 9) : fallbackHouses[i])),
+      houses,
     };
   }
 

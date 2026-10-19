@@ -11,7 +11,9 @@
 import { lcwDecompress } from "../rom/lcw.ts";
 import { blitTile, cramToRGBA, readU16, readU32 } from "../rom/md.ts";
 import type { DuneRom } from "../rom/dune.ts";
-import { SCREEN_H, SCREEN_W } from "../gfx/screens.ts";
+import { decodeTextCodes, SCREEN_H, SCREEN_W } from "../gfx/screens.ts";
+import { menuText, prepareMenu } from "../gfx/menu-canvas.ts";
+import type { ScreenArt } from "../gfx/screen-art.ts";
 import type { Button } from "../input/pad.ts";
 
 export const SCORE_ROM = {
@@ -74,10 +76,17 @@ export class ScoreScreen {
   private vscroll = 0;
   private cram = new Uint16Array(64);
   private held = false;
+  private stats: MissionStats | null = null;
+  private page: "picture" | "stats" | "password" = "picture";
+  private rankText = "";
+  private passwordText = "";
+  private shownValues = [[0, 0], [0, 0], [0, 0]];
+  private sliding = false;
 
   constructor(
     private rom: DuneRom,
     private sound: (id: number) => void = () => {},
+    private art?: ScreenArt,
   ) {
     this.root = document.createElement("section");
     this.root.className = "settings scorescreen";
@@ -97,6 +106,10 @@ export class ScoreScreen {
   }
 
   open(stats: MissionStats, done: () => void): void {
+    this.stats = stats;
+    this.page = "picture";
+    this.shownValues = [[0, 0], [0, 0], [0, 0]];
+    this.sliding = false;
     this.done = done;
     this.gen = this.run(stats);
     this.held = false;
@@ -199,6 +212,7 @@ export class ScoreScreen {
 
   /** Въезд страницы снизу ($027026): разгон до середины, торможение до 224. */
   private *scrollIn(): Step {
+    this.sliding = true;
     let speed = 0x10000;
     let pos = 0;
     while (pos < 0x700000) {
@@ -215,6 +229,7 @@ export class ScoreScreen {
     }
     yield;
     this.vscroll = 0xe0;
+    this.sliding = false;
   }
 
   /** Строки 28…55 → 0…27, прокрутка 0 ($027120). */
@@ -231,6 +246,8 @@ export class ScoreScreen {
 
   /** Полоса с числом растёт до значения ($026F98). */
   private *grow(value: number, addr: number, base: number, step: number): Step {
+    const row = [0xf494, 0xf714, 0xf994].findIndex(start => addr === start || addr === start + 0x80);
+    const side = base === 0x0500 ? 0 : 1;
     let len = 0;
     let shown = 0;
     let n = 0;
@@ -239,10 +256,12 @@ export class ScoreScreen {
       this.bar(len, addr, base);
       len++;
       this.number(shown, addr + 0x2c, 5);
+      if (row >= 0) this.shownValues[row][side] = Math.min(value, shown);
       if ((++n & 3) === 0) this.sound(0x34);
       shown += step;
     } while (value > shown);
     this.number(value, addr + 0x2c, 5);
+    if (row >= 0) this.shownValues[row][side] = value;
     for (let i = 0; i < 11; i++) yield;
   }
 
@@ -272,6 +291,8 @@ export class ScoreScreen {
     if (s.won && s.mission === 9) rank = SCORE_ROM.finalRank;
     else for (let i = 0; i < 8 && (s.score & 0xffff) >= readU16(b, SCORE_ROM.rankLimits + i * 2); i++) rank += 17;
     this.text(rank, 17, 0xf198);
+    this.rankText = decodeTextCodes(Array.from(b.subarray(rank, rank + 17))).trim();
+    this.page = "stats";
     yield* this.scrollIn();
     // три пары полос
     const pairs: [[number, number], number][] = [
@@ -289,7 +310,10 @@ export class ScoreScreen {
     if (s.won && s.mission < 9) {
       // $026F0A: пароль следующей миссии, имя дома, номер одержанной победы
       this.layout(SCORE_ROM.passwordLayout);
-      this.text(readU32(b, SCORE_ROM.passwords + (s.mission - 1) * 0x18 + s.house * 8), 10, 0xf41e);
+      const password = readU32(b, SCORE_ROM.passwords + (s.mission - 1) * 0x18 + s.house * 8);
+      this.text(password, 10, 0xf41e);
+      this.passwordText = decodeTextCodes(Array.from(b.subarray(password, password + 10))).trim();
+      this.page = "password";
       this.text(SCORE_ROM.houseNames + s.house * 9, 9, 0xf220);
       this.number(s.mission, 0xf32c, 1);
       yield* this.scrollIn();
@@ -299,6 +323,10 @@ export class ScoreScreen {
   }
 
   private draw(): void {
+    if (this.art?.get("arrakis") && this.stats) {
+      this.drawHD();
+      return;
+    }
     const pal = new Uint32Array(64);
     for (let i = 0; i < 64; i++) pal[i] = cramToRGBA(this.cram[i]);
     const px = this.px;
@@ -322,5 +350,74 @@ export class ScoreScreen {
       }
     new Uint32Array(this.img.data.buffer).set(px);
     this.ctx.putImageData(this.img, 0, 0);
+  }
+
+  private drawHD(): void {
+    const s = this.stats!;
+    const out = prepareMenu(this.canvas);
+    this.art!.background(out, "arrakis");
+    out.fillStyle = "#050609ed"; out.fillRect(-160, -100, 640, 424);
+    if (this.page === "picture") return;
+    out.save();
+    let brightness = 0;
+    for (const word of this.cram) brightness = Math.max(brightness, word & 14, (word >> 4) & 14, (word >> 8) & 14);
+    out.globalAlpha = Math.min(1, brightness / 10);
+    out.translate(0, this.sliding ? Math.max(0, 224 - this.vscroll) : 0);
+    const bezel=this.art!.get('operationsConsole');
+    if(bezel)out.drawImage(bezel,0,5,320,320*bezel.height/bezel.width);
+    else {out.fillStyle='#17151b';out.fillRect(0,5,320,213);out.fillStyle='#06090b';out.fillRect(27,33,266,146);}
+    const glass=out.createLinearGradient(0,33,0,179);
+    glass.addColorStop(0,'#10191b');glass.addColorStop(.5,'#080d10');glass.addColorStop(1,'#101318');
+    out.fillStyle=glass;out.fillRect(28,34,264,144);
+    // One continuous glass surface, with fine etched graduations rather than UI cards.
+    out.strokeStyle='#d7ba7a13';out.lineWidth=.15;
+    for(let x=36;x<288;x+=8){out.beginPath();out.moveTo(x,48);out.lineTo(x,165);out.stroke();}
+    const house = ["Харконнены", "Атрейдесы", "Ордосы"][s.house];
+    menuText(out, this.page === "password" ? "СЛЕДУЮЩАЯ ЛОКАЦИЯ" : "ИТОГИ ОПЕРАЦИИ", 160, 15, { size: 6, align:'center',color: "#171414",weight:'700',shadow:false });
+    menuText(out, house.toUpperCase(), 35, 39, { size: 4.1, color: "#c8ba97",weight:'500' });
+    menuText(out, `МИССИЯ ${s.mission}`, 285, 39, { size: 4.1, align: "right", color: "#c8ba97",weight:'500' });
+    out.fillStyle='#b6975955';out.fillRect(35,47,250,.2);
+    if (this.page === "password") {
+      menuText(out, `МИССИЯ ${s.mission + 1}`, 160, 63, { size: 8.5, align: "center", color:'#e7d6ae' });
+      menuText(out, "КОД ДОСТУПА", 160, 85, { size: 4.1, align: "center", color: "#c4a976",weight:'500' });
+      out.fillStyle='#030607';out.fillRect(45,97,230,31);
+      out.strokeStyle='#80633a';out.lineWidth=.4;out.strokeRect(45,97,230,31);
+      out.strokeStyle='#dec282';out.lineWidth=.55;out.beginPath();
+      for(const [x,dx]of [[45,1],[275,-1]])for(const [y,dy]of [[97,1],[128,-1]]){out.moveTo(x,y+dy*4);out.lineTo(x,y);out.lineTo(x+dx*5,y);}out.stroke();
+      out.save();out.font='600 12px Consolas, monospace';out.textAlign='center';out.textBaseline='middle';
+      out.fillStyle='#ffda8b';out.shadowColor='#d58529';out.shadowBlur=2;out.fillText(this.passwordText,160,113,215);out.restore();
+      menuText(out, "Сохраните пароль для продолжения кампании", 160, 143, { size: 4.7, align: "center", color: "#c8bfa9",weight:'500' });
+    } else {
+      const minutes = Math.floor(s.time / 3600);
+      const duration = `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
+      menuText(out, 'ОЧКИ',35,54,{size:3.7,color:'#a9a28e',weight:'500'});
+      menuText(out, String(s.score),35,60,{size:10,color:'#ffdf9c'});
+      menuText(out, `ВРЕМЯ  ${duration}`, 285, 55, { size: 5, align: "right",color:'#d6c9ac' });
+      menuText(out, this.rankText, 285, 65, { size: 4.5,align:'right', color: "#d6a854" });
+      const rows = [{ label: "Добыто спайса", values: s.spice }, { label: "Уничтожено войск", values: s.units }, { label: "Уничтожено построек", values: s.structures }];
+      rows.forEach((row, i) => {
+        const y = 81 + i * 28;
+        menuText(out, row.label.toUpperCase(), 35, y, { size: 4.4, color: "#c9c2ae",weight:'500' });
+        const maximum = Math.max(1, ...row.values);
+        for (let side = 0; side < 2; side++) {
+          const by = y + 8 + side * 6.5;
+          menuText(out, side ? "Враг" : "Вы", 35, by, { size: 3.7, color: "#aaa995",weight:'500' });
+          out.fillStyle = "#010405"; out.fillRect(55, by + .5, 202, 3.6);
+          out.strokeStyle='#7b74514d';out.lineWidth=.15;out.strokeRect(55,by+.5,202,3.6);
+          const width = 202 * this.shownValues[i][side] / maximum;
+          if (width > 0) {
+            const colors=[['#e84e30','#791f18'],['#3c86ff','#164398'],['#70ac51','#315e32']][s.house];
+            const fill = out.createLinearGradient(0, by+.5, 0, by+4.1);
+            fill.addColorStop(0, side ? "#e0784e" : colors[0]);fill.addColorStop(.3,side?'#aa4430':colors[0]); fill.addColorStop(1, side ? "#51201c" : colors[1]);
+            out.fillStyle = fill; out.fillRect(55, by+.7, width, 3.2);
+            out.fillStyle='#ffffff37';out.fillRect(55,by+.7,width,.35);
+            out.fillStyle='#02050766';for(let x=60;x<55+width;x+=5)out.fillRect(x,by+.7,.35,3.2);
+          }
+          menuText(out, String(this.shownValues[i][side]), 285, by, { size: 4.1, align: "right", color: "#e7d8b8" });
+        }
+      });
+    }
+    menuText(out, "Нажмите, чтобы продолжить", 160, 169, { size: 3.8, align: "center", color: "#b4a68c",weight:'500' });
+    out.restore();
   }
 }

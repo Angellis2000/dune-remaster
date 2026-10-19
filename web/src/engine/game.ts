@@ -8,7 +8,7 @@ import { animationInit, animationTick } from "./animation.ts";
 import {
   ACTION, G, HOUSE, HOUSE_INVALID, INDEX_INVALID, IT, MOVEMENT, SELECTION, STATE, STRUCTURE, UNIT, findAll, houseAllocate, houseFind,
   idiv, indexEncode, indexGetUnit, newScenario, packTile, packXY, poolsReset, randomLCGSeed, randomRange, randomSeed, s8, structureFind, unitAllocate,
-  unitFind, unitFree, unpackTile, type House, type Structure, type Unit,
+  tileCenter, unitFind, unitFree, unpackTile, type House, type Structure, type Unit,
 } from "./core.ts";
 import { explosionInit, explosionTick } from "./explosion.ts";
 import { gameLoopHouse, houseCalculatePowerAndCredit, houseResetTimers, houseUpdateCreditsStorage } from "./house.ts";
@@ -17,11 +17,12 @@ import { objectGetByPackedTile, objectScriptVariable4Clear } from "./object.ts";
 import { loadEmc, scriptLoad } from "./script.ts";
 import { scriptFunctionsStructure, scriptFunctionsTeam, scriptFunctionsUnit } from "./scriptfns.ts";
 import { msg } from "./strings.ts";
+import {initializeDrone,clampDronePoint,droneTargetAllowed} from './advanced-units.ts';
 import {
   gameLoopStructure, setUnitCreateWrapper, structureCancelBuild, structureActivateSpecial, structureBuildObject, structureCreate, structureFree,
-  structureGetBuildable, structureGetByPackedTile, structureGetStructuresBuilt, structureIsUpgradable, structureIsValidBuildLocation, structurePlayerPlace,
+  structureGetBuildable, structureGetByPackedTile, structureGetStructuresBuilt, structureIsUpgradable, structureIsValidBuildLocation, structurePlacementDetail, structurePlayerPlace,
   structureRemoveFog, structureResetTimers, structureSetRepairingState, structureSetState, structureSetUpgradingState,
-  structureStarportBuy,
+  structureStarportBuy,structureCanQueueUnits,structureEnqueueUnit,structureCancelQueuedUnit,structureEnqueueBuilding,structureCancelQueuedBuilding,structureStartNextBuilding,
 } from "./structure.ts";
 import { actionInfo, applyRomTables, structureInfo, unitInfo } from "./tables.ts";
 import { gameLoopTeam, teamCreate, teamResetTimers } from "./team.ts";
@@ -68,6 +69,8 @@ function upgradeUnlocksUnit(s: Structure): number {
 export class Game {
   /** номер миссии 1..9 и дом сценария */
   mission = 1;
+  /** 0 — easy, 1 — normal, 2 — hard. */
+  difficulty = 1;
   houseCode: "A" | "O" | "H" = "A";
   ended: MissionEnd | null = null;
   /** кадров, которые игра ещё идёт после конца миссии (пролёт орнитоптеров, $026984) */
@@ -105,6 +108,9 @@ export class Game {
 
   /** Game_LoadScenario + Scenario_Load + Game_Prepare */
   load(house: "A" | "O" | "H", mission: number): Scenario {
+    G.infiniteSpice=false;
+    G.droneGrenades.length=0;
+    G.difficulty = Math.max(0, Math.min(2, Math.round(this.difficulty)));
     const sc = this.rom.scenario(house, mission);
     this.houseCode = house;
     this.mission = mission;
@@ -158,6 +164,9 @@ export class Game {
       const h = houseAllocate(hs.id);
       if (!h) continue;
       h.credits = hs.credits;
+      if (hs.brain !== "human" && h.credits !== 0xffff) {
+        h.credits = Math.floor(h.credits * [0.8, 1, 1.5][G.difficulty]);
+      }
       h.creditsQuota = hs.quota;
       h.unitCountMax = hs.maxUnits;
       if (hs.brain === "human") {
@@ -165,6 +174,10 @@ export class Game {
         G.playerHouseID = hs.id;
         G.playerCreditsNoSilo = h.credits;
         player = h;
+      } else {
+        h.flags.human = false;
+        // MD $016646 leaves CPU houses dormant. Contact/being attacked sets bit 3
+        // ($023342/$02337C/$046E9C); the PC campaign-based activation launches O9's missile at tick 1.
       }
     }
     if (player && player.unitCountMax === 0) {
@@ -416,6 +429,29 @@ export class Game {
   /** Приказ юниту с целью на клетке (щелчок в режиме цели, gui/viewport.c). */
   order(u: Unit, action: number, packed: number): void {
     if (unitGetHouseID(u) !== G.playerHouseID) return;
+    if(u.o.type===UNIT.COMBAT_DRONE){
+      if(!u.drone)initializeDrone(u);
+      if(action===ACTION.MOVE||action===ACTION.PATROL)packed=packTile(clampDronePoint(u,tileCenter(unpackTile(packed))));
+      if(u.drone&&action!==ACTION.RETURN&&u.drone.phase!=='dock')u.drone.phase='guard';
+    }
+    if (action === ACTION.PATROL) {
+      const actions = unitInfo[u.o.type].o.actionsPlayer;
+      if (!actions.includes(ACTION.MOVE) || !actions.includes(ACTION.ATTACK) || !mapIsValidPosition(packed)) return;
+      u.patrolActive = true;
+      u.patrolEngaging = false;
+      u.patrolToEnd = true;
+      u.patrolStart = { ...u.o.position };
+      u.patrolEnd = tileCenter(unpackTile(packed));
+      u.targetAttack = 0;
+      u.targetMove = 0;
+      u.route[0] = 0xff;
+      unitSetAction(u, ACTION.MOVE);
+      unitSetDestination(u, indexEncode(packed, IT.TILE));
+      return;
+    }
+    u.patrolActive = false;
+    u.patrolEngaging = false;
+    u.harvesterDefense=undefined;
     objectScriptVariable4Clear(u.o);
     u.targetAttack = 0;
     u.targetMove = 0;
@@ -429,8 +465,13 @@ export class Game {
       const target = indexGetUnit(u.targetAttack);
       if (target) target.blinkCounter = 8;
     }
-    if (unitInfo[u.o.type].movementType === MOVEMENT.FOOT) G.onSound(actionInfo[action].soundID);
-    else G.onSound((G.timerGame & 1) === 0 ? 20 : 17);
+    // MD $0281b6: приказ пехоте — $10 (GEMS seq 80), технике — $12 (GEMS seq 68)
+    if(u.o.type===UNIT.COMBAT_DRONE&&action===ACTION.ATTACK&&!droneTargetAllowed(u,u.targetAttack)){
+      u.targetAttack=0;u.targetMove=0;u.actionID=ACTION.GUARD;
+      G.onMessage('Цель вне зоны управления дронами — 9 клеток.',1);
+    }
+    if (unitInfo[u.o.type].movementType === MOVEMENT.FOOT) G.onSound(0x10);
+    else G.onSound(0x12);
   }
 
   /** Какой приказ отдать по умолчанию, если игрок указал клетку (A в оригинале, левая кнопка мыши). */
@@ -451,7 +492,24 @@ export class Game {
   }
 
   /** Кнопка действия юнита (GUI_Widget_TextButton_Click): true — нужно указать цель на карте. */
+  activateSelf(u:Unit):boolean{
+    if(unitGetHouseID(u)!==G.playerHouseID||u.o.type!==UNIT.DEVASTATOR)return false;
+    if(!unitInfo[u.o.type].o.actionsPlayer.includes(ACTION.DESTRUCT))return false;
+    this.unitCommand(u,ACTION.DESTRUCT);return true;
+  }
+
   unitCommand(u: Unit, action: number): boolean {
+    if (action === ACTION.PATROL) {
+      const actions = unitInfo[u.o.type].o.actionsPlayer;
+      if (!actions.includes(ACTION.MOVE) || !actions.includes(ACTION.ATTACK)) return false;
+      G.unitActive = u;
+      G.activeAction = action;
+      G.selectionType = SELECTION.TARGET;
+      return true;
+    }
+    u.patrolActive = false;
+    u.patrolEngaging = false;
+    u.harvesterDefense=undefined;
     if (u.deviated !== 0) {
       unitDeviationDecrease(u, 5);
       if (u.deviated === 0) return false;
@@ -467,8 +525,10 @@ export class Game {
     u.targetAttack = 0;
     u.targetMove = 0;
     u.route[0] = 0xff;
-    unitSetAction(u, action);
-    if (unitInfo[u.o.type].movementType === MOVEMENT.FOOT) G.onSound(ai.soundID);
+    unitSetAction(u,action);
+    // MD $0281b6: приказ пехоте — $10, технике — $12
+    if (unitInfo[u.o.type].movementType === MOVEMENT.FOOT) G.onSound(0x10);
+    else G.onSound(0x12);
     return false;
   }
 
@@ -499,12 +559,8 @@ export class Game {
   buildOptions(s: Structure): { type: number; available: number; cost: number; time: number }[] {
     const si = structureInfo[s.o.type];
     if (!si.o.flags.factory) return [];
-    // structureBuildObject сначала снимает ремонт — для подсчёта списка его надо сохранить
-    const { repairing, onHold } = s.o.flags;
-    s.o.flags.repairing = false; // без сообщения «ремонт прекращён»
-    structureBuildObject(s, 0xffff);
-    s.o.flags.repairing = repairing;
-    s.o.flags.onHold = onHold;
+    // Listing orders must never rewrite the live order or change repair/hold state.
+    structureGetBuildable(s);
     const out: { type: number; available: number; cost: number; time: number }[] = [];
     if (s.o.type === STRUCTURE.CONSTRUCTION_YARD) {
       for (let i = 0; i < STRUCTURE.MAX; i++) {
@@ -547,14 +603,22 @@ export class Game {
   }
 
   /** Начать производство (или купить в космопорте). */
-  build(s: Structure, type: number): void {
-    if (s.o.type === STRUCTURE.STARPORT) return;
+  build(s: Structure, type: number): boolean {
+    if(structureCanQueueUnits(s))return structureEnqueueUnit(s,type);
+    if (s.o.type === STRUCTURE.STARPORT) return false;
     if (s.o.flags.onHold && s.objectType === type && s.o.linkedID !== 0xff) {
       s.o.flags.onHold = false;
-      return;
+      return true;
     }
-    structureBuildObject(s, type);
+    if (s.o.type === STRUCTURE.CONSTRUCTION_YARD) return structureEnqueueBuilding(s,type);
+    return structureBuildObject(s, type);
   }
+
+  canQueueUnits(s:Structure):boolean{return structureCanQueueUnits(s);}
+  unitQueue(s:Structure):readonly {type:number;cost:number}[]{return s.unitQueue??[];}
+  buildingQueue(s:Structure):readonly {type:number;cost:number}[]{return s.buildingQueue??[];}
+  cancelQueuedUnit(s:Structure,index:number):boolean{return structureCancelQueuedUnit(s,index);}
+  cancelQueuedBuilding(s:Structure,index:number):boolean{return structureCancelQueuedBuilding(s,index);}
 
   /** Состояние производства для меню. */
   production(s: Structure): { type: number; progress: number; ready: boolean; onHold: boolean } | null {
@@ -566,19 +630,25 @@ export class Game {
   }
 
   /** STR_PLACE_IT: готовое здание со Строительного двора — в режим постановки. */
-  placeIt(cy: Structure): boolean {
+  placeIt(cy: Structure, _announce=true): boolean {
     if (cy.o.type !== STRUCTURE.CONSTRUCTION_YARD || cy.o.linkedID === 0xff || cy.countDown !== 0) return false;
     G.structureActive = G.structures[cy.o.linkedID];
     G.structureActiveType = cy.objectType;
     G.structureActivePosition = packTile(cy.o.position);
     cy.o.linkedID = 0xff;
     G.selectionType = SELECTION.PLACE;
+    // Placement is announced on successful installation, not on picking up the ghost.
     return true;
   }
 
   canPlaceAt(packed: number): number {
     if (G.structureActiveType === 0xffff) return 0;
     return structureIsValidBuildLocation(packed, G.structureActiveType);
+  }
+
+  placementDetail(packed: number): { valid: number; cells: boolean[] } {
+    if (G.structureActiveType === 0xffff) return { valid: 0, cells: [] };
+    return structurePlacementDetail(packed, G.structureActiveType);
   }
 
   place(packed: number): boolean {
@@ -614,6 +684,7 @@ export class Game {
   cancelBuild(s: Structure): void {
     structureCancelBuild(s);
     structureSetState(s, STATE.IDLE);
+    if(s.o.type===STRUCTURE.CONSTRUCTION_YARD)structureStartNextBuilding(s);
   }
 
   /**
@@ -622,15 +693,20 @@ export class Game {
    */
   stopAll(s: Structure): void {
     const h = G.houses[s.o.houseID];
+    while(s.unitQueue?.length)structureCancelQueuedUnit(s,s.unitQueue.length-1);
+    while(s.buildingQueue?.length)structureCancelQueuedBuilding(s,s.buildingQueue.length-1);
     if (s.o.linkedID !== 0xff) {
       // $0103AA: заказ убирается, дому возвращается ровно потраченное ($5A)
       const before = h.credits;
+      const prepaid=s.prepaidBuildingCost??s.prepaidUnitCost;
       structureCancelBuild(s);
-      h.credits = before + s.spent;
+      h.credits = before + (prepaid??s.spent);
       structureSetState(s, STATE.IDLE);
-    } else if (s.o.flags.upgrading) {
-      h.credits += s.spent;
+    }
+    if (s.o.flags.upgrading) {
+      h.credits += s.upgradeSpent;
       s.o.flags.upgrading = false;
+      s.upgradeSpent = 0;
       s.upgradeTimeLeft = 100;
     }
     s.spent = 0;

@@ -89,23 +89,27 @@ export function gameLoopStructure(): void {
     if (tickDegrade && s.o.flags.degrades && s.o.hitpoints > idiv(si.o.hitpoints, 2)) structureDamage(s, hi.degradingAmount, 0);
 
     if (tickStructure) {
-      if (s.o.flags.upgrading) {
+      const upgradeWasActive = s.o.flags.upgrading;
+      const parallelYardUpgrade = upgradeWasActive && s.o.type === STRUCTURE.CONSTRUCTION_YARD;
+      if (upgradeWasActive) {
         const upgradeCost = idiv(si.o.buildCredits, 40);
         if (upgradeCost <= h.credits) {
           h.credits -= upgradeCost;
-          s.spent += upgradeCost;
+          s.upgradeSpent += upgradeCost;
           if (s.upgradeTimeLeft > 5) {
             s.upgradeTimeLeft -= 5;
           } else {
             s.upgradeLevel++;
             s.o.flags.upgrading = false;
+            s.upgradeSpent = 0;
             if (s.o.houseID === HOUSE.ORDOS && s.o.type === STRUCTURE.HEAVY_VEHICLE && s.upgradeLevel === 2) s.upgradeLevel = 3;
             s.upgradeTimeLeft = structureIsUpgradable(s) ? 100 : 0;
           }
         } else {
           s.o.flags.upgrading = false;
         }
-      } else if (s.o.flags.repairing) {
+      }
+      if ((!upgradeWasActive || parallelYardUpgrade) && s.o.flags.repairing) {
         const repairCost = idiv(idiv(2 * 256, si.o.hitpoints) * si.o.buildCredits + 128, 256);
         if (repairCost <= h.credits) {
           h.credits -= repairCost;
@@ -118,7 +122,7 @@ export function gameLoopStructure(): void {
         } else {
           s.o.flags.repairing = false;
         }
-      } else {
+      } else if (!upgradeWasActive || parallelYardUpgrade) {
         if (!s.o.flags.onHold && s.countDown !== 0 && s.o.linkedID !== 0xff && s.state === STATE.BUSY && si.o.flags.factory) {
           let oi;
           if (s.o.type === STRUCTURE.CONSTRUCTION_YARD) oi = structureInfo[s.objectType].o;
@@ -128,8 +132,9 @@ export function gameLoopStructure(): void {
           if (s.o.hitpoints < si.o.hitpoints) buildSpeed = idiv(s.o.hitpoints * 256, si.o.hitpoints);
           if (G.playerHouseID !== s.o.houseID) {
             if (buildSpeed > G.campaignID * 20 + 95) buildSpeed = G.campaignID * 20 + 95;
+            buildSpeed = idiv(buildSpeed * [82, 100, 125][G.difficulty], 100);
           }
-          let buildCost = u16(idiv(oi.buildCredits * 256, oi.buildTime));
+          let buildCost = s.prepaidUnitCost!==undefined||s.prepaidBuildingCost!==undefined?0:u16(idiv(oi.buildCredits * 256, oi.buildTime));
           if (buildSpeed < 256) buildCost = u16(idiv(buildSpeed * buildCost, 256));
           if (s.o.type === STRUCTURE.REPAIR && buildCost > 4) buildCost = idiv(buildCost, 4);
           buildCost = u16(buildCost + s.buildCostRemainder);
@@ -146,7 +151,8 @@ export function gameLoopStructure(): void {
               if (s.o.houseID === G.playerHouseID) {
                 if (s.o.type !== STRUCTURE.BARRACKS && s.o.type !== STRUCTURE.WOR_TROOPER) {
                   G.onMessage(msg.buildComplete(s.o.type, s.objectType), 0);
-                  G.onFeedback(0);
+                  if(s.o.type===STRUCTURE.CONSTRUCTION_YARD)G.onConstructionComplete(s);
+                  else G.onFeedback(0);
                 }
               } else if (s.o.type === STRUCTURE.CONSTRUCTION_YARD) {
                 const ns = G.structures[s.o.linkedID];
@@ -201,6 +207,8 @@ export function gameLoopStructure(): void {
       }
     }
 
+    structureStartNextUnit(s);
+    if(s.o.type===STRUCTURE.CONSTRUCTION_YARD)structureStartNextBuilding(s);
     if (tickScript) {
       if (s.o.script.delay !== 0) {
         s.o.script.delay--;
@@ -223,10 +231,12 @@ export function structureCreate(index: number, typeID: number, houseID: number, 
   const s = structureAllocate(index, typeID);
   if (!s) return null;
   s.o.houseID = houseID;
+  s.upgradeSpent = 0;
   s.creatorHouseID = houseID;
   s.o.flags.isNotOnMap = true;
   s.o.position = { x: 0, y: 0 };
   s.o.linkedID = 0xff;
+  s.unitQueue=[];s.buildingQueue=[];s.prepaidUnitCost=undefined;s.prepaidBuildingCost=undefined;
   s.state = STATE.JUSTBUILT;
   if (typeID === STRUCTURE.TURRET || typeID === STRUCTURE.ROCKET_TURRET) s.rotationSpriteDiff = G.iconGroups[si.iconGroup][1];
   s.o.hitpoints = si.o.hitpoints;
@@ -267,16 +277,22 @@ export function structurePlace(s: Structure | null, position: number): boolean {
     case STRUCTURE.SLAB_1x1:
     case STRUCTURE.SLAB_2x2: {
       let result = 0;
-      for (let i = 0; i < layoutTileCount[si.layout]; i++) {
-        const curPos = position + layoutTiles[si.layout][i];
-        const t = G.map[curPos];
-        if (structureIsValidBuildLocation(curPos, STRUCTURE.SLAB_1x1) === 0) continue;
-        t.groundTileID = G.builtSlabTileID;
-        t.houseID = s.o.houseID;
-        G.mapTileID[curPos] |= 0x8000;
-        if (s.o.houseID === G.playerHouseID) tileRemoveFogInRadius(unpackTile(curPos), 1);
-        if (mapIsPositionUnveiled(curPos)) t.overlayTileID = 0;
-        result = 1;
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (let i = 0; i < layoutTileCount[si.layout]; i++) {
+          const curPos = position + layoutTiles[si.layout][i];
+          const t = G.map[curPos];
+          if (t.groundTileID === G.builtSlabTileID && t.houseID === s.o.houseID) continue;
+          if (structureIsValidBuildLocation(curPos, STRUCTURE.SLAB_1x1) === 0) continue;
+          t.groundTileID = G.builtSlabTileID;
+          t.houseID = s.o.houseID;
+          G.mapTileID[curPos] |= 0x8000;
+          if (s.o.houseID === G.playerHouseID) tileRemoveFogInRadius(unpackTile(curPos), 1);
+          if (mapIsPositionUnveiled(curPos)) t.overlayTileID = 0;
+          result = 1;
+          changed = true;
+        }
       }
       if (result === 0) return false;
       structureFree(s);
@@ -371,6 +387,57 @@ export function structureGetStructuresBuilt(h: House | null): number {
 export function structureIsValidBuildLocation(position: number, type: number): number {
   const si = structureInfo[type];
   const layoutTile = layoutTiles[si.layout];
+
+  if (type === STRUCTURE.SLAB_2x2) {
+    // В оригинале Dune II плиты 2×2 можно ставить, даже если подходят не все 4 клетки
+    // (например, край скалы у песка — укладываются только доступные 1, 2 или 3 клетки).
+    const paved = new Set<number>();
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let i = 0; i < layoutTileCount[si.layout]; i++) {
+        const curPos = u16(position + layoutTile[i]);
+        if (paved.has(curPos)) continue;
+        if (!mapIsValidPosition(curPos)) continue;
+        const lst = mapGetLandscapeType(curPos);
+        if (!landscapeInfo[lst].isValidForStructure && G.validateStrictIfZero === 0) continue;
+        if (objectGetByPackedTile(curPos) !== null) continue;
+        const t = G.map[curPos];
+        if (t.groundTileID === G.builtSlabTileID && t.houseID === G.playerHouseID) continue;
+
+        let connected = false;
+        if (G.validateStrictIfZero !== 0) {
+          connected = true;
+        } else {
+          for (let j = 0; j < 16; j++) {
+            const offset = layoutTilesAround[0][j];
+            if (offset === 0) break;
+            const adjPos = u16(curPos + offset);
+            if (paved.has(adjPos)) {
+              connected = true;
+              break;
+            }
+            const s = structureGetByPackedTile(adjPos);
+            if (s && s.o.houseID === G.playerHouseID) {
+              connected = true;
+              break;
+            }
+            const alst = mapGetLandscapeType(adjPos);
+            if ((alst === LST.CONCRETE_SLAB || alst === LST.WALL) && G.map[adjPos & 0xfff].houseID === G.playerHouseID) {
+              connected = true;
+              break;
+            }
+          }
+        }
+        if (connected) {
+          paved.add(curPos);
+          changed = true;
+        }
+      }
+    }
+    return paved.size > 0 ? 1 : 0;
+  }
+
   let isValid = true;
   let neededSlabs = 0;
   for (let i = 0; i < layoutTileCount[si.layout]; i++) {
@@ -419,6 +486,100 @@ export function structureIsValidBuildLocation(position: number, type: number): n
   if (!isValid) return 0;
   if (neededSlabs === 0) return 1;
   return -neededSlabs;
+}
+
+/** Подробная проверка каждой клетки здания/плиты для отрисовки штриховки (зелёная/красная). */
+export function structurePlacementDetail(position: number, type: number): { valid: number; cells: boolean[] } {
+  const si = structureInfo[type];
+  const layoutTile = layoutTiles[si.layout];
+  const count = layoutTileCount[si.layout];
+  const valid = structureIsValidBuildLocation(position, type);
+
+  if (type === STRUCTURE.SLAB_2x2) {
+    const paved = new Set<number>();
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let i = 0; i < count; i++) {
+        const curPos = u16(position + layoutTile[i]);
+        if (paved.has(curPos)) continue;
+        if (!mapIsValidPosition(curPos)) continue;
+        const lst = mapGetLandscapeType(curPos);
+        if (!landscapeInfo[lst].isValidForStructure && G.validateStrictIfZero === 0) continue;
+        if (objectGetByPackedTile(curPos) !== null) continue;
+        const t = G.map[curPos];
+        if (t.groundTileID === G.builtSlabTileID && t.houseID === G.playerHouseID) continue;
+
+        let connected = false;
+        if (G.validateStrictIfZero !== 0) {
+          connected = true;
+        } else {
+          for (let j = 0; j < 16; j++) {
+            const offset = layoutTilesAround[0][j];
+            if (offset === 0) break;
+            const adjPos = u16(curPos + offset);
+            if (paved.has(adjPos)) {
+              connected = true;
+              break;
+            }
+            const s = structureGetByPackedTile(adjPos);
+            if (s && s.o.houseID === G.playerHouseID) {
+              connected = true;
+              break;
+            }
+            const alst = mapGetLandscapeType(adjPos);
+            if ((alst === LST.CONCRETE_SLAB || alst === LST.WALL) && G.map[adjPos & 0xfff].houseID === G.playerHouseID) {
+              connected = true;
+              break;
+            }
+          }
+        }
+        if (connected) {
+          paved.add(curPos);
+          changed = true;
+        }
+      }
+    }
+    const cells: boolean[] = [];
+    for (let i = 0; i < count; i++) {
+      const curPos = u16(position + layoutTile[i]);
+      cells.push(paved.has(curPos));
+    }
+    return { valid, cells };
+  }
+
+  let touchesBase = (type === STRUCTURE.CONSTRUCTION_YARD || G.validateStrictIfZero !== 0);
+  if (!touchesBase) {
+    for (let i = 0; i < 16; i++) {
+      const offset = layoutTilesAround[si.layout][i];
+      if (offset === 0) break;
+      const curPos = u16(position + offset);
+      const s = structureGetByPackedTile(curPos);
+      if (s && s.o.houseID === G.playerHouseID) {
+        touchesBase = true;
+        break;
+      }
+      const lst = mapGetLandscapeType(curPos);
+      if ((lst === LST.CONCRETE_SLAB || lst === LST.WALL) && G.map[curPos & 0xfff]?.houseID === G.playerHouseID) {
+        touchesBase = true;
+        break;
+      }
+    }
+  }
+
+  const cells: boolean[] = [];
+  for (let i = 0; i < count; i++) {
+    const curPos = u16(position + layoutTile[i]);
+    if (!touchesBase || !mapIsValidPosition(curPos)) {
+      cells.push(false);
+      continue;
+    }
+    const lst = mapGetLandscapeType(curPos);
+    let ok = si.o.flags.notOnConcrete ? landscapeInfo[lst].isValidForStructure2 : landscapeInfo[lst].isValidForStructure;
+    if (objectGetByPackedTile(curPos) !== null) ok = 0;
+    cells.push(ok !== 0);
+  }
+  return { valid, cells };
 }
 
 export function structureActivateSpecial(s: Structure | null): void {
@@ -526,6 +687,7 @@ function structureDestroy(s: Structure | null): void {
 
 export function structureDamage(s: Structure | null, damage: number, range: number): boolean {
   if (!s) return false;
+  if (G.playtester && s.o.houseID === G.playerHouseID) return false;
   if (damage === 0) return false;
   if (s.o.script.variables[0] === 1) return false;
   const si = structureInfo[s.o.type];
@@ -716,7 +878,8 @@ export function structureCancelBuild(s: Structure | null): void {
     oi = unitInfo[u.o.type].o;
     unitFree(u);
   }
-  G.houses[s.o.houseID].credits += idiv(idiv((oi.buildTime - (s.countDown >> 8)) * 256, oi.buildTime) * oi.buildCredits, 256);
+  G.houses[s.o.houseID].credits += s.prepaidBuildingCost??s.prepaidUnitCost??idiv(idiv((oi.buildTime - (s.countDown >> 8)) * 256, oi.buildTime) * oi.buildCredits, 256);
+  s.prepaidUnitCost=undefined;s.prepaidBuildingCost=undefined;
   s.o.flags.onHold = false;
   s.countDown = 0;
   s.o.linkedID = 0xff;
@@ -779,10 +942,13 @@ export function structureStarportBuy(s: Structure, items: number[]): void {
  * Structure_BuildObject. objectType: тип юнита/здания, 0xFFFD — улучшение, 0xFFFE — выбрать первый
  * доступный, 0xFFFF — окно завода (его показывает интерфейс, здесь — только подготовка списка).
  */
-export function structureBuildObject(s: Structure | null, objectType: number): boolean {
+export function structureBuildObject(s: Structure | null, objectType: number, quiet=false): boolean {
   if (!s) return false;
   const si = structureInfo[s.o.type];
   if (!si.o.flags.factory) return false;
+  if(objectType===UNIT.LASER_TANK||objectType===UNIT.COMBAT_DRONE||s.o.type===STRUCTURE.CONSTRUCTION_YARD&&objectType===STRUCTURE.DRONE_PAD){
+    if((structureGetBuildable(s)&(1<<objectType))===0)return false;
+  }
   structureSetRepairingState(s, 0);
   if (objectType === 0xfffd) {
     structureSetUpgradingState(s, 1);
@@ -841,28 +1007,91 @@ export function structureBuildObject(s: Structure | null, objectType: number): b
     structureSetState(s, STATE.BUSY);
     if (s.o.houseID !== G.playerHouseID) return true;
     G.onMessage(msg.productionStarted(s.o.type, objectType), 2);
+    if(s.o.type===STRUCTURE.CONSTRUCTION_YARD)G.onConstructionStart();
     return true;
   }
   if (s.o.houseID !== G.playerHouseID) return false;
-  G.onMessage(msg.unableToCreateMore, 2);
+  if(!quiet)G.onMessage(msg.unableToCreateMore, 2);
   return false;
+}
+
+export function structureCanQueueUnits(s:Structure):boolean{
+  return s.o.houseID===G.playerHouseID&&!!structureInfo[s.o.type].o.flags.factory&&s.o.type!==STRUCTURE.CONSTRUCTION_YARD&&s.o.type!==STRUCTURE.STARPORT&&s.o.type!==STRUCTURE.REPAIR;
+}
+/** Reserve the full price on acceptance; the ROM build tick must not charge it again. */
+export function structureEnqueueUnit(s:Structure,type:number):boolean{
+  if(!s.o.flags.allocated||!structureCanQueueUnits(s)||type<0||type>=UNIT.MAX||!(structureGetBuildable(s)&(1<<type)))return false;
+  const queue=s.unitQueue??=[],cost=unitInfo[type].o.buildCredits,h=G.houses[s.o.houseID];
+  if(queue.length+(s.o.linkedID!==0xff?1:0)>=20||h.credits<cost)return false;
+  h.credits-=cost;queue.push({type,cost});s.unitQueue=queue;structureStartNextUnit(s);return true;
+}
+function structureStartNextUnit(s:Structure):void{
+  if(s.o.linkedID!==0xff||!s.o.flags.allocated)return;
+  s.prepaidUnitCost=undefined;
+  if(!s.unitQueue?.length||s.o.flags.onHold||s.o.flags.repairing||s.o.flags.upgrading)return;
+  const item=s.unitQueue[0];
+  if(structureBuildObject(s,item.type,true)){s.unitQueue.shift();s.prepaidUnitCost=item.cost;}
+}
+export function structureCancelQueuedUnit(s:Structure,index:number):boolean{
+  if(!Number.isInteger(index)||index<0||!s.unitQueue||index>=s.unitQueue.length)return false;
+  const [item]=s.unitQueue.splice(index,1);G.houses[s.o.houseID].credits+=item.cost;return true;
+}
+
+/** Заказать здание: полная цена резервируется сразу, следующие позиции ждут размещения предыдущего. */
+export function structureEnqueueBuilding(s:Structure,type:number):boolean{
+  if(!s.o.flags.allocated||s.o.type!==STRUCTURE.CONSTRUCTION_YARD||type<0||type>=STRUCTURE.MAX)return false;
+  const queue=s.buildingQueue??[],active=s.o.linkedID!==0xff;
+  const available=structureGetBuildable(s),current=active&&s.objectType===type;
+  if(!current&&(available&(1<<type))===0)return false;
+  // Дворец и космопорт можно зарезервировать только один раз на весь дом,
+  // включая стройку и очереди у других строительных дворов.
+  if(type===STRUCTURE.PALACE||type===STRUCTURE.STARPORT){
+    const reserved=G.structures.some(st=>st.o.flags.used&&st.o.houseID===s.o.houseID&&st.o.type===type)||
+      G.structures.some(yard=>yard.o.flags.used&&yard.o.houseID===s.o.houseID&&yard.o.type===STRUCTURE.CONSTRUCTION_YARD&&yard.buildingQueue?.some(item=>item.type===type));
+    if(reserved||queue.some(item=>item.type===type))return false;
+  }
+  if(queue.length+(active?1:0)>=20)return false;
+  const cost=structureInfo[type].o.buildCredits,h=G.houses[s.o.houseID];
+  if(h.credits<cost)return false;
+  h.credits-=cost;queue.push({type,cost});s.buildingQueue=queue;
+  structureStartNextBuilding(s);
+  return true;
+}
+
+export function structureStartNextBuilding(s:Structure):void{
+  if(!s.o.flags.allocated||s.o.type!==STRUCTURE.CONSTRUCTION_YARD||s.o.linkedID!==0xff||G.structureActiveType!==0xffff)return;
+  if(s.o.flags.onHold||s.o.flags.repairing)return;
+  const queue=s.buildingQueue??[],item=queue[0];
+  if(!item){s.prepaidBuildingCost=undefined;return;}
+  s.prepaidBuildingCost=undefined;
+  if(!structureBuildObject(s,item.type,true))return;
+  queue.shift();s.prepaidBuildingCost=item.cost;
+}
+
+export function structureCancelQueuedBuilding(s:Structure,index:number):boolean{
+  if(!Number.isInteger(index)||index<0||!s.buildingQueue||index>=s.buildingQueue.length)return false;
+  const [item]=s.buildingQueue.splice(index,1);G.houses[s.o.houseID].credits+=item.cost;return true;
 }
 
 export function structureSetUpgradingState(s: Structure | null, state: number): boolean {
   let ret = false;
   if (!s) return false;
+  const parallelYard = s.o.type === STRUCTURE.CONSTRUCTION_YARD;
   if (state === -1) state = s.o.flags.upgrading ? 0 : 1;
   if (state === 0 && s.o.flags.upgrading) {
     if (s.o.houseID === G.playerHouseID) G.onMessage(msg.upgradingStops, 2);
     s.o.flags.upgrading = false;
-    s.o.flags.onHold = false;
+    s.upgradeSpent = 0;
+    if (!parallelYard) s.o.flags.onHold = false;
     ret = true;
   }
   if (state === 0 || s.o.flags.upgrading || s.upgradeTimeLeft === 0) return ret;
   if (s.o.houseID === G.playerHouseID) G.onMessage(msg.upgradingStarts, 2);
-  s.spent = 0;
-  s.o.flags.onHold = true;
-  s.o.flags.repairing = false;
+  s.upgradeSpent = 0;
+  if (!parallelYard) {
+    s.o.flags.onHold = true;
+    s.o.flags.repairing = false;
+  }
   s.o.flags.upgrading = true;
   return true;
 }
@@ -923,12 +1152,14 @@ export function structureGetBuildable(s: Structure | null): number {
     case STRUCTURE.HIGH_TECH:
     case STRUCTURE.WOR_TROOPER:
     case STRUCTURE.BARRACKS:
+    case STRUCTURE.DRONE_PAD:
       for (let i = 0; i < UNIT.MAX; i++) unitInfo[i].o.available = 0;
       for (let i = 0; i < si.buildableUnits.length; i++) {
         let unitType = si.buildableUnits[i];
         if (unitType === UNIT.INVALID) continue;
         if (unitType === UNIT.TRIKE && s.creatorHouseID === HOUSE.ORDOS) unitType = UNIT.RAIDER_TRIKE;
         const ui = unitInfo[unitType];
+        if(unitType>=27&&G.campaignID+1<ui.o.availableCampaign)continue;
         let upgradeLevelRequired = ui.o.upgradeLevelRequired;
         if (unitType === UNIT.SIEGE_TANK && s.creatorHouseID === HOUSE.ORDOS) upgradeLevelRequired--;
         if ((structuresBuilt & ui.o.structuresRequired) >>> 0 !== ui.o.structuresRequired >>> 0) continue;
@@ -953,8 +1184,8 @@ export function structureGetBuildable(s: Structure | null): number {
         }
         if ((structuresBuilt & structuresRequired) >>> 0 === structuresRequired || s.o.houseID !== G.playerHouseID) {
           if (s.o.houseID !== HOUSE.HARKONNEN && i === STRUCTURE.LIGHT_VEHICLE) availableCampaign = 2;
-          // MD ($00FF2E): тяжёлый завод и Дом IX со двора не строятся, казармы WOR — не у Ордосов
-          if (i === STRUCTURE.HEAVY_VEHICLE || i === STRUCTURE.HOUSE_OF_IX) continue;
+          // MD ($00FF2E): Дом IX со двора не строится; машинный двор доступен для прямой постройки.
+          if (i === STRUCTURE.HOUSE_OF_IX) continue;
           if (i === STRUCTURE.WOR_TROOPER && G.playerHouseID === HOUSE.ORDOS) continue;
           if (G.campaignID >= availableCampaign - 1 && (lsi.o.availableHouse & (1 << s.o.houseID)) !== 0) {
             if (s.upgradeLevel >= lsi.o.upgradeLevelRequired || s.o.houseID !== G.playerHouseID) {
@@ -1035,7 +1266,10 @@ export function structureLimitReached(s: Structure): boolean {
     case STRUCTURE.STARPORT:
       return !s.o.flags.upgrading && (unitGroundPoolFull() || h.unitCount >= h.unitCountMax);
     case STRUCTURE.HIGH_TECH:
-      return !s.o.flags.upgrading && !unitAirSlotFree();
+      return !s.o.flags.upgrading && (s.objectType===UNIT.COMBAT_DRONE?
+        unitGroundPoolFull()||h.unitCount>=h.unitCountMax:!unitAirSlotFree());
+    case STRUCTURE.DRONE_PAD:
+      return !s.o.flags.upgrading&&(unitGroundPoolFull()||h.unitCount>=h.unitCountMax);
     default:
       return false;
   }
@@ -1043,11 +1277,13 @@ export function structureLimitReached(s: Structure): boolean {
 
 export function structureHouseUnderAttack(houseID: number): void {
   const h = G.houses[houseID];
+  if (houseID !== G.playerHouseID) h.flags.isAIActive = true;
   if (houseID !== G.playerHouseID && h.flags.doneFullScaleAttack) return;
   h.flags.doneFullScaleAttack = true;
   if (h.flags.human) {
     if (h.timerStructureAttack !== 0) return;
-    G.onFeedback(48);
+    // MD $01A88C/$01A8B6: атака базы — сирена $3E (GEMS seq 75), не голос фрегата ($30/48)
+    G.onSound(0x3e);
     h.timerStructureAttack = 8;
   }
 }
@@ -1096,12 +1332,18 @@ export function structurePlayerPlace(position: number): boolean {
   const s = G.structureActive;
   if (!s) return false;
   const type = s.o.type;
+  if (structureIsValidBuildLocation(position, type) === 0) {
+    G.onSound(47);
+    G.onMessage(type === STRUCTURE.SLAB_1x1 || type === STRUCTURE.SLAB_2x2 ? msg.cannotPlaceFoundation : msg.cannotPlace(type), 2);
+    return false;
+  }
   if (!structurePlace(s, position)) {
     G.onSound(47);
     G.onMessage(type === STRUCTURE.SLAB_1x1 || type === STRUCTURE.SLAB_2x2 ? msg.cannotPlaceFoundation : msg.cannotPlace(type), 2);
     return false;
   }
-  G.onSound(20);
+  // The user-selected «Установка» effect from the sound browser (GEMS 70).
+  G.onSound(0x14);
   const h = G.houses[G.playerHouseID];
   if (type === STRUCTURE.PALACE) h.palacePosition = { ...s.o.position };
   if (type === STRUCTURE.REFINERY && G.validateStrictIfZero === 0) {
@@ -1113,9 +1355,13 @@ export function structurePlayerPlace(position: number): boolean {
   }
   G.selectionType = SELECTION.STRUCTURE;
   const cy = structureGetByPackedTile(G.structureActivePosition);
-  if (cy && (structureGetBuildable(cy) & (1 << cy.objectType)) === 0) structureBuildObject(cy, 0xfffe);
   G.structureActiveType = 0xffff;
   G.structureActive = null;
+  if(cy){
+    cy.prepaidBuildingCost=undefined;
+    if(cy.buildingQueue?.length)structureStartNextBuilding(cy);
+    else if((structureGetBuildable(cy)&(1<<cy.objectType))===0)structureBuildObject(cy,0xfffe);
+  }
   houseUpdateRadarState(h);
   if (h.powerProduction < h.powerUsage && (h.structuresBuilt & (1 << STRUCTURE.OUTPOST)) !== 0) G.onMessage(msg.notEnoughPowerForRadar, 3);
   return true;

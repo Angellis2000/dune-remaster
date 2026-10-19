@@ -1,0 +1,134 @@
+[
+  {
+    "id": "rift-valley-1v1",
+    "name": "Долина раскола",
+    "description": "Разорванные горные гряды, ущелья и большие плато",
+    "width": 96,
+    "height": 96,
+    "teamSize": 1,
+    "capacity": 2,
+    "preview": "./maps/network/rift-valley-1v1.png?v=96-continuous6",
+    "data": "./maps/network/rift-valley-1v1.json"
+  },
+  {
+    "id": "worm-ring-1v1",
+    "name": "Кольцо Шаи-Хулуда",
+    "description": "Скалистые дуги вокруг спайсового бассейна и длинные обходы",
+    "width": 128,
+    "height": 128,
+    "teamSize": 1,
+    "capacity": 2,
+    "preview": "./maps/network/worm-ring-1v1.png?v=128-continuous6",
+    "data": "./maps/network/worm-ring-1v1.json"
+  },
+  {
+    "id": "imperial-frontier-1v1",
+    "name": "Рубеж императора",
+    "description": "Просторные дюнные поля, горные хребты и узкие проходы",
+    "width": 160,
+    "height": 160,
+    "teamSize": 1,
+    "capacity": 2,
+    "preview": "./maps/network/imperial-frontier-1v1.png?v=160-continuous6",
+    "data": "./maps/network/imperial-frontier-1v1.json"
+  },
+  {
+    "id": "rift-valley-2v2",
+    "name": "Долина раскола",
+    "description": "Разорванные горные гряды, ущелья и большие плато",
+    "width": 128,
+    "height": 128,
+    "teamSize": 2,
+    "capacity": 4,
+    "preview": "./maps/network/rift-valley-2v2.png?v=128-continuous6",
+    "data": "./maps/network/rift-valley-2v2.json"
+  },
+  {
+    "id": "worm-ring-2v2",
+    "name": "Кольцо Шаи-Хулуда",
+    "description": "Скалистые дуги вокруг спайсового бассейна и длинные обходы",
+    "width": 192,
+    "height": 192,
+    "teamSize": 2,
+    "capacity": 4,
+    "preview": "./maps/network/worm-ring-2v2.png?v=192-continuous6",
+    "data": "./maps/network/worm-ring-2v2.json"
+  },
+  {
+    "id": "imperial-frontier-2v2",
+    "name": "Рубеж императора",
+    "description": "Просторные дюнные поля, горные хребты и узкие проходы",
+    "width": 224,
+    "height": 224,
+    "teamSize": 2,
+    "capacity": 4,
+    "preview": "./maps/network/imperial-frontier-2v2.png?v=224-continuous6",
+    "data": "./maps/network/imperial-frontier-2v2.json"
+  },
+  {
+    "id": "rift-valley-3v3",
+    "name": "Долина раскола",
+    "description": "Разорванные горные гряды, ущелья и большие плато",
+    "width": 160,
+    "height": 160,
+    "teamSize": 3,
+    "capacity": 6,
+    "preview": "./maps/network/rift-valley-3v3.png?v=160-continuous6",
+    "data": "./maps/network/rift-valley-3v3.json"
+  },
+  {
+    "id": "worm-ring-3v3",
+    "name": "Кольцо Шаи-Хулуда",
+    "description": "Скалистые дуги вокруг спайсового бассейна и длинные обходы",
+    "width": 224,
+    "height": 224,
+    "teamSize": 3,
+    "capacity": 6,
+    "preview": "./maps/network/worm-ring-3v3.png?v=224-continuous6",
+    "data": "./maps/network/worm-ring-3v3.json"
+  },
+  {
+    "id": "imperial-frontier-3v3",
+    "name": "Рубеж императора",
+    "description": "Просторные дюнные поля, горные хребты и узкие проходы",
+    "width": 288,
+    "height": 288,
+    "teamSize": 3,
+    "capacity": 6,
+    "preview": "./maps/network/imperial-frontier-3v3.png?v=288-continuous6",
+    "data": "./maps/network/imperial-frontier-3v3.json"
+  },
+  {
+    "id": "rift-valley",
+    "name": "Долина раскола",
+    "description": "Разорванные горные гряды, ущелья и большие плато",
+    "width": 192,
+    "height": 192,
+    "teamSize": 4,
+    "capacity": 8,
+    "preview": "./maps/network/rift-valley.png?v=192-continuous6",
+    "data": "./maps/network/rift-valley.json"
+  },
+  {
+    "id": "worm-ring",
+    "name": "Кольцо Шаи-Хулуда",
+    "description": "Скалистые дуги вокруг спайсового бассейна и длинные обходы",
+    "width": 256,
+    "height": 256,
+    "teamSize": 4,
+    "capacity": 8,
+    "preview": "./maps/network/worm-ring.png?v=256-continuous6",
+    "data": "./maps/network/worm-ring.json"
+  },
+  {
+    "id": "imperial-frontier",
+    "name": "Рубеж императора",
+    "description": "Просторные дюнные поля, горные хребты и узкие проходы",
+    "width": 320,
+    "height": 320,
+    "teamSize": 4,
+    "capacity": 8,
+    "preview": "./maps/network/imperial-frontier.png?v=320-continuous6",
+    "data": "./maps/network/imperial-frontier.json"
+  }
+]

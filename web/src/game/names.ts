@@ -21,6 +21,8 @@ export const UNIT_NAMES = [
   "Квадроцикл", // 15 UNIT_QUAD
   "Харвестер", // 16 UNIT_HARVESTER
   "MCV", // 17 UNIT_MCV
+  "Ракета дворца", "Ракета", "Зенитная ракета", "Ракета девиатора", "Ракета пехоты", "Снаряд", "Звуковая волна", "Песчаный червь", "Фрегат",
+  "Лазерный танк", "Звено дронов",
 ];
 
 export const STRUCTURE_NAMES = [
@@ -28,7 +30,7 @@ export const STRUCTURE_NAMES = [
   "Бетон 2×2", // 1 STRUCTURE_SLAB_2x2
   "Дворец", // 2 STRUCTURE_PALACE
   "Лёгкий завод", // 3 STRUCTURE_LIGHT_VEHICLE
-  "Тяжёлый завод", // 4 STRUCTURE_HEAVY_VEHICLE
+  "Машинный двор", // 4 STRUCTURE_HEAVY_VEHICLE
   "Завод хай-тек", // 5 STRUCTURE_HIGH_TECH
   "Дом IX", // 6 STRUCTURE_HOUSE_OF_IX
   "Казармы WOR", // 7 STRUCTURE_WOR_TROOPER
@@ -43,4 +45,5 @@ export const STRUCTURE_NAMES = [
   "Ракетная турель", // 16 STRUCTURE_ROCKET_TURRET
   "Хранилище пряности", // 17 STRUCTURE_SILO
   "Радар", // 18 STRUCTURE_OUTPOST
+  "Площадка дронов", // 19 DRONE_PAD
 ];

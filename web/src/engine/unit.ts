@@ -2,7 +2,6 @@
  * Юниты: создание, движение, повреждения, цели, видимость (OpenDUNE src/unit.c).
  * Перенесено построчно, ветки «g_dune2_enhanced» не взяты — как в оригинальной игре.
  */
-import { animationStart } from "./animation.ts";
 import {
   ACTION, EXPLOSION, G, HOUSE, HOUSE_INVALID, INDEX_INVALID, IT, LST, MOVEMENT, SELECTION, STRUCTURE, UNIT, adjustToGameSpeed, findAll,
   houseFind, idiv, indexDecode, indexEncode, indexGetPackedTile, indexGetStructure, indexGetTile, indexGetType, indexGetUnit,
@@ -11,9 +10,13 @@ import {
   tileMoveByRandom, u16, u8, unitAllocate, unitFind, unitFree, unpackTile, type Structure, type Team, type Tile32, type Unit,
 } from "./core.ts";
 import { houseAreAllied } from "./house.ts";
+import {refineryDock} from './refinery-dock.ts';
+import {tickCarryallFlight,carryallMovementScale,carryallDestination} from './carryall-flight.ts';
+import {tickDrone,tickLaser,tickDroneGrenades} from './advanced-units.ts';
+import {COMBAT_SFX} from '../sound/combat-sfx.ts';
 import {
   mapBloomExplodeSpice, mapDeviateArea, mapFillCircleWithSpice, mapFindLocationTile, mapGetLandscapeType, mapIsPositionInViewport,
-  mapIsPositionUnveiled, mapIsValidPosition, mapMakeExplosion, mapUnveilTile, mapUpdateAround, tileRemoveFogInRadius,
+  mapIsPositionUnveiled, mapIsValidPosition, mapMakeExplosion, mapSearchSpice, mapUnveilTile, mapUpdateAround, tileRemoveFogInRadius,
 } from "./map.ts";
 import { objectGetByPackedTile, objectScriptVariable4Clear, objectScriptVariable4Link, objectScriptVariable4Set } from "./object.ts";
 import { scriptIsLoaded, scriptLoad, scriptLoadAsSubroutine, scriptReset, scriptRun, SCRIPT_UNIT_OPCODES_PER_TICK } from "./script.ts";
@@ -22,7 +25,7 @@ import {
   structureDamage, structureFree, structureGetByPackedTile, structureGetStructuresBuilt, structureHouseUnderAttack,
   structureSetState, structureUpdateMap,
 } from "./structure.ts";
-import { actionInfo, animationUnitMove, houseInfo, landscapeInfo, layoutTileDiff, structureInfo, unitInfo } from "./tables.ts";
+import { actionInfo, houseInfo, landscapeInfo, layoutTileDiff, structureInfo, unitInfo } from "./tables.ts";
 import { teamGetByIndex } from "./team.ts";
 import { houseCalculatePowerAndCredit } from "./house.ts";
 
@@ -75,12 +78,72 @@ function unitMovementTick(unit: Unit): void {
   if (unitInfo[unit.o.type].movementType !== MOVEMENT.WINGER) speed += adjustToGameSpeed(unit.speedPerTick, 1, 255, false);
   else speed += unit.speedPerTick;
   if ((speed & 0xff00) !== 0) {
-    unitMove(unit, Math.min(unit.speed * 16, tileGetDistance(unit.o.position, unit.currentDestination) + 16));
+    unitMove(unit, Math.min(unit.speed * 16, tileGetDistance(unit.o.position, unit.currentDestination) + 16)*carryallMovementScale(unit));
   }
   unit.speedRemainder = speed & 0xff;
 }
 
+function unitPatrolTick(unit: Unit): void {
+  const ui = unitInfo[unit.o.type];
+  if (!ui.o.actionsPlayer.includes(ACTION.ATTACK) || !ui.o.actionsPlayer.includes(ACTION.MOVE)) {
+    unit.patrolActive = false;
+    return;
+  }
+
+  if (unit.patrolEngaging) {
+    const target = indexGetUnit(unit.targetAttack);
+    if (target?.o.flags.allocated && !target.o.flags.isNotOnMap && !houseAreAllied(unitGetHouseID(unit), unitGetHouseID(target))) {
+      if (unit.actionID !== ACTION.ATTACK && unit.currentDestination.x === 0 && unit.currentDestination.y === 0) unitSetAction(unit, ACTION.ATTACK);
+      return;
+    }
+
+    unit.patrolEngaging = false;
+    unit.targetAttack = 0;
+    unit.targetMove = 0;
+    unit.route[0] = 0xff;
+    unit.currentDestination = { x: 0, y: 0 };
+    unitSetSpeed(unit, 0);
+    unitSetAction(unit, ACTION.MOVE);
+    const resume = unit.patrolToEnd ? unit.patrolEnd : unit.patrolStart;
+    unitSetDestination(unit, indexEncode(packTile(resume), IT.TILE));
+  }
+
+  if (!unit.patrolEngaging) {
+    let nearest: Unit | null = null;
+    let nearestDistance = 5 * 256;
+    for (const enemy of G.units) {
+      if (!enemy.o.flags.allocated || enemy.o.flags.isNotOnMap || enemy === unit) continue;
+      if (houseAreAllied(unitGetHouseID(unit), unitGetHouseID(enemy))) continue;
+      if ((enemy.o.seenByHouses & (1 << G.playerHouseID)) === 0) continue;
+      const distance = tileGetDistance(unit.o.position, enemy.o.position);
+      if (distance < nearestDistance) {
+        nearest = enemy;
+        nearestDistance = distance;
+      }
+    }
+    if (nearest) {
+      unit.targetAttack = 0;
+      unit.targetMove = 0;
+      unit.route[0] = 0xff;
+      unit.currentDestination = { x: 0, y: 0 };
+      unitSetSpeed(unit, 0);
+      unitSetAction(unit, ACTION.ATTACK);
+      unitSetTarget(unit, indexEncode(nearest.o.index, IT.UNIT));
+      unit.patrolEngaging = true;
+      return;
+    }
+  }
+
+  if (unit.targetMove === 0 && unit.speed === 0 && unit.currentDestination.x === 0 && unit.currentDestination.y === 0) {
+    unit.patrolToEnd = !unit.patrolToEnd;
+    const destination = unit.patrolToEnd ? unit.patrolEnd : unit.patrolStart;
+    if (unit.actionID !== ACTION.MOVE) unitSetAction(unit, ACTION.MOVE);
+    unitSetDestination(unit, indexEncode(packTile(destination), IT.TILE));
+  }
+}
+
 export function gameLoopUnit(): void {
+  tickDroneGrenades();
   let tickMovement = false;
   let tickRotation = false;
   let tickBlinking = false;
@@ -129,6 +192,10 @@ export function gameLoopUnit(): void {
     G.scriptCurrentUnit = u;
     G.scriptCurrentTeam = null;
     if (u.o.flags.isNotOnMap) continue;
+    tickCarryallFlight(u);
+    if(tickDrone(u))continue;
+    tickLaser(u);
+    if(u.harvesterDefense&&tickScript)unitHarvesterDefenseTick(u);
 
     if (tickUnknown4 && u.targetAttack !== 0 && ui.o.flags.hasTurret) {
       unitSetOrientation(u, tileGetDirection(u.o.position, indexGetTile(u.targetAttack)), false, 1);
@@ -203,6 +270,7 @@ export function gameLoopUnit(): void {
     }
 
     if (tickScript) {
+      if (u.patrolActive) unitPatrolTick(u);
       if (u.o.script.delay === 0) {
         if (scriptIsLoaded(u.o.script)) {
           let opcodesLeft = SCRIPT_UNIT_OPCODES_PER_TICK + 2;
@@ -231,6 +299,7 @@ export function unitCreate(index: number, typeID: number, houseID: number, posit
   const u = unitAllocate(index, typeID, houseID);
   if (!u) return null;
   u.o.houseID = houseID;
+  u.carryallFlight=undefined;
   unitSetOrientation(u, orientation, true, 0);
   unitSetOrientation(u, orientation, true, 1);
   unitSetSpeed(u, 0);
@@ -252,6 +321,8 @@ export function unitCreate(index: number, typeID: number, houseID: number, posit
   u.distanceToDestination = 0x7fff;
   u.targetMove = 0;
   u.amount = 0;
+  u.harvesterDefense=undefined;
+  u.laser=undefined;u.drone=undefined;
   u.wobbleIndex = 0;
   u.spriteOffset = 0;
   u.blinkCounter = 0;
@@ -284,6 +355,43 @@ export function unitIsTypeOnMap(houseID: number, typeID: number): boolean {
     return true;
   }
   return false;
+}
+
+/** React only to actual nearby enemy foot fire, never override return/retreat/manual movement. */
+export function unitHarvesterDefend(u:Unit,attacker:Unit):boolean{
+  if(u.o.type!==UNIT.HARVESTER||!u.o.flags.allocated||u.o.hitpoints===0||u.o.flags.isNotOnMap||
+    !attacker.o.flags.allocated||attacker.o.hitpoints===0||attacker.o.flags.isNotOnMap||
+    unitInfo[attacker.o.type].movementType!==MOVEMENT.FOOT||houseAreAllied(unitGetHouseID(u),unitGetHouseID(attacker))||
+    tileGetDistance(u.o.position,attacker.o.position)>4*256)return false;
+  if(u.harvesterDefense)return true;
+  if(u.actionID!==ACTION.HARVEST&&u.actionID!==ACTION.GUARD&&u.actionID!==ACTION.STOP)return false;
+  let spice={...u.targetLast};
+  if(indexGetType(u.targetMove)===IT.TILE)spice=indexGetTile(u.targetMove);
+  const kind=mapGetLandscapeType(packTile(spice));
+  if(kind!==LST.SPICE&&kind!==LST.THICK_SPICE)spice={...u.o.position};
+  const target=indexEncode(attacker.o.index,IT.UNIT);
+  const defense={target,spice:{...spice},start:{...u.o.position},expires:G.timerGame+960};
+  objectScriptVariable4Clear(u.o);u.targetAttack=0;u.targetMove=0;
+  unitSetAction(u,ACTION.MOVE);unitSetDestination(u,target);u.harvesterDefense=defense;
+  return true;
+}
+
+function unitHarvesterDefenseTick(u:Unit):void{
+  const defense=u.harvesterDefense!;
+  if(u.actionID===ACTION.DIE||u.actionID===ACTION.RETURN||u.actionID===ACTION.RETREAT){u.harvesterDefense=undefined;return;}
+  const attacker=indexGetUnit(defense.target);
+  if(attacker?.o.flags.allocated&&attacker.o.hitpoints>0&&attacker.actionID!==ACTION.DIE&&!attacker.o.flags.isNotOnMap&&
+    !houseAreAllied(unitGetHouseID(u),unitGetHouseID(attacker))&&unitInfo[attacker.o.type].movementType===MOVEMENT.FOOT&&
+    G.timerGame<defense.expires&&tileGetDistance(attacker.o.position,defense.start)<=4*256){
+    if(u.actionID!==ACTION.MOVE)unitSetAction(u,ACTION.MOVE);
+    if(u.targetMove!==defense.target)unitSetDestination(u,defense.target);
+    return;
+  }
+  u.harvesterDefense=undefined;u.targetAttack=0;u.targetMove=0;u.route[0]=255;
+  const oldField=packTile(defense.spice),kind=mapGetLandscapeType(oldField);
+  const field=kind===LST.SPICE||kind===LST.THICK_SPICE?oldField:mapSearchSpice(packTile(u.o.position),64);
+  unitSetAction(u,ACTION.HARVEST);
+  if(field){u.targetLast=tileCenter(unpackTile(field));unitSetDestination(u,indexEncode(field,IT.TILE));}
 }
 
 export function unitSetAction(u: Unit | null, action: number): void {
@@ -407,6 +515,13 @@ export function unitSetDestination(u: Unit | null, destination: number): void {
   }
   u.targetMove = destination;
   u.route[0] = 0xff;
+}
+
+export function unitDestinationTile(u:Unit,encoded:number):Tile32 {
+  if(u.o.type===UNIT.CARRYALL)return carryallDestination(encoded);
+  const s=indexGetStructure(encoded);
+  return u.o.type===UNIT.HARVESTER&&s?.o.type===STRUCTURE.REFINERY&&s.o.houseID===unitGetHouseID(u)
+    ?refineryDock(s.o.position):indexGetTile(encoded);
 }
 
 export function unitGetTargetUnitPriority(unit: Unit | null, target: Unit | null): number {
@@ -701,12 +816,6 @@ export function unitMove(unit: Unit | null, distance: number): boolean {
       unitUntargetMe(u);
       u.o.script.variables[1] = 1;
       unitSetAction(u, ACTION.DIE);
-    } else {
-      const type = mapGetLandscapeType(packed);
-      if ((type === LST.NORMAL_SAND || type === LST.ENTIRELY_DUNE) && G.map[packed].overlayTileID === 0) {
-        const animationID = orientation8(unit.orientation[0].current);
-        animationStart(animationUnitMove[animationID], unit.o.position, 0, unit.o.houseID, 5);
-      }
     }
   }
 
@@ -813,10 +922,13 @@ export function unitDamage(unit: Unit | null, damage: number, range: number): bo
   let ui = unitInfo[unit.o.type];
   if (!ui.flags.isNormalUnit && unit.o.type !== UNIT.SANDWORM) return false;
   if (G.playtester && unit.o.houseID === G.playerHouseID) return false;
-  const alive = unit.o.hitpoints !== 0;
+  const beforeHP=unit.o.hitpoints,alive = beforeHP !== 0;
   unit.o.hitpoints = unit.o.hitpoints >= damage ? unit.o.hitpoints - damage : 0;
+  if(unit.o.type===UNIT.COMBAT_DRONE&&alive&&!unit.o.flags.isNotOnMap&&
+    Math.ceil(beforeHP/(ui.o.hitpoints/3))>Math.ceil(unit.o.hitpoints/(ui.o.hitpoints/3)))G.onSound(COMBAT_SFX.DRONE_EXPLOSION,unit.o.position);
   unitDeviationDecrease(unit, 0);
   const houseID = unitGetHouseID(unit);
+  if (houseID !== G.playerHouseID) G.houses[houseID].flags.isAIActive = true;
   if (unit.o.hitpoints === 0) {
     unitRemovePlayer(unit);
     if (unit.o.type === UNIT.HARVESTER) mapFillCircleWithSpice(packTile(unit.o.position), idiv(unit.amount, 32));
@@ -901,7 +1013,8 @@ export function unitSelect(unit: Unit | null): void {
     return;
   }
   if (unitGetHouseID(unit) === G.playerHouseID) {
-    G.onSound(unitInfo[unit.o.type].movementType === MOVEMENT.FOOT ? 18 : 19);
+    // MD $0282fe/$02830a: выбор пехоты — $11 (GEMS seq 67, «Yes sir»), выбор техники — $0F (GEMS seq 79)
+    G.onSound(unitInfo[unit.o.type].movementType === MOVEMENT.FOOT ? 0x11 : 0x0f);
   }
   if (G.unitSelected) {
     if (G.unitSelected !== unit) unitDisplayStatusText(unit);
@@ -1085,6 +1198,9 @@ export function unitCallUnitByType(type: number, houseID: number, target: number
     if (unit) unit.o.flags.byScenario = true;
   }
   if (unit) {
+    // An idle MD carryall may still be inside its long departure/loiter delay.
+    // Start the new job immediately, before the waiting harvester times out.
+    if (type === UNIT.CARRYALL) unitSetAction(unit, ACTION.MOVE);
     unit.targetMove = target;
     objectScriptVariable4Set(unit.o, target);
   }
@@ -1187,6 +1303,8 @@ export function unitGetTileEnterScore(unit: Unit | null, packed: number, orient8
   if (s) {
     const res = unitIsValidMovementIntoStructure(unit, s);
     if (res === 0) return 256;
+    if(unit.o.type===UNIT.HARVESTER&&s.o.type===STRUCTURE.REFINERY&&
+      (packed!==packTile(refineryDock(s.o.position))||orient8!==0))return 256;
     return -res;
   }
   const type = mapGetLandscapeType(packed);

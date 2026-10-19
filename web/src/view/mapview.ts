@@ -8,10 +8,26 @@
  * выделения, правая — снять выделение. Колесо — масштаб, средняя кнопка — сдвиг карты.
  * Мировые координаты — пиксели оригинала (клетка = 32).
  */
-import type { CursorKind } from "../gfx/cursors.ts";
+import {drawCursor,drawSelection,type CursorKind} from "../gfx/cursors.ts";
+import {drawConstructionActivity} from '../gfx/construction-activity.ts';
 import type { IconSet } from "../gfx/icons.ts";
 import type { Skins } from "../gfx/skins.ts";
 import type { SpriteSet } from "../gfx/sprites.ts";
+import type { ContinuousTerrain } from "../gfx/continuous-terrain.ts";
+import { visualHash } from "../gfx/terrain-masks.ts";
+import type { VehicleArt } from "../gfx/vehicle-art.ts";
+import type { ImpactParticles } from "../gfx/impact-particles.ts";
+import { G } from "../engine/core.ts";
+import { drawWall } from "../gfx/wall-art.ts";
+import { drawStatusIcon, type StatusKind } from "../gfx/status-icons.ts";
+import { VehicleTracks } from "../gfx/vehicle-tracks.ts";
+import type { InfantryArt } from "../gfx/infantry-art.ts";
+import {drawRefineryActivity} from '../gfx/refinery-activity.ts';
+import {drawBuildingActivity,drawBuildingNightLights} from '../gfx/building-activity.ts';
+import {WorldAtmosphere,desertLight} from '../gfx/world-atmosphere.ts';
+import {drawFactoryActivity} from '../gfx/factory-activity.ts';
+import {drawAdvancedWeapons,drawDroneRadius} from '../gfx/advanced-unit-effects.ts';
+import {FogOfWar} from '../gfx/fog-of-war.ts';
 import type { Pad } from "../input/pad.ts";
 import { CELL_PX, MAP_SIZE } from "../rom/dune.ts";
 import type { Structure, Unit, World } from "../game/world.ts";
@@ -78,56 +94,72 @@ export class MapView {
   private dirty = true;
   private last = 0;
   private acc = 0;
-  private corners: HTMLCanvasElement[];
+  private tracks = new VehicleTracks();
+  private atmosphere = new WorldAtmosphere();
 
   constructor(
     canvas: HTMLCanvasElement,
     private icons: IconSet,
     private sprites: SpriteSet,
-    private cursors: Record<CursorKind, HTMLCanvasElement>,
+    _cursors: Record<CursorKind, HTMLCanvasElement>,
     private pad: Pad,
     private skins: Skins,
+    private terrain: ContinuousTerrain | null = null,
+    private vehicles: VehicleArt | null = null,
+    private particles: ImpactParticles | null = null,
+    private infantry: InfantryArt | null = null,
   ) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d", { alpha: false })!;
-    this.corners = splitCorners(cursors.select);
     this.bindMouse();
     new ResizeObserver(() => this.resize()).observe(canvas);
     this.resize();
     requestAnimationFrame((t) => this.tick(t));
   }
 
-  /** клетка тумана (g_veiledTileID) — рисуется чёрной */
+  private fog?:FogOfWar;
+  /** Полностью скрытая клетка; HD-туман рисуется отдельным мягким слоем. */
   veiledIcon = 0;
-  /** постановка здания: размер и годность места (1 — да, <0 — без бетона, 0 — нельзя) */
-  placement: { w: number; h: number; valid: number } | null = null;
+  /** постановка здания: размер и годность места (1 — да, <0 — без бетона, 0 — нельзя), cells — годность каждой клетки */
+  placement: { w: number; h: number; valid: number; cells?: boolean[] } | null = null;
+  /** Red Alert-style lock brackets while a selected force is hovering a hostile target. */
+  aimTarget: { x: number; y: number; w: number; h: number } | null = null;
   /** значки над зданиями («OK», молоток, молния): описание спрайта ROM */
-  structureIcons: { s: Structure; def: number }[] = [];
+  structureIcons: { s: Structure; def: number; kind?: StatusKind }[] = [];
   private stripes = new Map<string, CanvasPattern>();
 
-  private drawIcon(id: number, x: number, y: number, size: number): void {
+  private drawIcon(id: number, x: number, y: number, size: number, allowHD = true): void {
     if (this.skins.iconOverridden[id]) {
       this.ctx.drawImage(this.skins.scaled(`icon:${id}`, size, size)!, x, y);
       return;
     }
-    const s = this.icons.source(id);
+    const s = (allowHD ? this.sprites.mapEffects?.icon(id) : null) ?? this.icons.source(id);
+    const smooth = this.ctx.imageSmoothingEnabled;
+    if (s.sw > 32) this.ctx.imageSmoothingEnabled = true;
     this.ctx.drawImage(s.image, s.sx, s.sy, s.sw, s.sh, x, y, size, size);
+    this.ctx.imageSmoothingEnabled = smooth;
   }
 
   setWorld(world: World, focusX: number, focusY: number): void {
     this.resize();
     this.world = world;
+    this.vehicles?.reset();
+    this.particles?.reset();
+    this.tracks.reset();
+    this.infantry?.reset();
+    this.terrain?.setMap(world.map);
     this.selectedUnits.clear();
     this.selectedStructure = null;
     this.zoom = this.defaultZoom();
     this.cursorX = focusX;
     this.cursorY = focusY;
     this.centerOn(focusX, focusY);
+    this.invalidate();
   }
 
-  /** Масштаб, при котором по вертикали видно около 14 клеток. */
+  /** Начальный масштаб: карта крупнее, при этом размер подстраивается под экран. */
   private defaultZoom(): number {
-    const z = Math.round(this.canvas.height / this.pixelRatio / (14 * CELL_PX));
+    const z = Math.round(this.canvas.height / this.pixelRatio / (12 * CELL_PX));
     return Math.min(Math.max(z, ZOOMS[0]), ZOOMS[ZOOMS.length - 1]);
   }
 
@@ -403,21 +435,61 @@ export class MapView {
     const y1 = Math.min(MAP_SIZE - 1, Math.floor((this.camY + v.h) / CELL_PX));
     const size = CELL_PX * z;
     const map = world.map;
+    const buildingFloor = new Uint8Array(4096);
+    const buildingImages = new Map<Structure,HTMLCanvasElement|ImageBitmap>();
+    for(const st of world.structures){
+      if(st.x>x1||st.y>y1||st.x+st.w<=x0||st.y+st.h<=y0)continue;
+      const image=st.built?this.skins.structure(st.type,st.w*size,st.h*size,st.ref.rotationSpriteDiff,G.timerGame):
+        [0,1,14].includes(st.type)?null:this.sprites.mapEffects?.constructionSite;
+      if(!image)continue;
+      buildingImages.set(st,image);
+      for(let row=0;row<st.h;row++)for(let col=0;col<st.w;col++){
+        if(map.inBounds(st.x+col,st.y+row))buildingFloor[((st.y+row)<<6)|st.x+col]=1;
+      }
+    }
+    this.terrain?.draw(ctx, ox / z, oy / z, z);
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
         if (!map.inBounds(x, y)) continue;
         const p = (y << 6) | x;
         const ov = map.overlay[p];
-        if (ov === this.veiledIcon && this.veiledIcon !== 0) continue; // туман: чёрная клетка
-        this.drawIcon(map.ground[p], x * size - ox, y * size - oy, size);
-        if (ov !== 0) this.drawIcon(ov, x * size - ox, y * size - oy, size);
+        if (ov === this.veiledIcon && this.veiledIcon !== 0) {
+          // Only ground may show through the translucent frontier. Buildings below
+          // still skip these cells and World excludes units outside explored tiles.
+          const id=map.ground[p];
+          if(!this.terrain||!this.terrain.covers(id))this.drawIcon(id,x*size-ox,y*size-oy,size);
+          continue;
+        }
+        const id = map.ground[p];
+        if (this.terrain?.kinds[id] === 11 && !this.skins.iconOverridden[id]) {
+          let connections = 0;
+          for (const [dx, dy, bit] of [[0, -1, 1], [1, 0, 2], [0, 1, 4], [-1, 0, 8]]) {
+            const nx = x + dx, ny = y + dy;
+            if (map.inBounds(nx, ny) && this.terrain.kinds[map.ground[(ny << 6) | nx]] === 11) connections |= bit;
+          }
+          drawWall(ctx, x * size - ox, y * size - oy, size, connections, this.sprites.mapEffects?.icon(126)?.image);
+        } else if(buildingFloor[p])this.drawIcon(126,x*size-ox,y*size-oy,size);
+        else if (!this.terrain || !this.terrain.covers(id) || this.skins.iconOverridden[id] ||
+          this.terrain.kinds[id] === 13 || this.terrain.kinds[id] === 14) {
+          this.drawIcon(id, x * size - ox, y * size - oy, size, this.terrain !== null);
+        }
+        if (ov !== 0 && !(this.veiledIcon&&ov>=this.veiledIcon-15&&ov<=this.veiledIcon)) this.drawIcon(ov, x * size - ox, y * size - oy, size);
       }
+
     }
+    const isVisible = (x:number,y:number) => {
+      const cx=Math.floor(x/CELL_PX),cy=Math.floor(y/CELL_PX);
+      return map.inBounds(cx,cy) && (!this.veiledIcon || map.overlay[(cy<<6)|cx]!==this.veiledIcon);
+    };
+    this.tracks.update(world.units,G.timerGame,(x,y)=>this.terrain?.isRockAt(x,y)??false);
+    ctx.save();ctx.setTransform(z,0,0,z,-ox,-oy);this.tracks.draw(ctx,G.timerGame,isVisible);ctx.restore();
+    this.infantry?.update(world.units,G.timerGame);
+    ctx.save();ctx.setTransform(z,0,0,z,-ox,-oy);this.infantry?.drawCorpses(ctx,G.timerGame,isVisible);ctx.restore();
+
     // свои картинки зданий — одной картинкой на всю раскладку
     for (const st of world.structures) {
-      if (!st.built) continue;
       if (st.x > x1 || st.y > y1 || st.x + st.w <= x0 || st.y + st.h <= y0) continue;
-      const img = this.skins.structure(st.type, st.w * size, st.h * size, st.ref.rotationSpriteDiff);
+      const img = buildingImages.get(st);
       if (!img) continue;
       // Подмена не должна открывать здание под туманом или перекрывать его края.
       for (let row = 0; row < st.h; row++) for (let col = 0; col < st.w; col++) {
@@ -426,8 +498,25 @@ export class MapView {
         if (x < x0 || x > x1 || y < y0 || y > y1 || !map.inBounds(x, y)) continue;
         const ov = map.overlay[(y << 6) | x];
         if (ov === this.veiledIcon && this.veiledIcon !== 0) continue;
-        ctx.drawImage(img, col * size, row * size, size, size, x * size - ox, y * size - oy, size, size);
-        if (ov !== 0) this.drawIcon(ov, x * size - ox, y * size - oy, size);
+        const sw=img.width/st.w,sh=img.height/st.h;
+        ctx.drawImage(img, col * sw, row * sh, sw, sh, x * size - ox, y * size - oy, size, size);
+        if (ov !== 0 && !(this.veiledIcon&&ov>=this.veiledIcon-15&&ov<=this.veiledIcon)) this.drawIcon(ov, x * size - ox, y * size - oy, size);
+      }
+      if(!st.built||!this.skins.hasStructure(st.type)){
+        ctx.save();ctx.beginPath();
+        for(let row=0;row<st.h;row++)for(let col=0;col<st.w;col++){
+          const x=st.x+col,y=st.y+row;
+          if(isVisible(x*32+16,y*32+16))ctx.rect(x*size-ox,y*size-oy,size,size);
+        }
+        ctx.clip();ctx.setTransform(z,0,0,z,-ox,-oy);
+        if(!st.built)drawConstructionActivity(ctx,st,G.timerGame);
+        else {
+          const house=G.houses[st.house],powered=st.type===9||!house||house.powerProduction>=house.powerUsage;
+          drawBuildingActivity(ctx,st,img,G.timerGame,powered);
+          drawFactoryActivity(ctx,st,this.vehicles,G.timerGame,powered);
+          drawRefineryActivity(ctx,st,this.vehicles,G.timerGame);
+        }
+        ctx.restore();
       }
     }
     if (this.showGrid) this.drawGrid(x0, y0, x1, y1, size, ox, oy);
@@ -439,19 +528,48 @@ export class MapView {
     );
     // наземные снизу вверх, затем воздушные — поверх всех
     visible.sort((a, b) => (a.air ? 100000 : 0) + a.y - ((b.air ? 100000 : 0) + b.y));
-    const drawEffect = (spriteID: number, x: number, y: number) => {
+    const drawEffect = (spriteID: number, x: number, y: number, seed = 0) => {
       const img = this.sprites.effect(spriteID);
-      if (img) ctx.drawImage(img.canvas, Math.round((x + img.ox) * z) - ox, Math.round((y + img.oy) * z) - oy, img.canvas.width * z, img.canvas.height * z);
+      if (!img) return;
+      const hd = img.worldWidth !== undefined;
+      ctx.save();
+      ctx.imageSmoothingEnabled = hd;
+      ctx.translate(Math.round(x * z) - ox, Math.round(y * z) - oy);
+      if (hd && seed) {
+        const variation = visualHash(seed, 73);
+        const scale = .96 + (variation & 255) / 255 * .08;
+        ctx.rotate(((variation >>> 8) & 255) / 255 * .12 - .06);
+        ctx.scale(scale, scale);
+      }
+      ctx.drawImage(img.canvas, img.ox * z, img.oy * z,
+        (img.worldWidth ?? img.canvas.width) * z, (img.worldHeight ?? img.canvas.height) * z);
+      ctx.restore();
     };
     // взрывы — под воздушными юнитами, как в оригинале
     const drawBlasts = () => {
-      for (const b of world.blasts) drawEffect(b.spriteID, b.x, b.y);
+      for (const b of world.blasts) {
+        if (b.type === 13 && this.sprites.wormArt) {
+          ctx.save(); ctx.setTransform(z,0,0,z,-ox,-oy);
+          this.sprites.wormArt.swallow(ctx,b.x,b.y,b.age); ctx.restore();
+        } else drawEffect(b.spriteID, b.x, b.y, (b.x * 8) ^ (b.type * 997));
+      }
+      drawParticles('air');
     };
+    const drawParticles = (layer: 'ground' | 'air') => {
+      if (!this.particles) return;
+      ctx.save();ctx.setTransform(z,0,0,z,-ox,-oy);
+      this.particles.draw(ctx,G.timerGame,layer,isVisible);
+      ctx.restore();
+    };
+    drawParticles('ground');
     let blastsDrawn = false;
     for (const u of visible) {
       if (u.air && !blastsDrawn) {
         drawBlasts();
         blastsDrawn = true;
+      }
+      if (u.type === 25 && world.blasts.some((b) => b.type === 13 && Math.hypot(b.x - u.x, b.y - u.y) < 16)) {
+        continue;
       }
       const skin = this.sprites.unitSkin(u.type, u.orientation, u.anim >> 3, u.turret, u.state.recoil);
       if (skin) {
@@ -464,6 +582,11 @@ export class MapView {
           ctx.globalAlpha = 1;
         }
         ctx.drawImage(c, Math.round((u.x - skin.box / 2) * z) - ox, Math.round((u.y - skin.box / 2) * z) - oy);
+      } else if ((this.vehicles || this.infantry || this.sprites.wormArt) && (() => {
+        ctx.save();ctx.setTransform(z,0,0,z,-ox,-oy);
+        const drawn=this.sprites.wormArt?.draw(ctx,u,G.timerGame)||this.vehicles?.draw(ctx,u,G.timerGame)||this.infantry?.draw(ctx,u,G.timerGame);ctx.restore();return drawn;
+      })()) {
+        // HD hull, separate weapon and flash already drawn in world coordinates.
       } else {
         for (const f of this.sprites.unitFrames(u.type, u.orientation, u.anim >> 3, u.turret, u.state)) {
           const img = this.sprites.get(f, u.house);
@@ -490,40 +613,90 @@ export class MapView {
       if (u.dust >= 0) {
         // пыль из-под харвестера ($012338 → $00967C): направление ((ориентация + 16) & $E0) >> 5
         const img = this.sprites.harvestDust(((u.orientation + 16) & 0xff) >> 5, u.dust);
-        ctx.drawImage(img.canvas, Math.round((u.x + img.ox) * z) - ox, Math.round((u.y + img.oy) * z) - oy, img.canvas.width * z, img.canvas.height * z);
+        ctx.save();
+        ctx.imageSmoothingEnabled = img.worldWidth !== undefined;
+        ctx.drawImage(img.canvas, Math.round((u.x + img.ox) * z) - ox, Math.round((u.y + img.oy) * z) - oy,
+          (img.worldWidth ?? img.canvas.width) * z, (img.worldHeight ?? img.canvas.height) * z);
+        ctx.restore();
       }
       if (u.smoke >= 0) drawEffect(180 + u.smoke, u.x, u.y - 14);
     }
     if (!blastsDrawn) drawBlasts();
 
+    // All world lighting stays below status/selection/cursors and inside revealed cells.
+    if(this.atmosphere){
+      const elapsed=Math.max(0,G.timerGame-G.tickScenarioStart);
+      ctx.save();ctx.beginPath();
+      for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)
+        if(isVisible(x*32+16,y*32+16))ctx.rect(x*size-ox,y*size-oy,size,size);
+      ctx.clip();
+      ctx.save();ctx.setTransform(z,0,0,z,-ox,-oy);drawAdvancedWeapons(ctx,world.units,G.timerGame,isVisible);ctx.restore();
+      this.atmosphere.draw(ctx,elapsed,ox,oy,z,this.canvas.width,this.canvas.height);
+      const {night}=desertLight(elapsed);
+      if(night>.03){
+        ctx.setTransform(z,0,0,z,-ox,-oy);
+        for(const st of buildingImages.keys()){
+          const house=G.houses[st.house];
+          if(!this.skins.hasStructure(st.type)&&(!house||house.powerProduction>=house.powerUsage))drawBuildingNightLights(ctx,st,night);
+        }
+      }
+      ctx.restore();
+    }
+
+    (this.fog??=new FogOfWar()).draw(ctx,map.overlay,this.veiledIcon,ox,oy,z);
+    drawDroneRadius(ctx,this.selectedStructure,this.selectedUnits,z,ox,oy);
     // постановка здания: рамка на клетках под курсором
     if (this.placement) {
       const pl = this.placement;
       const cx = Math.floor(this.cursorX / CELL_PX);
       const cy = Math.floor(this.cursorY / CELL_PX);
-      // как в MD: косая штриховка по всей площади здания, зелёная — можно, красная — нельзя
+      // как в MD: косая штриховка по каждой клетке здания (зелёная — можно, красная — нельзя/занято)
       ctx.save();
-      ctx.translate(cx * size - ox, cy * size - oy);
-      ctx.fillStyle = this.stripePattern(pl.valid !== 0 ? "#2fa83a" : "#d02a1e", z);
-      ctx.fillRect(0, 0, pl.w * size, pl.h * size);
+      for (let y = 0; y < pl.h; y++) {
+        for (let x = 0; x < pl.w; x++) {
+          const idx = y * pl.w + x;
+          const ok = pl.cells ? !!pl.cells[idx] : pl.valid !== 0;
+          ctx.fillStyle = this.stripePattern(ok ? "#2fa83a" : "#d02a1e", z);
+          ctx.fillRect((cx + x) * size - ox, (cy + y) * size - oy, size, size);
+        }
+      }
       ctx.restore();
     }
-    for (const { s, def } of this.structureIcons) {
+    for (const { s, def, kind } of this.structureIcons) {
       const img = this.sprites.statusDef(def);
+      if(kind){
+        const x=(s.x*CELL_PX+img.ox+img.canvas.width/2)*z-ox;
+        const y=(s.y*CELL_PX+img.oy+img.canvas.height/2)*z-oy;
+        if(!map.inBounds(s.x,s.y)||(this.veiledIcon&&map.overlay[(s.y<<6)|s.x]===this.veiledIcon))continue;
+        drawStatusIcon(ctx,kind,x,y,14*z,G.timerGame,s.ref.o.index);continue;
+      }
       ctx.drawImage(img.canvas, Math.round((s.x * CELL_PX + img.ox) * z) - ox, Math.round((s.y * CELL_PX + img.oy) * z) - oy, img.canvas.width * z, img.canvas.height * z);
     }
 
     // выделение — уголки рамки, как у курсора оригинала
     const s = this.selectedStructure;
-    if (s) this.drawCorners(s.x * CELL_PX, s.y * CELL_PX, s.w * CELL_PX, s.h * CELL_PX, ox, oy);
+    if (s) this.drawCorners(s.x * CELL_PX, s.y * CELL_PX, s.w * CELL_PX, s.h * CELL_PX, ox, oy,true);
     for (const u of this.selectedUnits) {
       if (u === this.markedUnit) continue;
       this.drawCorners(u.x - 14, u.y - 14, 28, 28, ox, oy);
     }
     if (this.markedUnit) {
-      const m = this.cursors.move;
       const u = this.markedUnit;
-      ctx.drawImage(m, Math.round((u.x - 16) * z) - ox, Math.round((u.y - 16) * z) - oy, 32 * z, 32 * z);
+      drawCursor(ctx,'move',u.x*z-ox,u.y*z-oy,32*z,G.timerGame);
+    }
+
+    if (this.aimTarget) {
+      const a=this.aimTarget,x=a.x*z-ox,y=a.y*z-oy,w=a.w*z,h=a.h*z;
+      const inset=Math.min(4*z,Math.max(2,z)),arm=Math.min(10*z,Math.max(5,Math.min(w,h)*.22));
+      const pulse=.72+.28*Math.sin(G.timerGame*.18);
+      ctx.save();ctx.globalAlpha=pulse;ctx.strokeStyle='#ff5146';ctx.lineWidth=Math.max(1.5,z*1.15);
+      ctx.shadowColor='#ff2418';ctx.shadowBlur=5*z;
+      ctx.beginPath();
+      ctx.moveTo(x+inset,y+inset+arm);ctx.lineTo(x+inset,y+inset);ctx.lineTo(x+inset+arm,y+inset);
+      ctx.moveTo(x+w-inset-arm,y+inset);ctx.lineTo(x+w-inset,y+inset);ctx.lineTo(x+w-inset,y+inset+arm);
+      ctx.moveTo(x+w-inset,y+h-inset-arm);ctx.lineTo(x+w-inset,y+h-inset);ctx.lineTo(x+w-inset-arm,y+h-inset);
+      ctx.moveTo(x+inset+arm,y+h-inset);ctx.lineTo(x+inset,y+h-inset);ctx.lineTo(x+inset,y+h-inset-arm);
+      ctx.stroke();ctx.restore();
     }
 
     if (this.box?.active) {
@@ -533,9 +706,12 @@ export class MapView {
       ctx.strokeRect(Math.min(a.x, this.mouse.x) + 0.5, Math.min(a.y, this.mouse.y) + 0.5, Math.abs(this.mouse.x - a.x), Math.abs(this.mouse.y - a.y));
     }
 
-    if (this.placement) return; // при постановке курсором служит сама штриховка
-    const cur = this.cursors[this.cursorKind];
-    ctx.drawImage(cur, Math.round((this.cursorX - 16) * z) - ox, Math.round((this.cursorY - 16) * z) - oy, 32 * z, 32 * z);
+    // В режиме клавиатуры оставляем обычный точный курсор поверх привязанной к клеткам
+    // штриховки. Сама площадка строится по сетке, но указатель продолжает идти плавно,
+    // как в оригинале; в режиме мыши системный указатель уже виден.
+    if (!this.placement || !this.mouseMode) {
+      drawCursor(ctx,this.cursorKind,this.cursorX*z-ox,this.cursorY*z-oy,32*z,G.timerGame);
+    }
   }
 
   private stripePattern(color: string, z: number): CanvasPattern {
@@ -555,16 +731,9 @@ export class MapView {
     return p;
   }
 
-  /** Четыре уголка (из оригинального курсора-рамки) по углам прямоугольника. */
-  private drawCorners(x: number, y: number, w: number, h: number, ox: number, oy: number): void {
-    const z = this.pixelScale;
-    const [tl, tr, bl, br] = this.corners;
-    const put = (c: HTMLCanvasElement, wx: number, wy: number) =>
-      this.ctx.drawImage(c, Math.round(wx * z) - ox, Math.round(wy * z) - oy, c.width * z, c.height * z);
-    put(tl, x, y);
-    put(tr, x + w - tr.width, y);
-    put(bl, x, y + h - bl.height);
-    put(br, x + w - br.width, y + h - br.height);
+  private drawCorners(x:number,y:number,w:number,h:number,ox:number,oy:number,strong=false):void {
+    const z=this.pixelScale;
+    drawSelection(this.ctx,x*z-ox,y*z-oy,w*z,h*z,z,G.timerGame,strong);
   }
 
   private drawGrid(x0: number, y0: number, x1: number, y1: number, size: number, ox: number, oy: number): void {
@@ -601,18 +770,3 @@ export class MapView {
 }
 
 /** Разрезать курсор-рамку 32x32 на четыре уголка 8x8. */
-function splitCorners(src: HTMLCanvasElement): HTMLCanvasElement[] {
-  const S = 8;
-  return [
-    [0, 0],
-    [32 - S, 0],
-    [0, 32 - S],
-    [32 - S, 32 - S],
-  ].map(([sx, sy]) => {
-    const c = document.createElement("canvas");
-    c.width = S;
-    c.height = S;
-    c.getContext("2d")!.drawImage(src, sx, sy, S, S, 0, 0, S, S);
-    return c;
-  });
-}

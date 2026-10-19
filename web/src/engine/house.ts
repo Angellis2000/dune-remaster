@@ -153,7 +153,8 @@ export function gameLoopHouse(): void {
           u.o.linkedID = h.starportLinkedID & 0xff;
           h.starportLinkedID = INDEX_INVALID;
           u.o.flags.inTransport = true;
-          G.onFeedback(38);
+          // MD $0236a6: прибытие фрегата космопорта игрока — голос 48 ($30, "Frigate has arrived", seq 66)
+          if (h.index === G.playerHouseID) G.onFeedback(48);
         }
         h.starportTimeLeft = u ? houseInfo[h.index].starportDeliveryTime : 1;
       }

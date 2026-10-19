@@ -3,6 +3,7 @@
  * числа юнитов MD-версии подставляются из ROM (описания типов по адресу $06C5BC, 0x5C байт).
  */
 import * as T from "./tables.gen.ts";
+import {ORIGINAL_UNIT_COUNT,LASER_TANK,COMBAT_DRONE,DRONE_PAD} from './custom-unit-defs.ts';
 
 export interface ObjectInfo {
   stringID_abbrev: number;
@@ -225,7 +226,7 @@ export function applyRomTables(rom: Uint8Array): void {
     oi.availableHouse = rom[p + 0x32];
   };
 
-  for (let t = 0; t < unitInfo.length; t++) {
+  for (let t = 0; t < ORIGINAL_UNIT_COUNT; t++) {
     const p = r32(MD.unitInfo + t * 4);
     const ui = unitInfo[t];
     objectFromRom(ui.o, p);
@@ -250,7 +251,7 @@ export function applyRomTables(rom: Uint8Array): void {
     ui.bulletSound = r16(p + 0x5a);
   }
 
-  for (let t = 0; t < structureInfo.length; t++) {
+  for (let t = 0; t < 19; t++) {
     const p = MD.structureInfo + t * 0x66;
     const si = structureInfo[t];
     objectFromRom(si.o, p);
@@ -299,4 +300,32 @@ export function applyRomTables(rom: Uint8Array): void {
 
   animationStructureRubble = readAnimation(rom, MD.animationRubble);
   animationStructureBuild = readAnimation(rom, MD.animationBuild);
+  installCustomUnits();
+}
+
+function installCustomUnits():void{
+  const tank=structuredClone(unitInfo[9]);
+  Object.assign(tank.o,{name:'Laser Tank',buildCredits:Math.round(tank.o.buildCredits*1.6),
+    buildTime:Math.round(tank.o.buildTime*1.45),hitpoints:Math.round(tank.o.hitpoints*.85),
+    availableCampaign:8,upgradeLevelRequired:1,availableHouse:0x3f,structuresRequired:(1<<5)|(1<<18),sortPriority:30});
+  tank.o.flags.targetAir=1;tank.flags.firesTwice=0;tank.flags.notAccurate=0;
+  const longestVehicleRange=Math.max(...unitInfo.slice(0,18).filter(unit=>unit.o.actionsPlayer.includes(0)).map(unit=>unit.fireDistance));
+  tank.movingSpeedFactor=Math.round(tank.movingSpeedFactor*.8);tank.fireDistance=Math.max(tank.fireDistance+1,longestVehicleRange+2);
+  tank.turningSpeed=Math.max(8,tank.turningSpeed*2);
+  tank.damage=Math.round(tank.damage*3.2);tank.fireDelay=60;
+  unitInfo[LASER_TANK]=tank;
+  const drone=structuredClone(unitInfo[1]);
+  Object.assign(drone.o,{name:'Drone Wing',buildCredits:450,buildTime:Math.max(25,Math.round(tank.o.buildTime*.7)),
+    hitpoints:120,availableCampaign:8,upgradeLevelRequired:0,availableHouse:0x3f,structuresRequired:1<<DRONE_PAD,
+    actionsPlayer:[0,1,6,3],sortPriority:31,fogUncoverRadius:3});
+  Object.assign(drone.o.flags,{hasShadow:1,canBePickedUp:0,targetAir:0,hasTurret:0,scriptNoSlowdown:1});
+  Object.assign(drone.flags,{canWobble:0,isTracked:0,isGroundUnit:0,isNotDeviatable:1,isNormalUnit:1,explodeOnDeath:1});
+  Object.assign(drone,{indexStart:22,indexEnd:101,fireDistance:1,damage:12,fireDelay:15,turningSpeed:8});
+  unitInfo[COMBAT_DRONE]=drone;
+  structureInfo[4].buildableUnits.push(LASER_TANK);
+  const pad=structuredClone(structureInfo[5]);
+  Object.assign(pad.o,{name:'Drone Control Pad',hitpoints:300,buildCredits:700,buildTime:70,
+    availableCampaign:8,structuresRequired:1<<5,upgradeLevelRequired:0,availableHouse:0x3f,sortPriority:31});
+  pad.powerUsage=40;pad.buildableUnits=[COMBAT_DRONE];pad.upgradeCampaign=[0,0,0];pad.enterFilter=0;
+  structureInfo[DRONE_PAD]=pad;
 }

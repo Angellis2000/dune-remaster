@@ -4,9 +4,7 @@
  */
 import { G, LST, packTile, random256, randomRange, type Tile32 } from "./core.ts";
 import { mapBloomExplodeSpice, mapChangeSpiceAmount, mapGetLandscapeType, mapIsPositionUnveiled, tileIsUnveiled } from "./map.ts";
-import { animationStart } from "./animation.ts";
-import { structureGetByPackedTile } from "./structure.ts";
-import { animationMap, explosionTable, landscapeInfo } from "./tables.ts";
+import { explosionTable, landscapeInfo } from "./tables.ts";
 
 const EXPLOSION_MAX = 32;
 const enum CMD {
@@ -54,9 +52,10 @@ function funcTileDamage(e: Explosion): void {
   let overlayTileID = t.overlayTileID;
   if (!tileIsUnveiled(overlayTileID)) return;
   const iconMap = G.iconGroups[CRATER_GROUP[crater]];
-  if (iconMap[0] <= overlayTileID && overlayTileID <= iconMap[10]) {
+  if (!iconMap || iconMap.length === 0) return;
+  if (iconMap[0] <= overlayTileID && overlayTileID < iconMap[0] + iconMap.length) {
     overlayTileID -= iconMap[0];
-    if (overlayTileID < 4) overlayTileID += 2;
+    if (overlayTileID < iconMap.length - 2) overlayTileID += 2;
   } else {
     overlayTileID = random256() & 1;
   }
@@ -97,6 +96,7 @@ export function explosionStart(explosionType: number, position: Tile32): void {
     e.type = explosionType;
     explosionTimer = 0;
     G.map[packed].hasExplosion = true;
+    G.onVisualExplosion(explosionType, position);
     break;
   }
 }
@@ -124,11 +124,7 @@ export function explosionTick(): void {
         case CMD.PLAY_VOICE: G.onSound(parameter, e.position); break;
         case CMD.SCREEN_SHAKE: onScreenShake(); break;
         case CMD.SET_ANIMATION: {
-          const packed = packTile(e.position);
-          if (structureGetByPackedTile(packed)) break;
-          let id = parameter + (random256() & 1);
-          id += landscapeInfo[mapGetLandscapeType(packed)].isSand ? 0 : 2;
-          animationStart(animationMap[id], e.position, 0, e.houseID, 3);
+          // В MD-версии группа иконок 3 пустая, анимация кратера не используется как тайловый оверлей
           break;
         }
         case CMD.BLOOM_EXPLOSION: {

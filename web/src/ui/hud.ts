@@ -9,9 +9,12 @@
  */
 import { G, HOUSE, STATE, STRUCTURE, UNIT, type Structure, type Unit } from "../engine/core.ts";
 import { structureLimitReached, unitAirSlotFree } from "../engine/structure.ts";
-import { houseInfo, structureInfo } from "../engine/tables.ts";
+import { houseInfo, structureInfo,unitInfo } from "../engine/tables.ts";
+import {customScriptType,customHudFrame,customStructureHudFrame} from '../engine/custom-unit-defs.ts';
 import { blitTile, readU16, readU32 } from "../rom/md.ts";
 import type { DuneRom } from "../rom/dune.ts";
+import type {Portraits} from '../gfx/portraits.ts';
+import {drawConsoleSymbol} from '../gfx/console-symbols.ts';
 
 export const HUD_ROM = {
   /** таблица кадров: 8 байт — указатель на сырые тайлы, байт +4: FE — строка палитры 1, FF — строка 3 */
@@ -34,7 +37,6 @@ export const HUD_ROM = {
 } as const;
 
 /** Область HUD на экране MD: x 256…320, y 0…128. */
-const X0 = 256;
 export const HUD_W = 64;
 export const HUD_H = 128;
 
@@ -55,6 +57,13 @@ export interface HudState {
   prohibited: boolean;
 }
 
+export interface HudStats {
+  buildings: number;
+  buildingsLost: number;
+  units: number;
+  unitsLost: number;
+}
+
 const EMPTY: HudState = { portrait: null, hp: null, order: null, bar: null, prohibited: false };
 
 /** Вторая полоса: под иконкой заказа ($06A7E2, y=112) или сразу под прочностью ($06A7E8, y=80). */
@@ -67,21 +76,21 @@ const BAR_HIGH = 80;
  */
 export function hudState(rom: DuneRom, s: Structure | null, u: Unit | null): HudState {
   const b = rom.bytes;
-  const sInfo = (t: number) => readU32(b, HUD_ROM.structureInfo + t * 4);
-  const uInfo = (t: number) => readU32(b, HUD_ROM.unitInfo + t * 4);
+  const sInfo = (t: number) => readU32(b, HUD_ROM.structureInfo + (t===STRUCTURE.DRONE_PAD?5:t) * 4);
+  const uInfo = (t: number) => readU32(b, HUD_ROM.unitInfo + customScriptType(t) * 4);
   const frameOf = (info: number) => readU16(b, info + 0x14);
 
   if (s && !u) {
     const t = s.o.type;
     const si = sInfo(t);
-    const out: HudState = { portrait: frameOf(si), hp: { value: s.o.hitpoints, max: readU16(b, si + 0x10) }, order: null, bar: null, prohibited: false };
+    const out: HudState = { portrait: t===STRUCTURE.DRONE_PAD?customStructureHudFrame(t):frameOf(si), hp: { value: s.o.hitpoints, max: t===STRUCTURE.DRONE_PAD?structureInfo[t].o.hitpoints:readU16(b, si + 0x10) }, order: null, bar: null, prohibited: false };
     if (s.o.houseID !== G.playerHouseID) return out;
     // $0295DE: запрет — двор при пределе построек (кроме заказа плит и стен), остальные при бите 8,
     // высокие технологии ещё и без места для авиации; у космопорта знака нет
     const limit = structureLimitReached(s);
     if (t === STRUCTURE.CONSTRUCTION_YARD) out.prohibited = limit && s.objectType !== STRUCTURE.SLAB_2x2 && s.objectType !== STRUCTURE.WALL;
-    else if (t !== STRUCTURE.STARPORT) out.prohibited = limit || (t === STRUCTURE.HIGH_TECH && !unitAirSlotFree());
-    if (s.o.flags.upgrading) {
+    else if (t !== STRUCTURE.STARPORT) out.prohibited = limit || (t === STRUCTURE.HIGH_TECH && s.objectType!==UNIT.COMBAT_DRONE && !unitAirSlotFree());
+    if (s.o.flags.upgrading && !(t === STRUCTURE.CONSTRUCTION_YARD && s.o.linkedID !== 0xff)) {
       out.order = HUD_ROM.upgradeFrame;
       out.bar = { value: 100 - s.upgradeTimeLeft, max: 100, color: 7, y: BAR_LOW };
       return out;
@@ -99,11 +108,11 @@ export function hudState(rom: DuneRom, s: Structure | null, u: Unit | null): Hud
       const ot = s.objectType;
       if (ot !== 0xffff && ot !== 0xff) {
         const info = t === STRUCTURE.CONSTRUCTION_YARD ? sInfo(ot) : uInfo(ot);
-        out.order = frameOf(info);
+        out.order = t===STRUCTURE.CONSTRUCTION_YARD&&ot===STRUCTURE.DRONE_PAD?customStructureHudFrame(ot):t!==STRUCTURE.CONSTRUCTION_YARD&&ot>=27?customHudFrame(ot):frameOf(info);
         // бит 14 слова $6 — идёт стройка (снимается, когда заказ готов, $0121CA):
         // полоса = время стройки − (countDown >> 8)
         if (s.o.linkedID !== 0xff && s.state === STATE.BUSY) {
-          const total = readU16(b, info + 0x18);
+          const total = t===STRUCTURE.CONSTRUCTION_YARD&&ot===STRUCTURE.DRONE_PAD?structureInfo[ot].o.buildTime:t!==STRUCTURE.CONSTRUCTION_YARD&&ot>=27?unitInfo[ot].o.buildTime:readU16(b, info + 0x18);
           out.bar = { value: total - ((s.countDown >> 8) & 0xff), max: total, color: 7, y: BAR_LOW };
         }
       }
@@ -112,7 +121,7 @@ export function hudState(rom: DuneRom, s: Structure | null, u: Unit | null): Hud
     if (t === STRUCTURE.REPAIR && s.o.linkedID !== 0xff) {
       // $029740–$029780: поле юнита $5A — начальное время ремонта, $56 здания — остаток.
       const unit = G.units[s.o.linkedID];
-      out.order = frameOf(uInfo(unit.o.type));
+      out.order = unit.o.type>=27?customHudFrame(unit.o.type):frameOf(uInfo(unit.o.type));
       out.bar = { value: unit.repairTime - s.countDown, max: unit.repairTime, color: 7, y: BAR_LOW };
       return out;
     }
@@ -145,9 +154,10 @@ export function hudState(rom: DuneRom, s: Structure | null, u: Unit | null): Hud
     const t = u.o.type;
     const ui = uInfo(t);
     // $029922: у фрименов свои картинки (кроме червя)
-    const portrait = u.o.houseID === HOUSE.FREMEN && t !== UNIT.SANDWORM ? (t === UNIT.TROOPERS ? HUD_ROM.fremenTroopersFrame : HUD_ROM.fremenFrame) : frameOf(ui);
+    const portrait = t>=27?customHudFrame(t):u.o.houseID === HOUSE.FREMEN && t !== UNIT.SANDWORM ? (t === UNIT.TROOPERS ? HUD_ROM.fremenTroopersFrame : HUD_ROM.fremenFrame) : frameOf(ui);
     if (u.o.hitpoints === 0) return EMPTY;
-    const out: HudState = { portrait, hp: { value: u.o.hitpoints, max: readU16(b, ui + 0x10) }, order: null, bar: null, prohibited: false };
+    const out: HudState = { portrait, hp: { value: u.o.hitpoints, max: t>=27?unitInfo[t].o.hitpoints:readU16(b, ui + 0x10) }, order: null, bar: null, prohibited: false };
+    if(t===UNIT.COMBAT_DRONE)out.bar={value:u.drone?.battery??100,max:100,color:3,y:BAR_HIGH};
     // $02998E: у харвестера — груз пряности из 100, полоса под прочностью
     if (t === UNIT.HARVESTER) out.bar = { value: u.amount, max: 100, color: 3, y: BAR_HIGH };
     return out;
@@ -291,7 +301,7 @@ export class CreditsTicker {
   }
 }
 
-/** Холст HUD 64×128 (область x 256…320 экрана MD), масштабируется вместе с картой. */
+/** Screen-space HUD. Map zoom never changes its size or typography. */
 export class Hud {
   readonly canvas = document.createElement("canvas");
   /** «НЕТ ДЕНЕГ» — посреди экрана: x 112…200, y 112 при экране 320×224 */
@@ -300,81 +310,103 @@ export class Hud {
   private palette: Uint32Array;
   private key = "";
   readonly credits = new CreditsTicker();
+  private pictures=new Map<number,{image:()=>HTMLCanvasElement,crop:{x:number,y:number,w:number,h:number}}>();
 
-  constructor(private rom: DuneRom) {
+  constructor(private rom: DuneRom, portraits:Portraits) {
     this.canvas.className = "hud";
-    this.canvas.width = HUD_W;
-    this.canvas.height = HUD_H;
+    this.canvas.width = 504;
+    this.canvas.height = 512;
     this.canvas.setAttribute("aria-hidden", "true");
     this.g = this.canvas.getContext("2d")!;
     this.palette = rom.gamePalette();
     this.warning.className = "hud-warning";
-    this.warning.width = 88;
-    this.warning.height = 8;
+    this.warning.width = 704;
+    this.warning.height = 64;
     this.warning.setAttribute("aria-hidden", "true");
-    const px = new Uint32Array(88 * 8);
-    for (let i = 0; i < 11; i++) blitTile(rom.bytes.subarray(HUD_ROM.noMoney), i, this.palette, px, 88, i * 8, 0);
-    this.warning.getContext("2d")!.putImageData(new ImageData(new Uint8ClampedArray(px.buffer), 88, 8), 0, 0);
+    const w=this.warning.getContext('2d')!;
+    w.scale(4,4);w.fillStyle='#151a20ed';w.fillRect(0,0,176,16);w.strokeStyle='#bd9453';w.strokeRect(.5,.5,175,15);
+    w.font='600 9px "Segoe UI", sans-serif';w.fillStyle='#ffe0a0';w.textAlign='center';w.textBaseline='middle';w.fillText('НЕДОСТАТОЧНО КРЕДИТОВ',88,8);
+    for(const [kind,table,count] of [['structure',HUD_ROM.structureInfo,19],['unit',HUD_ROM.unitInfo,27]] as const){
+      for(let type=0;type<count;type++){
+        const info=readU32(rom.bytes,table+type*4),frame=readU16(rom.bytes,info+0x14);
+        if(!this.pictures.has(frame)){
+          let crop={x:112,y:68,w:160,h:120};
+          if(kind==='structure'){
+            crop={x:0,y:0,w:128,h:96};
+          }
+          this.pictures.set(frame,{image:()=>kind==='structure'?portraits.icon(kind,type):portraits.image(kind,type),crop});
+        }
+      }
+    }
+    this.pictures.set(HUD_ROM.fremenFrame,{image:()=>portraits.image('unit',4),crop:{x:112,y:68,w:160,h:120}});
+    this.pictures.set(customStructureHudFrame(STRUCTURE.DRONE_PAD),{image:()=>portraits.icon('structure',STRUCTURE.DRONE_PAD),crop:{x:0,y:0,w:128,h:96}});
+    for(const type of [UNIT.LASER_TANK,UNIT.COMBAT_DRONE])this.pictures.set(customHudFrame(type),{image:()=>portraits.image('unit',type),crop:{x:80,y:32,w:224,h:168}});
+    this.pictures.set(HUD_ROM.fremenTroopersFrame,{image:()=>portraits.image('unit',5),crop:{x:112,y:68,w:160,h:120}});
     this.warning.hidden = true;
   }
 
-  setZoom(zoom: number): void {
-    this.canvas.style.width = `${HUD_W * zoom}px`;
-    this.canvas.style.height = `${HUD_H * zoom}px`;
-    this.warning.style.width = `${88 * zoom}px`;
-    this.warning.style.height = `${8 * zoom}px`;
-    this.warning.style.marginLeft = `${-48 * zoom}px`;
-  }
-
   /** Перерисовать, если что-то поменялось. `state` — null, когда видны только кредиты. */
-  draw(state: HudState | null): void {
+  draw(state: HudState | null, stats: HudStats = { buildings: 0, buildingsLost: 0, units: 0, unitsLost: 0 }): void {
     this.warning.hidden = !this.credits.noMoney.drawn;
     const text = String(this.credits.shown).padStart(6, " ");
-    const key = `${text}|${JSON.stringify(state)}`;
+    const key = `${G.playerHouseID}|${text}|${JSON.stringify(state)}|${JSON.stringify(stats)}`;
     if (key === this.key) return;
     this.key = key;
-    const px = new Uint32Array(HUD_W * HUD_H);
-    const b = this.rom.bytes;
-    // кредиты: 6 знаков с x=256, y=16, строка палитры 1
-    for (let i = 0; i < 6; i++) {
-      const ch = text.charCodeAt(text.length - 6 + i);
-      const tile = ch === 0x20 ? 0 : ch - 0x2f;
-      blitTile(b.subarray(HUD_ROM.digits), (1 << 13) | tile, this.palette, px, HUD_W, 256 - X0 + i * 8, 16);
-    }
+    const g=this.g;g.clearRect(0,0,504,512);g.save();g.scale(4,4);g.imageSmoothingEnabled=true;
+    g.fillStyle='#101820ed';g.fillRect(0,0,126,46);g.strokeStyle='#8b7650';g.lineWidth=.5;g.strokeRect(.5,.5,125,45);
+    g.textAlign='left';g.font='700 7px "Segoe UI", sans-serif';g.fillStyle='#c3b89e';g.fillText('СПАЙС',7,11);
+    g.textAlign='right';g.font='700 16px "IBM Plex Mono", monospace';g.fillStyle='#ffe4aa';
+    g.shadowColor='#000';g.shadowBlur=2;g.fillText(text.trim(),119,23);g.shadowBlur=0;
+    g.strokeStyle='#514733';g.lineWidth=.5;g.beginPath();g.moveTo(6,26);g.lineTo(120,26);g.stroke();
+    g.textAlign='left';g.font='600 5.5px "IBM Plex Mono", monospace';g.fillStyle='#c3b89e';
+    g.fillText('ЗДАНИЯ',7,35);g.fillText('ВОЙСКА',7,44);
+    g.textAlign='right';g.fillStyle='#f2d59a';
+    g.fillText(`${String(stats.buildings).padStart(2,'0')}  −${String(stats.buildingsLost).padStart(2,'0')}`,119,35);
+    g.fillText(`${String(stats.units).padStart(2,'0')}  −${String(stats.unitsLost).padStart(2,'0')}`,119,44);
     if (state) {
-      if (state.portrait !== null) this.frame(px, state.portrait, 272, 48);
+      if (state.portrait !== null) this.frame(state.portrait, 48);
       if (state.hp) {
         const p = barFill(state.hp.value, state.hp.max);
-        if (p >= 0) this.bar(px, barPixels(p, b[HUD_ROM.hpColors + (p >> 3) * 4] & 15), 272, 72);
+        if (p >= 0) this.bar(p, state.hp.value/state.hp.max>.5?'#76ba76':state.hp.value/state.hp.max>.25?'#e6b859':'#df6954', 80);
       }
-      if (state.order !== null) this.frame(px, state.order, 272, 88);
+      if (state.order !== null) this.frame(state.order, 88);
       if (state.prohibited) {
-        const tiles = b.subarray(HUD_ROM.prohibited);
-        for (let c = 0; c < 3; c++) for (let r = 0; r < 3; r++) blitTile(tiles, c * 3 + r, this.palette, px, HUD_W, 276 - X0 + c * 8, 88 + r * 8);
+        g.strokeStyle='#ff866e';g.lineWidth=1.5;g.beginPath();g.arc(32,104,8,0,Math.PI*2);g.moveTo(26,98);g.lineTo(38,110);g.stroke();
       }
       if (state.bar) {
         const p = barFill(state.bar.value, state.bar.max);
-        if (p >= 0) this.bar(px, barPixels(p, state.bar.color), 272, state.bar.y);
+        if (p >= 0) this.bar(p,state.bar.color===3?'#d9ab58':'#65b2d5',state.bar.y===BAR_LOW?112:80);
       }
     }
-    this.g.putImageData(new ImageData(new Uint8ClampedArray(px.buffer), HUD_W, HUD_H), 0, 0);
+    g.restore();
   }
 
   /** Кадр 4×3 тайла из таблицы $060E8C (тайлы по столбцам, как у спрайта VDP). */
-  private frame(px: Uint32Array, frame: number, x: number, y: number): void {
+  private frame(frame: number, y: number): void {
+    const g=this.g,sprite=this.pictures.get(frame),picture=sprite?.image();
+    g.fillStyle='#111a20ec';g.fillRect(15,y-1,34,26);g.strokeStyle='#778184';g.lineWidth=.45;g.strokeRect(15.5,y-.5,33,25);
+    if(picture&&sprite){
+      g.drawImage(picture,sprite.crop.x,sprite.crop.y,sprite.crop.w,sprite.crop.h,16,y,32,24);
+      return;
+    }
+    if(frame===HUD_ROM.upgradeFrame){
+      drawConsoleSymbol(g,'upgrade',32,y+12,18);return;
+    }
+    // ROM-only special pictures retain a fallback; normal units/buildings use HD art.
+    const px=new Uint32Array(32*24);
     const b = this.rom.bytes;
     const e = HUD_ROM.frames + frame * 8;
     const line = b[e + 4] === 0xfe ? 1 : b[e + 4] === 0xff ? 3 : -1;
     if (line < 0) return;
     const tiles = b.subarray(readU32(b, e) & 0xffffff);
-    for (let c = 0; c < 4; c++) for (let r = 0; r < 3; r++) blitTile(tiles, (line << 13) | (c * 3 + r), this.palette, px, HUD_W, x - X0 + c * 8, y + r * 8);
+    for (let c = 0; c < 4; c++) for (let r = 0; r < 3; r++) blitTile(tiles, (line << 13) | (c * 3 + r), this.palette, px, 32, c * 8, r * 8);
+    const c=document.createElement('canvas');c.width=32;c.height=24;
+    c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(px.buffer),32,24),0,0);
+    g.drawImage(c,16,y,32,24);
   }
 
-  private bar(px: Uint32Array, bar: Uint8Array, x: number, y: number): void {
-    for (let r = 0; r < 8; r++)
-      for (let c = 0; c < 32; c++) {
-        const ci = bar[r * 32 + c];
-        if (ci) px[(y + r) * HUD_W + x - X0 + c] = this.palette[2 * 16 + ci];
-      }
+  private bar(p:number,color:string,y:number):void {
+    const g=this.g;g.fillStyle='#0a0e12';g.fillRect(15,y,34,2.2);g.fillStyle=color;g.fillRect(16,y+.4,32*(p+1)/32,1.4);
+    g.fillStyle='#ffffff28';g.fillRect(16,y+.4,32*(p+1)/32,.35);
   }
 }

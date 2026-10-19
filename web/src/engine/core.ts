@@ -41,20 +41,20 @@ export const UNIT = {
   CARRYALL: 0, ORNITHOPTER: 1, INFANTRY: 2, TROOPERS: 3, SOLDIER: 4, TROOPER: 5, SABOTEUR: 6, LAUNCHER: 7, DEVIATOR: 8,
   TANK: 9, SIEGE_TANK: 10, DEVASTATOR: 11, SONIC_TANK: 12, TRIKE: 13, RAIDER_TRIKE: 14, QUAD: 15, HARVESTER: 16, MCV: 17,
   MISSILE_HOUSE: 18, MISSILE_ROCKET: 19, MISSILE_TURRET: 20, MISSILE_DEVIATOR: 21, MISSILE_TROOPER: 22, BULLET: 23,
-  SONIC_BLAST: 24, SANDWORM: 25, FRIGATE: 26, MAX: 27, INVALID: 0xff,
+  SONIC_BLAST: 24, SANDWORM: 25, FRIGATE: 26, LASER_TANK:27, COMBAT_DRONE:28, MAX: 29, INVALID: 0xff,
 } as const;
 
 export const STRUCTURE = {
   SLAB_1x1: 0, SLAB_2x2: 1, PALACE: 2, LIGHT_VEHICLE: 3, HEAVY_VEHICLE: 4, HIGH_TECH: 5, HOUSE_OF_IX: 6, WOR_TROOPER: 7,
   CONSTRUCTION_YARD: 8, WINDTRAP: 9, BARRACKS: 10, STARPORT: 11, REFINERY: 12, REPAIR: 13, WALL: 14, TURRET: 15,
-  ROCKET_TURRET: 16, SILO: 17, OUTPOST: 18, MAX: 19, INVALID: 0xff,
+  ROCKET_TURRET: 16, SILO: 17, OUTPOST: 18, DRONE_PAD:19, MAX: 20, INVALID: 0xff,
 } as const;
 
 export const HOUSE = { HARKONNEN: 0, ATREIDES: 1, ORDOS: 2, FREMEN: 3, SARDAUKAR: 4, MERCENARY: 5 } as const;
 
 export const ACTION = {
   ATTACK: 0, MOVE: 1, RETREAT: 2, GUARD: 3, AREA_GUARD: 4, HARVEST: 5, RETURN: 6, STOP: 7, AMBUSH: 8, SABOTAGE: 9,
-  DIE: 10, HUNT: 11, DEPLOY: 12, DESTRUCT: 13, MAX: 14, INVALID: 0xff,
+  DIE: 10, HUNT: 11, DEPLOY: 12, DESTRUCT: 13, PATROL: 14, MAX: 14, INVALID: 0xff,
 } as const;
 
 export const MOVEMENT = { FOOT: 0, TRACKED: 1, HARVESTER: 2, WHEELED: 3, WINGER: 4, SLITHER: 5 } as const;
@@ -157,6 +157,7 @@ export interface Dir24 {
 
 export interface Unit {
   o: GObject;
+  carryallFlight?: {height:number; serviceKey:string; serviceSince:number; lastTick:number; settling?:boolean};
   currentDestination: Tile32;
   originEncoded: number;
   /** MD $5A при ремонте: начальное время ремонта, максимум полосы HUD ($048926). */
@@ -187,6 +188,17 @@ export interface Unit {
   team: number;
   timer: number;
   route: number[]; // 14 × uint8
+  /** Дополнительное пользовательское состояние патруля, отсутствующее в ROM. */
+  patrolActive: boolean;
+  patrolStart: Tile32;
+  patrolEnd: Tile32;
+  patrolToEnd: boolean;
+  patrolEngaging: boolean;
+  /** Temporary reaction to attacking infantry; separate from the player's work order. */
+  harvesterDefense?: { target:number; spice:Tile32; start:Tile32; expires:number };
+  laser?: {target:number;chargeStart:number;chargeUntil:number;cooldownUntil:number;firedAt:number;from:Tile32;to:Tile32};
+  drone?: {home:number;homePosition:Tile32;phase:'guard'|'attack'|'return'|'dock'|'orphan';battery:number;nextFire:number;lastTick:number;launchAfter:number;vx:number;vy:number;restockAt:number;
+    members:{x:number;y:number;vx:number;vy:number;grenades:number}[]};
 }
 
 export interface Structure {
@@ -202,8 +214,14 @@ export interface Structure {
   hitpointsMax: number;
   /** MD $5A: сколько кредитов уже ушло на текущий заказ или улучшение — возвращается при отмене ($0103AA) */
   spent: number;
+  /** Расходы на улучшение учитываются независимо от параллельной стройки двора. */
+  upgradeSpent: number;
   /** MD $4E дворца: пауза после спецоружия в тиках дворца (ракета 300, фримены 180, диверсант 240) */
   specialWait: number;
+  unitQueue?: {type:number;cost:number}[];
+  buildingQueue?: {type:number;cost:number}[];
+  prepaidUnitCost?: number;
+  prepaidBuildingCost?: number;
 }
 
 export interface House {
@@ -270,11 +288,12 @@ export function newUnit(): Unit {
     orientation: [{ speed: 0, target: 0, current: 0 }, { speed: 0, target: 0, current: 0 }],
     speedPerTick: 0, speedRemainder: 0, speed: 0, movingSpeed: 0, wobbleIndex: 0, spriteOffset: 0, blinkCounter: 0,
     recoil: false, recoilShown: false, team: 0, timer: 0, route: new Array(14).fill(0),
+    patrolActive: false, patrolStart: { x: 0, y: 0 }, patrolEnd: { x: 0, y: 0 }, patrolToEnd: true, patrolEngaging: false,
   };
 }
 
 export function newStructure(): Structure {
-  return { o: newObject(), creatorHouseID: 0, rotationSpriteDiff: 0, objectType: 0, upgradeLevel: 0, upgradeTimeLeft: 0, countDown: 0, buildCostRemainder: 0, state: 0, hitpointsMax: 0, specialWait: 0, spent: 0 };
+  return { o: newObject(), creatorHouseID: 0, rotationSpriteDiff: 0, objectType: 0, upgradeLevel: 0, upgradeTimeLeft: 0, countDown: 0, buildCostRemainder: 0, state: 0, hitpointsMax: 0, specialWait: 0, spent: 0, upgradeSpent: 0 };
 }
 
 export function newHouse(): House {
@@ -309,7 +328,9 @@ export const MAP_INFOS: MapInfo[] = [
   { minX: 21, minY: 21, sizeX: 21, sizeY: 21 },
 ];
 
+export interface DroneGrenade {from:Tile32;to:Tile32;released:number;impact:number;damage:number;origin:number;house:number}
 export const G = {
+  droneGrenades:[] as DroneGrenade[],
   map: Array.from({ length: 4096 }, newTile) as Tile[],
   mapTileID: new Uint16Array(4096),
   units: Array.from({ length: UNIT_INDEX_MAX }, newUnit) as Unit[],
@@ -327,6 +348,8 @@ export const G = {
   scenarioID: 1,
   validateStrictIfZero: 0,
   gameSpeed: 2,
+  /** 0 — easy, 1 — normal, 2 — hard; set from the front-end before loading a campaign mission. */
+  difficulty: 1,
   /** особые иконки (sprites.c) */
   veiledTileID: 0,
   bloomTileID: 0,
@@ -369,11 +392,17 @@ export const G = {
   musicInBattle: 0,
   /** код PLAYTESTER: юниты игрока гибнут только в пасти червя */
   playtester: false,
+  infiniteSpice: false,
   /** код LOOKAROUND: туман не рисуется (в оригинале переключатель $FFC198 бит 0) */
   revealAll: false,
   scenario: newScenario(),
   /** звуки и сообщения уходят в интерфейс через эти обработчики */
-  onSound: (_id: number, _pos?: Tile32) => {},
+  onSound: (_id: number, _pos?: Tile32, _volume = 1) => {},
+  /** Render notifications only; handlers must not change simulation state or consume RNG. */
+  onUnitShot: (_unit: Unit, _bullet: Unit) => {},
+  onVisualExplosion: (_type: number, _position: Tile32) => {},
+  onConstructionStart: () => {},
+  onConstructionComplete: (_yard?: Structure) => {},
   onFeedback: (_id: number) => {},
   onMessage: (_text: string, _priority = 0) => {},
   onSelect: () => {},
@@ -394,6 +423,7 @@ export interface ScenarioState {
   mapScale: number;
   score: number;
   killedAllied: number;
+  unitsLostAllied: number;
   killedEnemy: number;
   destroyedAllied: number;
   destroyedEnemy: number;
@@ -404,7 +434,7 @@ export interface ScenarioState {
 
 export function newScenario(): ScenarioState {
   return {
-    winFlags: 0, loseFlags: 0, timeOut: 0, mapScale: 0, score: 0, killedAllied: 0, killedEnemy: 0, destroyedAllied: 0,
+    winFlags: 0, loseFlags: 0, timeOut: 0, mapScale: 0, score: 0, killedAllied: 0, unitsLostAllied: 0, killedEnemy: 0, destroyedAllied: 0,
     destroyedEnemy: 0, harvestedAllied: 0, harvestedEnemy: 0,
     reinforcement: Array.from({ length: 16 }, () => ({ unitID: INDEX_INVALID, locationID: 0, timeLeft: 0, timeBetween: 0, repeat: 0 })),
   };
@@ -670,6 +700,7 @@ function resetUnit(u: Unit): void {
 }
 
 function resetStructure(s: Structure): void {
+  s.unitQueue=[];s.buildingQueue=[];s.prepaidUnitCost=undefined;s.prepaidBuildingCost=undefined;
   const n = newStructure();
   Object.assign(s.o, n.o);
   const { o: _o, ...rest } = n;
@@ -736,6 +767,10 @@ export function structureAllocate(index: number, type: number): Structure | null
 }
 
 export function structureFree(s: Structure): void {
+  // Pending orders have not been manufactured; return their reserved funds once.
+  if(s.unitQueue?.length){G.houses[s.o.houseID].credits+=s.unitQueue.reduce((sum,item)=>sum+item.cost,0);s.unitQueue=[];}
+  if(s.buildingQueue?.length){G.houses[s.o.houseID].credits+=s.buildingQueue.reduce((sum,item)=>sum+item.cost,0);s.buildingQueue=[];}
+  s.prepaidUnitCost=undefined;s.prepaidBuildingCost=undefined;
   s.o.flags = newFlags();
   s.o.script.pc = -1;
   if (s.o.type === STRUCTURE.SLAB_1x1 || s.o.type === STRUCTURE.SLAB_2x2 || s.o.type === STRUCTURE.WALL) return;
@@ -749,7 +784,7 @@ export function unitAllocate(index: number, type: number, houseID: number): Unit
   const h = G.houses[houseID];
   if (h.unitCount >= h.unitCountMax) {
     const mt = unitInfo[type].movementType;
-    if (mt !== MOVEMENT.WINGER && mt !== MOVEMENT.SLITHER && G.validateStrictIfZero === 0) return null;
+    if ((mt !== MOVEMENT.WINGER && mt !== MOVEMENT.SLITHER || type===UNIT.COMBAT_DRONE) && G.validateStrictIfZero === 0) return null;
   }
   let u: Unit;
   if (index === 0 || index === INDEX_INVALID) {

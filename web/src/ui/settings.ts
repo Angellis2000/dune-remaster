@@ -101,10 +101,15 @@ export class SettingsMenu {
   private blink = 0;
   private raf = 0;
 
+  private gfx: ScreenGfx;
+  private host: SettingsHost;
+
   constructor(
-    private gfx: ScreenGfx,
-    private host: SettingsHost,
+    gfx: ScreenGfx,
+    host: SettingsHost,
   ) {
+    this.gfx = gfx;
+    this.host = host;
     this.root = document.createElement("section");
     this.root.className = "settings options hd-menu";
     this.root.setAttribute("role", "dialog");
@@ -193,6 +198,7 @@ export class SettingsMenu {
     const row = Math.floor(this.cell / 10);
     const col = this.cell % 10;
     const rowLen = (r: number) => (r === 2 ? LAST_ROW.length : 10);
+    const prevCell = this.cell;
     this.blink = 0;
     if (b === "left") this.cell = row * 10 + ((col + rowLen(row) - 1) % rowLen(row));
     else if (b === "right") this.cell = row * 10 + ((col + 1) % rowLen(row));
@@ -205,6 +211,8 @@ export class SettingsMenu {
       if (this.pos === PASSWORD_LENGTH && decodePassword(this.word.join(""))?.kind === "level") this.submit();
       else this.toMenu();
     }
+    // MD $02181e: звук перемещения по буквам — $19
+    if (this.cell !== prevCell) this.host.ui?.(0x19);
   }
 
   /** Start на экране пароля — назад в «НАСТРОЙКИ», стрелка на первом пункте (как в оригинале). */
@@ -217,15 +225,38 @@ export class SettingsMenu {
     const row = Math.floor(this.cell / 10);
     const col = this.cell % 10;
     const key = row < 2 ? LETTERS[row * 10 + col] : LAST_ROW[col];
-    if (key === "<") this.pos = Math.max(0, this.pos - 1);
-    else if (key === ">") this.pos = Math.min(PASSWORD_LENGTH, this.pos + 1, this.word.length);
-    else if (key === "OK") this.submit();
-    else this.type(key);
+    if (key === "<") {
+      // MD $021736 / $02176e: удаление буквы — $28, если уже в начале — ошибка $1A
+      if (this.pos > 0) {
+        this.pos = Math.max(0, this.pos - 1);
+        this.host.ui?.(0x28);
+      } else {
+        this.host.ui?.(0x1a);
+      }
+    } else if (key === ">") {
+      // MD $021786 / $021794: вперёд по слову — $28, если в конце — ошибка $1A
+      if (this.pos < PASSWORD_LENGTH && this.pos < this.word.length) {
+        this.pos = Math.min(PASSWORD_LENGTH, this.pos + 1, this.word.length);
+        this.host.ui?.(0x28);
+      } else {
+        this.host.ui?.(0x1a);
+      }
+    } else if (key === "OK") {
+      this.submit();
+    } else {
+      this.type(key);
+    }
   }
 
   /** Буква в позицию ввода; после десятой курсор сам встаёт на ↵, дальше буквы не идут. */
   private type(ch: string): void {
-    if (this.pos >= PASSWORD_LENGTH) return;
+    // MD $0217f8: попытка ввести больше 10 символов — ошибка $1A
+    if (this.pos >= PASSWORD_LENGTH) {
+      this.host.ui?.(0x1a);
+      return;
+    }
+    // MD $0217a0: ввод буквы — $28
+    this.host.ui?.(0x28);
     this.word[this.pos++] = ch;
     if (this.pos === PASSWORD_LENGTH) this.cell = ENTER_CELL;
   }
@@ -236,7 +267,13 @@ export class SettingsMenu {
    */
   private submit(): void {
     const result = decodePassword(this.word.join(""));
-    if (!result) return;
+    if (!result) {
+      // MD $0216f6: неверный пароль — звук ошибки $1A
+      this.host.ui?.(0x1a);
+      return;
+    }
+    // MD $021704: верный пароль / чит — звук успеха $4C
+    this.host.ui?.(0x4c);
     if (result.kind === "level" || result.cheat === "DUNEFINALE") {
       this.close();
       this.host.password(result);
@@ -247,14 +284,36 @@ export class SettingsMenu {
 
   private onKey(e: KeyboardEvent): void {
     if (this.root.hidden || this.mode !== "password") return;
+    // Pad already dispatched arrows/Start from this same keyboard event.
+    if (e.defaultPrevented) return;
     if (/^Key[A-Z]$/.test(e.code)) {
       e.preventDefault();
       e.stopImmediatePropagation();
       this.type(e.code.slice(3));
     } else if (e.code === "Backspace") {
       e.preventDefault();
-      this.pos = Math.max(0, this.pos - 1);
-      this.word.length = this.pos;
+      if (this.pos > 0) {
+        this.pos = Math.max(0, this.pos - 1);
+        this.word.length = this.pos;
+        this.host.ui?.(0x28);
+      } else {
+        this.host.ui?.(0x1a);
+      }
+    } else if (e.code === "Enter" || e.code === "NumpadEnter") {
+      e.preventDefault();
+      this.submit();
+    } else if (e.code === "ArrowLeft") {
+      e.preventDefault();
+      this.passwordPad("left");
+    } else if (e.code === "ArrowRight") {
+      e.preventDefault();
+      this.passwordPad("right");
+    } else if (e.code === "ArrowUp") {
+      e.preventDefault();
+      this.passwordPad("up");
+    } else if (e.code === "ArrowDown") {
+      e.preventDefault();
+      this.passwordPad("down");
     } else if (e.code === "Escape") {
       e.preventDefault();
       this.toMenu();

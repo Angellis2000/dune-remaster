@@ -13,6 +13,11 @@ import { decodeText, SCREEN_H, SCREEN_W, type ScreenGfx } from "../gfx/screens.t
 import type { Button } from "../input/pad.ts";
 import type { DuneRom, Picture } from "../rom/dune.ts";
 import { readU16 } from "../rom/md.ts";
+import type {Portraits} from '../gfx/portraits.ts';
+import {menuText,prepareMenu,menuPoint} from '../gfx/menu-canvas.ts';
+import {drawStatusIcon} from '../gfx/status-icons.ts';
+import {drawConsoleSymbol} from '../gfx/console-symbols.ts';
+import {STRUCTURE_NAMES,UNIT_NAMES} from '../game/names.ts';
 
 /** Кнопки окна слева направо и их иконки (номера в таблице иконок окна). */
 const TABS = [
@@ -27,6 +32,7 @@ const CELL_W = 32;
 const CELL_H = 24;
 const COLUMNS = 3;
 const ROWS_VISIBLE = 6;
+const HD_ROW_H = 24;
 /** правая часть окна: картинка, значок размера, имя и три числа (клетки плоскости Window) */
 const PICTURE = { x: 160, y: 40 };
 const SIZE_ICON = { x: 240, y: 80 };
@@ -35,6 +41,12 @@ const NUMBERS_RIGHT = 256;
 const NUMBER_ROWS = [128, 160, 192];
 const STAT_ICON_X = 160;
 const STAT_ICON_Y = [120, 152, 184];
+// Actual centres of the three apertures in production-console-hd.png (320×224 coordinates).
+export const HD_STAT_SLOTS = [
+  {iconX:168,iconY:128.23,valueY:131.33},
+  {iconX:168,iconY:159.08,valueY:162.39},
+  {iconX:168,iconY:190.37,valueY:194.10},
+] as const;
 const CREDITS = { right: 296, y: 16 };
 
 export interface FactoryHost {
@@ -111,9 +123,10 @@ export class FactoryWindow {
     private rom: DuneRom,
     private gfx: ScreenGfx,
     private host: FactoryHost,
+    private portraits:Portraits|null=null,
   ) {
     this.root = document.createElement("section");
-    this.root.className = "settings factory";
+    this.root.className = `settings factory${portraits?' hd-menu':''}`;
     this.root.setAttribute("role", "dialog");
     this.root.setAttribute("aria-label", "Окно здания");
     this.root.hidden = true;
@@ -122,6 +135,12 @@ export class FactoryWindow {
     this.ctx = this.canvas.getContext("2d")!;
     this.root.append(this.canvas);
     this.canvas.addEventListener("click", (e) => this.onClick(e));
+    this.canvas.addEventListener('wheel',(e)=>{
+      if(this.root.hidden||!this.portraits||!this.orders.length||e.deltaY===0)return;
+      e.preventDefault();
+      this.cursor=Math.max(0,Math.min(this.orders.length-1,Math.max(0,this.cursor)+Math.sign(e.deltaY)*COLUMNS));
+      this.draw();
+    },{passive:false});
     window.addEventListener("keydown", (e) => {
       if (!this.root.hidden && e.code === "Escape") this.close();
     });
@@ -135,6 +154,8 @@ export class FactoryWindow {
     return !!this.s && this.s.o.type !== STRUCTURE.CONSTRUCTION_YARD;
   }
 
+  private get rowsVisible():number{return this.portraits?5:ROWS_VISIBLE;}
+
   private get starport(): boolean {
     return this.s?.o.type === STRUCTURE.STARPORT;
   }
@@ -145,6 +166,8 @@ export class FactoryWindow {
     this.lights = [];
     this.blip = { index: 0, back: false, flip: 0 };
     this.refresh();
+    const production=this.host.game().production(s);
+    if(production)this.cursor=this.orders.findIndex(order=>order.type===production.type);
     this.root.hidden = false;
     this.host.toggled(true);
     this.loop();
@@ -192,7 +215,8 @@ export class FactoryWindow {
     } else if (b === "up") {
       if (this.cursor >= COLUMNS) this.cursor -= COLUMNS;
       else if (this.cursor >= 0) this.cursor = col - 3;
-    } else if (b === "a" || b === "c") this.activate();
+    } else if(b==='c'&&this.s&&this.host.game().canQueueUnits(this.s)&&this.cursor>=0)this.removeQueued();
+    else if (b === "a" || b === "c") this.activate();
     // $0288E8: курсор сдвинулся — звук $19
     if (this.cursor !== was) this.host.ui?.(0x19);
     return true;
@@ -202,7 +226,7 @@ export class FactoryWindow {
   private buttons(s: Structure): boolean[] {
     const damaged = s.o.hitpoints < structureInfo[s.o.type].o.hitpoints;
     const busy = s.o.linkedID !== 0xff && (s.state === STATE.BUSY || (!this.units && s.state === STATE.READY));
-    return [true, damaged, s.o.flags.repairing || s.o.flags.upgrading || busy];
+    return [true, damaged, s.o.flags.repairing || s.o.flags.upgrading || busy || this.host.game().unitQueue(s).length>0];
   }
 
   /**
@@ -245,10 +269,14 @@ export class FactoryWindow {
       this.close();
       return;
     }
+    if(game.canQueueUnits(s)){
+      if(game.build(s,order.type))ok();else fail();
+      this.draw();return;
+    }
     // $0288BC: хайтек не заказывает авиацию, если для неё нет места ($FFC728), — звук ошибки 0x2F
     if (s.o.type === STRUCTURE.HIGH_TECH && (order.type === UNIT.CARRYALL || order.type === UNIT.ORNITHOPTER) && !unitAirSlotFree()) return fail();
-    ok();
     const prod = game.production(s);
+    if(s.o.type!==STRUCTURE.CONSTRUCTION_YARD||(prod&&prod.type===order.type))ok();
     if (prod && prod.type === order.type) {
       // готовое здание — сразу постановка; заказ в работе — просто назад на карту
       if (prod.ready && !this.units && game.placeIt(s)) {
@@ -263,17 +291,34 @@ export class FactoryWindow {
 
   private onClick(e: MouseEvent): void {
     const r = this.canvas.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width) * SCREEN_W;
-    const y = ((e.clientY - r.top) / r.height) * SCREEN_H;
+    const point=this.portraits?menuPoint(this.canvas,e):{x:((e.clientX-r.left)/r.width)*SCREEN_W,y:((e.clientY-r.top)/r.height)*SCREEN_H};
+    const {x,y}=point;
+    if(this.portraits&&this.s&&y>=195&&y<209&&x>=GRID_X&&x<GRID_X+96){
+      if(this.host.game().cancelQueuedUnit(this.s,Math.floor((x-GRID_X)/12)))this.host.sfx?.(0x26);
+      this.draw();return;
+    }
     const col = Math.floor((x - GRID_X) / CELL_W);
     if (col < 0 || col >= COLUMNS) return;
     if (y >= TAB_Y && y < TAB_Y + CELL_H) this.cursor = col - 3;
     else {
-      const i = Math.floor((y - GRID_Y) / CELL_H) * COLUMNS + col;
-      if (y < GRID_Y || i >= this.orders.length) return;
+      const rowH=this.portraits?HD_ROW_H:CELL_H;
+      const row=Math.floor((y-GRID_Y)/rowH);
+      const firstRow=Math.max(0,Math.floor(Math.max(0,this.cursor)/COLUMNS)-this.rowsVisible+1);
+      const i = (row+firstRow)*COLUMNS+col;
+      if (row<0||row>=this.rowsVisible || i >= this.orders.length) return;
       this.cursor = i;
     }
     this.activate();
+  }
+
+  private removeQueued():void{
+    const s=this.s,order=this.orders[this.cursor];if(!s||!order||order.type<0)return;
+    const game=this.host.game(),queue=game.unitQueue(s);let index=-1;
+    for(let i=queue.length-1;i>=0;i--)if(queue[i].type===order.type){index=i;break;}
+    if(index>=0)game.cancelQueuedUnit(s,index);
+    else if(game.production(s)?.type===order.type)game.cancelBuild(s);
+    else return;
+    this.host.sfx?.(0x26);this.draw();
   }
 
   private loop(): void {
@@ -284,6 +329,88 @@ export class FactoryWindow {
   }
 
   private draw(): void {
+    if(this.portraits){this.drawHD();return;}
+    this.drawOriginal();
+  }
+
+  private drawHD():void{
+    const s=this.s;if(!s)return;
+    const g=prepareMenu(this.canvas),game=this.host.game(),units=this.units,prod=game.production(s);
+    const gfx=this.gfx;
+    // Authored HD hardware keeps the recognizable original console and control positions.
+    const hardware=gfx.art.get('productionConsole');
+    if(hardware){
+      g.drawImage(hardware,0,0,SCREEN_W,SCREEN_H);
+      for(const [x,y,color]of [[181,24,'#70ff80'],[277,58,'#ff5b35']]as const){
+        g.save();g.globalAlpha=.1+.12*Math.sin(this.frame/22)**2;g.fillStyle=color;g.shadowColor=color;g.shadowBlur=2;
+        g.beginPath();g.arc(x,y,2,0,Math.PI*2);g.fill();g.restore();
+      }
+    }else g.drawImage(this.starport?gfx.starportBackground():gfx.factoryBackground(),0,0,SCREEN_W,SCREEN_H);
+    const lights=this.starport?STARPORT_LIGHTS:FACTORY_LIGHTS;
+    if(!hardware)lights.forEach((l,i)=>{
+      const st=(this.lights[i]??={timer:0,frame:-1});
+      if(--st.timer<0){st.timer=rnd(l.min,l.max);st.frame=rnd(0,l.frames-1);}
+      g.drawImage(gfx.windowLight(this.starport?'starport':'factory',l.table,l.words,st.frame),l.col*8,l.row*8);
+    });
+    if(this.starport){
+      const b=this.blip;b.index+=b.back?-1:1;
+      if(b.index<0||b.index>BLIP_LAST){b.flip=rnd(0,3);b.back=Math.random()<.5;b.index=b.back?BLIP_LAST:0;}
+      const at=BLIP_PATH+b.index*4,y=(readU16(this.rom.bytes,at)<<16)>>16,x=(readU16(this.rom.bytes,at+2)<<16)>>16;
+      if(hardware){g.save();g.fillStyle='#9eff8a';g.shadowColor='#78ff63';g.shadowBlur=1.5;
+        g.beginPath();g.arc(96+(x-96)*.1,32+(y-32)*.06,.65,0,Math.PI*2);g.fill();g.restore();}
+      else gfx.starportBlip(g,x-4,y-4,b.flip);
+    }
+    const enabled=this.buttons(s),labels=['ВЫХОД','РЕМОНТ','СТОП'];
+    for(let i=0;i<3;i++){
+      const x=GRID_X+i*CELL_W;
+      const metal=g.createLinearGradient(x,TAB_Y,x,TAB_Y+CELL_H);
+      metal.addColorStop(0,enabled[i]?'#8c8990':'#48464f');metal.addColorStop(.15,enabled[i]?'#5b5962':'#303039');metal.addColorStop(1,'#24242b');
+      g.fillStyle=metal;g.fillRect(x,TAB_Y,CELL_W,CELL_H);
+      g.fillStyle=enabled[i]?'#c1bbad':'#66626b';g.fillRect(x+1,TAB_Y+1,CELL_W-2,.45);
+      g.strokeStyle=this.cursor===i-3?'#f0c350':'#9ca8ad';g.lineWidth=this.cursor===i-3?1.2:.45;g.strokeRect(x+.5,TAB_Y+.5,CELL_W-1,CELL_H-1);
+      menuText(g,labels[i],x+CELL_W/2,TAB_Y+CELL_H/2,{size:i===1?4.35:4.8,align:'center',baseline:'middle',color:enabled[i]?'#f1dfb3':'#999398',weight:'600'});
+    }
+    const firstRow=Math.max(0,Math.floor(Math.max(0,this.cursor)/COLUMNS)-this.rowsVisible+1);
+    this.orders.forEach((o,i)=>{
+      const row=Math.floor(i/COLUMNS)-firstRow;if(row<0||row>=this.rowsVisible)return;
+      const x=GRID_X+i%COLUMNS*CELL_W,y=GRID_Y+row*HD_ROW_H;
+      const tile=g.createLinearGradient(x,y,x,y+HD_ROW_H);tile.addColorStop(0,'#29282b');tile.addColorStop(1,'#0b1117');g.fillStyle=tile;g.fillRect(x+1,y+1,CELL_W-2,HD_ROW_H-2);
+      if(o.upgrade!==undefined)drawStatusIcon(g,'repair',x+16,y+12,15,this.frame);
+      else g.drawImage(this.portraits!.icon(units?'unit':'structure',o.type),x+(CELL_W-(HD_ROW_H-3)*4/3)/2,y+1,(HD_ROW_H-3)*4/3,HD_ROW_H-3);
+      g.strokeStyle=this.cursor===i?'#ffe082':'#899398';g.lineWidth=this.cursor===i?1:.35;g.strokeRect(x+1.5,y+1.5,CELL_W-3,HD_ROW_H-3);
+      if(o.available<0){g.fillStyle='#081015a8';g.fillRect(x+1,y+1,CELL_W-2,HD_ROW_H-2);}
+      if(prod&&prod.type===o.type){g.fillStyle=prod.ready?'#b9e5a0':prod.onHold?'#efad52':'#f2d067';g.fillRect(x+2,y+HD_ROW_H-2,(CELL_W-4)*prod.progress,1);}
+      if(game.canQueueUnits(s)){const count=game.unitQueue(s).filter(item=>item.type===o.type).length+(prod?.type===o.type?1:0);if(count){g.fillStyle='#111820ed';g.fillRect(x+20,y+2,10,7);menuText(g,String(count),x+25,y+5.5,{size:4.4,align:'center',baseline:'middle',color:'#ffe082'});}}
+    });
+    const cx=this.cursor<0?GRID_X+(this.cursor+3)*CELL_W:GRID_X+this.cursor%COLUMNS*CELL_W;
+    const cy=this.cursor<0?TAB_Y:GRID_Y+(Math.floor(this.cursor/COLUMNS)-firstRow)*HD_ROW_H;
+    g.strokeStyle='#ffdc68';g.lineWidth=.9;g.strokeRect(cx+.5,cy+.5,CELL_W-1,(this.cursor<0?CELL_H:HD_ROW_H)-1);
+    const order=this.cursor>=0?this.orders[this.cursor]:null;
+    const type=order?(order.upgrade??order.type):s.o.type,kind=order&&units?'unit':'structure';
+    const preview=this.portraits!.image(kind,type);
+    g.save();g.beginPath();g.rect(160,40,98,57);g.clip();g.drawImage(preview,160,40,98,57);g.restore();
+    const name=order?.upgrade!==undefined?'Улучшение':(kind==='unit'?UNIT_NAMES[type]:STRUCTURE_NAMES[type])??'';
+    menuText(g,name,208,107.94,{size:7,align:'center',baseline:'middle',maxWidth:94,color:'#fff2c9',weight:'700'});
+    const oi=kind==='unit'?unitInfo[type]?.o:structureInfo[type]?.o;
+    const middle=kind==='unit'?unitInfo[type]?.damage:Math.abs(structureInfo[type]?.powerUsage??0);
+    const values=[order?.cost??0,order?.upgrade!==undefined?0:middle??0,order?.upgrade!==undefined?0:oi?.hitpoints??0];
+    const texts=['Стоимость',kind==='unit'?'Урон':'Энергия','Прочность'];
+    values.forEach((value,i)=>{
+      const slot=HD_STAT_SLOTS[i];
+      if(i===1&&kind==='structure')drawStatusIcon(g,'power',slot.iconX,slot.iconY,10,this.frame);
+      else drawConsoleSymbol(g,i===0?'credits':i===1?'damage':'armour',slot.iconX,slot.iconY,11);
+      menuText(g,texts[i],194,slot.valueY,{size:3.6,baseline:'middle',maxWidth:31,color:'#d4c9b2',weight:'600'});
+      menuText(g,String(value),NUMBERS_RIGHT,slot.valueY,{size:7.2,baseline:'middle',align:'right',maxWidth:26,color:'#fff0c3',weight:'700'});
+    });
+    menuText(g,String(this.host.credits()),CREDITS.right,20.5,{size:8.5,baseline:'middle',align:'right',color:'#fff1cb',weight:'700'});
+    if(game.canQueueUnits(s)){
+      const queue=game.unitQueue(s);
+      queue.slice(0,8).forEach((item,i)=>{const x=GRID_X+i*12;g.fillStyle='#080d12';g.fillRect(x,195,12,13);g.drawImage(this.portraits!.icon('unit',item.type),x,196,12,9);g.strokeStyle='#a8884b';g.lineWidth=.4;g.strokeRect(x,195,12,13);});
+      menuText(g,`A +1 · C −1 · B назад${queue.length?' · очередь '+queue.length:''}`,32,215,{size:4.2,color:'#e5d4ae',maxWidth:266});
+    }
+  }
+
+  private drawOriginal(): void {
     const s = this.s;
     if (!s) return;
     const g = this.ctx;
@@ -328,10 +455,10 @@ export class FactoryWindow {
     });
 
     // сетка заказов
-    const firstRow = Math.max(0, Math.floor(Math.max(0, this.cursor) / COLUMNS) - ROWS_VISIBLE + 1);
+    const firstRow = Math.max(0, Math.floor(Math.max(0, this.cursor) / COLUMNS) - this.rowsVisible + 1);
     this.orders.forEach((o, i) => {
       const row = Math.floor(i / COLUMNS) - firstRow;
-      if (row < 0 || row >= ROWS_VISIBLE) return;
+      if (row < 0 || row >= this.rowsVisible) return;
       const icon = gfx.factoryIcon(units, o.upgrade !== undefined ? (units ? UPGRADE_ICON.units : UPGRADE_ICON.structures) : o.type);
       const x = GRID_X + (i % COLUMNS) * CELL_W;
       const y = GRID_Y + row * CELL_H;

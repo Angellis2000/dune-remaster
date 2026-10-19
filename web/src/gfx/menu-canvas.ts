@@ -35,12 +35,12 @@ export function menuPoint(canvas: HTMLCanvasElement, e: MouseEvent): { x: number
 
 /** Текст растеризуется сразу в физическое разрешение, без промежуточной картинки 320×224. */
 export function menuText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number,
-  options: { size?: number; color?: string; maxWidth?: number; align?: CanvasTextAlign; serif?: boolean; weight?: string; shadow?: boolean } = {}): void {
+  options: { size?: number; color?: string; maxWidth?: number; align?: CanvasTextAlign; baseline?:CanvasTextBaseline; serif?: boolean; weight?: string; shadow?: boolean } = {}): void {
   ctx.save();
   const size = options.size ?? 8;
   ctx.font = `${options.weight ?? "600"} ${size}px ${options.serif ? 'Georgia, "Times New Roman", serif' : 'Arial, sans-serif'}`;
   ctx.textAlign = options.align ?? "left";
-  ctx.textBaseline = "top";
+  ctx.textBaseline = options.baseline??"top";
   if (options.shadow !== false) {
     ctx.shadowColor = "#000";
     ctx.shadowBlur = 1.4;

@@ -9,13 +9,14 @@ import { ACTION, G, SELECTION, STATE, STRUCTURE, UNIT, type Structure as EStruct
 import { houseInfo, structureInfo, unitInfo } from "../engine/tables.ts";
 import { HOUSE_NAMES } from "../game/tables.ts";
 import { STRUCTURE_NAMES, UNIT_NAMES } from "../game/names.ts";
+import type {Portraits} from '../gfx/portraits.ts';
 import type { World } from "../game/world.ts";
 import type { Button } from "../input/pad.ts";
 import type { DuneRom, Picture } from "../rom/dune.ts";
 
 export const ACTION_NAMES = [
   "Атаковать", "Двигаться", "Отступить", "Охранять", "Охранять район", "Собирать", "Вернуться", "Стоп", "Засада",
-  "Диверсия", "Погибнуть", "Охота", "Развернуть", "Самоуничтожение",
+  "Диверсия", "Погибнуть", "Охота", "Развернуть", "Самоуничтожение", "Патрулировать",
 ];
 
 const SPECIAL_NAMES: Record<number, string> = { 1: "Запустить ракету", 2: "Позвать фрименов", 3: "Выпустить диверсанта" };
@@ -26,6 +27,8 @@ interface Item {
   picture?: string;
   disabled?: boolean;
   active?: boolean;
+  quantity?: number;
+  cancel?: () => void;
   run: () => void;
 }
 
@@ -40,6 +43,7 @@ export interface CommandHost {
   changed(): void;
   /** показывать ли меню (в режиме мыши) */
   visible(): boolean;
+  sfx?(id: number): void;
 }
 
 export class CommandPanel {
@@ -58,6 +62,7 @@ export class CommandPanel {
     private rom: DuneRom,
     private world: World,
     private host: CommandHost,
+    private portraits:Portraits|null=null,
   ) {
     this.root.className = "command";
     this.root.setAttribute("aria-label", "Меню приказов");
@@ -67,9 +72,10 @@ export class CommandPanel {
   }
 
   private picture(kind: "unit" | "structure", type: number): string {
-    const key = `${kind}:${type}`;
+    const key = `${kind}:${type}:${this.world.player}`;
     let url = this.pictures.get(key);
     if (url === undefined) {
+      if(this.portraits){url=this.portraits.image(kind,type).toDataURL();this.pictures.set(key,url);return url;}
       const list: Picture[] = kind === "unit" ? this.rom.unitPictures() : this.rom.structurePictures();
       const p = list.find((x) => x.id === type);
       url = "";
@@ -143,8 +149,13 @@ export class CommandPanel {
       if (units.length > 1) title += ` и ещё ${units.length - 1}`;
       pic = this.picture("unit", u.o.type);
       hp = u.o.hitpoints / Math.max(1, ui.o.hitpoints);
-      sub = ACTION_NAMES[u.actionID] ?? "";
+      sub = u.patrolActive ? ACTION_NAMES[ACTION.PATROL] : ACTION_NAMES[u.actionID] ?? "";
       if (u.o.type === UNIT.HARVESTER) sub += ` · груз ${u.amount}%`;
+      if(u.drone){
+        const count=Math.max(1,Math.ceil(u.o.hitpoints/(ui.o.hitpoints/3))),ammo=u.drone.members.slice(0,count).map(m=>m.grenades).join('/');
+        sub=`${u.drone.phase==='dock'?'Зарядка и обслуживание':u.drone.phase==='return'?'Возвращается':u.drone.phase==='orphan'?'Связь потеряна':'Радиус 9 клеток'} · заряд ${Math.round(u.drone.battery)}% · гранаты ${ammo}`;
+      }
+      if(u.laser&&u.o.type===UNIT.LASER_TANK)sub=u.laser.chargeUntil>G.timerGame?'Накопление заряда':u.laser.cooldownUntil>G.timerGame?'Охлаждение':'Готов к выстрелу';
       this.unitItems(units);
     } else if (s && s.o.houseID === G.playerHouseID) {
       const si = structureInfo[s.o.type];
@@ -199,20 +210,33 @@ export class CommandPanel {
           this.index = i;
           if (cur && !cur.disabled) cur.run();
         });
+        b.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          this.items[i]?.cancel?.();
+        });
         li.append(b);
         this.list.append(li);
       }
       b.disabled = !!it.disabled;
       b.className = [it.active ? "active" : "", this.focused && i === this.index ? "cursor" : ""].join(" ").trim();
-      const key = `${it.picture ?? ""}|${it.label}|${it.note ?? ""}`;
+      const key = `${it.picture ?? ""}|${it.label}|${it.note ?? ""}|${it.quantity ?? ""}`;
       if (b.dataset.key === key) return;
       b.dataset.key = key;
       const parts: Node[] = [];
       if (it.picture) {
+        const media = document.createElement("span");
+        media.className = "command-picture";
         const pi = document.createElement("img");
         pi.src = it.picture;
         pi.alt = "";
-        parts.push(pi);
+        media.append(pi);
+        if (it.quantity !== undefined) {
+          const badge = document.createElement("b");
+          badge.className = "command-quantity";
+          badge.textContent = String(it.quantity);
+          media.append(badge);
+        }
+        parts.push(media);
       }
       parts.push(text("span", it.label));
       if (it.note) parts.push(text("small", it.note));
@@ -220,7 +244,8 @@ export class CommandPanel {
     });
   }
 
-  private done(): void {
+  private done(playCue=true): void {
+    if(playCue)this.host.sfx?.(0x26);
     this.host.changed();
     this.update();
   }
@@ -234,14 +259,28 @@ export class CommandPanel {
       if (action >= ACTION.MAX) continue;
       this.items.push({
         label: ACTION_NAMES[action],
-        active: action === current,
+        active: !u.patrolActive && action === current,
         run: () => {
           const needsTarget = this.world.game.unitCommand(u, action);
           if (needsTarget) {
             this.focused = false;
-            this.host.targetMode(action === ACTION.MOVE ? "Укажите, куда двигаться (A)" : "Укажите цель (A)");
+            this.host.targetMode(action === ACTION.MOVE ? "Укажите, куда двигаться (A)" : action === ACTION.PATROL ? "Укажите дальнюю точку патруля (A)" : "Укажите цель (A)");
           } else {
             for (const other of units.slice(1)) this.world.game.unitCommand(other, action);
+          }
+          this.done();
+        },
+      });
+    }
+    if (actions.includes(ACTION.MOVE) && actions.includes(ACTION.ATTACK)) {
+      this.items.push({
+        label: ACTION_NAMES[ACTION.PATROL],
+        active: u.patrolActive,
+        run: () => {
+          const needsTarget = this.world.game.unitCommand(u, ACTION.PATROL);
+          if (needsTarget) {
+            this.focused = false;
+            this.host.targetMode("Укажите дальнюю точку патруля (A)");
           }
           this.done();
         },
@@ -281,25 +320,51 @@ export class CommandPanel {
       const nameOf = (t: number) => (isYard ? STRUCTURE_NAMES[t] : UNIT_NAMES[t]) ?? `${t}`;
       // список заказов стоит на месте (как сетка иконок в окне оригинала): то, что строится,
       // показывает ход стройки; пауза и отмена — ниже, чтобы повторный щелчок не попадал в них
-      for (const opt of game.buildOptions(s)) {
+      const options=game.buildOptions(s);
+      if(isYard&&prod&&!options.some(opt=>opt.type===prod.type))options.push({type:prod.type,available:1,cost:structureInfo[prod.type]?.o.buildCredits??0,time:structureInfo[prod.type]?.o.buildTime??0});
+      options.sort((a,b)=>structureInfo[b.type].o.sortPriority-structureInfo[a.type].o.sortPriority);
+      for (const opt of options) {
         const building = !!prod && prod.type === opt.type;
+        const orders=isYard?game.buildingQueue(s):game.unitQueue(s);
+        const queued=orders.filter(item=>item.type===opt.type).length;
+        const quantity=queued+(building?1:0);
+        const uniqueStructure=isYard&&(opt.type===STRUCTURE.PALACE||opt.type===STRUCTURE.STARPORT);
+        const uniqueAllocated=uniqueStructure&&G.structures.some(st=>st.o.flags.used&&st.o.houseID===s.o.houseID&&st.o.type===opt.type);
+        const uniqueQueuedElsewhere=uniqueStructure&&G.structures.some(yard=>yard!==s&&yard.o.flags.used&&yard.o.houseID===s.o.houseID&&yard.o.type===STRUCTURE.CONSTRUCTION_YARD&&yard.buildingQueue?.some(item=>item.type===opt.type));
+        const uniqueBlocked=!!uniqueStructure&&!building&&!queued&&(!!uniqueAllocated||!!uniqueQueuedElsewhere);
+        const cancelQueued=queued?()=>{
+          const current=isYard?game.buildingQueue(s):game.unitQueue(s);
+          for(let i=current.length-1;i>=0;i--)if(current[i].type===opt.type){
+            if(isYard)game.cancelQueuedBuilding(s,i);else game.cancelQueuedUnit(s,i);
+            this.done();return;
+          }
+        }:undefined;
+        const yardNote=isYard
+          ?building?(prod?.ready?`готово${queued?` · ×${quantity}`:''}`:prod?.onHold?`пауза ${Math.floor((prod?.progress??0)*100)}%${queued?` · ×${quantity}`:''}`:`${Math.floor((prod?.progress??0)*100)}%${quantity?` · ×${quantity}`:''}`)
+            :`${opt.cost}${queued?` · ×${quantity} в очереди`:''}`
+          :`${opt.cost} · +1${building?' · '+Math.floor((prod?.progress??0)*100)+'%':''}${quantity?` · ×${quantity}`:''}`;
         this.items.push({
           label: nameOf(opt.type),
-          note: opt.available < 0 ? "после улучшения" : building ? (prod.ready ? "готово" : prod.onHold ? `пауза ${Math.floor(prod.progress * 100)}%` : `${Math.floor(prod.progress * 100)}%`) : `${opt.cost}`,
+          note: opt.available < 0 ? "после улучшения" : yardNote,
           picture: this.picture(isYard ? "structure" : "unit", opt.type),
-          disabled: opt.available < 0,
+          disabled: opt.available < 0||(!isYard&&h.credits<opt.cost&&quantity===0),
           active: building,
+          quantity:quantity||undefined,
+          cancel:cancelQueued,
           run: () => {
-            if (building) {
-              // уже строится: готовое здание — сразу на постановку, иначе ничего
-              if (isYard && prod.ready && game.placeIt(s)) this.focused = false;
-            } else {
-              game.build(s, opt.type);
-              this.focused = false; // как в оригинале: заказ принят — назад на карту
-            }
+            if(building&&isYard&&prod.ready&&game.placeIt(s)){this.focused=false;this.done();return;}
+            if(uniqueStructure&&(queued>0||uniqueBlocked))return;
+            if(!game.build(s,opt.type)){this.host.sfx?.(0x2f);return;}
             this.done();
           },
         });
+      }
+      if(!isYard){
+        const queue=game.unitQueue(s);
+        for(const type of new Set(queue.map(item=>item.type))){
+          const count=queue.filter(item=>item.type===type).length;
+          this.items.push({label:`− ${nameOf(type)}`,note:`в очереди ${count} · возврат ${queue.find(item=>item.type===type)!.cost}`,run:()=>{let index=-1;for(let i=queue.length-1;i>=0;i--)if(queue[i].type===type){index=i;break;}game.cancelQueuedUnit(s,index);this.done();}});
+        }
       }
       if (prod && !prod.ready) {
         this.items.push({

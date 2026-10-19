@@ -16,7 +16,8 @@ export function teamGetByIndex(index: number): Team {
 
 export function gameLoopTeam(): void {
   if (ticks.team > G.timerGame) return;
-  ticks.team = G.timerGame + (random256() & 7) + 5;
+  const thinkDelay = (random256() & 7) + 5;
+  ticks.team = G.timerGame + Math.max(3, Math.round(thinkDelay * [1.35, 1, 0.8][G.difficulty]));
   G.scriptCurrentObject = null;
   G.scriptCurrentUnit = null;
   G.scriptCurrentStructure = null;

@@ -1,0 +1,10 @@
+[0:v]crop=960:720:160:0,scale=512:-2:flags=lanczos,format=rgba,
+colorkey=0xffffff:0.035:0.045,
+geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(pow((X-262)/45,2)+pow((Y-132)/56,2),1),255,alpha(X,Y))',
+format=gbrap,erosion=threshold0=0:threshold1=0:threshold2=0:threshold3=255,format=rgba,
+geq=r='clip((r(X,Y)-255*(1-alpha(X,Y)/255))/max(alpha(X,Y)/255,0.01),0,255)':
+g='clip((g(X,Y)-255*(1-alpha(X,Y)/255))/max(alpha(X,Y)/255,0.01),0,255)':
+b='clip((b(X,Y)-255*(1-alpha(X,Y)/255))/max(alpha(X,Y)/255,0.01),0,255)':a='alpha(X,Y)',
+trim=start=0.25,setpts=PTS-STARTPTS,split[forward][return];
+[return]trim=start_frame=1:end_frame=233,reverse,setpts=PTS-STARTPTS[back];
+[forward][back]concat=n=2:v=1:a=0,format=yuva420p[out]

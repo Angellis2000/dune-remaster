@@ -1,0 +1,1019 @@
+[
+  {
+    "key": "frame:153",
+    "aliases": [
+      151,
+      153
+    ],
+    "index": 0,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -8,
+      "oy": -8,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "frame:154",
+    "aliases": [
+      152,
+      154
+    ],
+    "index": 1,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -8,
+      "oy": -8,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "frame:180",
+    "aliases": [
+      168,
+      180
+    ],
+    "index": 2,
+    "boxWorld": 64,
+    "ox": -34,
+    "oy": -30,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -10,
+      "oy": -10,
+      "width": 16,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:181",
+    "aliases": [
+      169,
+      181
+    ],
+    "index": 3,
+    "boxWorld": 64,
+    "ox": -34,
+    "oy": -30,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -10,
+      "oy": -10,
+      "width": 16,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:182",
+    "aliases": [
+      170,
+      182
+    ],
+    "index": 4,
+    "boxWorld": 64,
+    "ox": -34,
+    "oy": -30,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -10,
+      "oy": -10,
+      "width": 16,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:183",
+    "aliases": [
+      183
+    ],
+    "index": 5,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:184",
+    "aliases": [
+      184
+    ],
+    "index": 6,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:188",
+    "aliases": [
+      188
+    ],
+    "index": 7,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:189",
+    "aliases": [
+      189
+    ],
+    "index": 8,
+    "boxWorld": 64,
+    "ox": -20,
+    "oy": -26,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 48,
+      "height": 36
+    }
+  },
+  {
+    "key": "frame:190",
+    "aliases": [
+      190
+    ],
+    "index": 9,
+    "boxWorld": 64,
+    "ox": -20,
+    "oy": -20,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 48,
+      "height": 48
+    }
+  },
+  {
+    "key": "frame:191",
+    "aliases": [
+      191
+    ],
+    "index": 10,
+    "boxWorld": 64,
+    "ox": -44,
+    "oy": -14,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -36,
+      "oy": -12,
+      "width": 48,
+      "height": 60
+    }
+  },
+  {
+    "key": "frame:192",
+    "aliases": [
+      192
+    ],
+    "index": 11,
+    "boxWorld": 84,
+    "ox": -54,
+    "oy": -36,
+    "worldWidth": 84,
+    "worldHeight": 84,
+    "original": {
+      "ox": -36,
+      "oy": -36,
+      "width": 48,
+      "height": 84
+    }
+  },
+  {
+    "key": "frame:198",
+    "aliases": [
+      198
+    ],
+    "index": 12,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:199",
+    "aliases": [
+      199
+    ],
+    "index": 13,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:200",
+    "aliases": [
+      200
+    ],
+    "index": 14,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:201",
+    "aliases": [
+      201
+    ],
+    "index": 15,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:202",
+    "aliases": [
+      202
+    ],
+    "index": 16,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:203",
+    "aliases": [
+      203
+    ],
+    "index": 17,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:204",
+    "aliases": [
+      204
+    ],
+    "index": 18,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:205",
+    "aliases": [
+      205
+    ],
+    "index": 19,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:206",
+    "aliases": [
+      206
+    ],
+    "index": 20,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:207",
+    "aliases": [
+      207
+    ],
+    "index": 21,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:208",
+    "aliases": [
+      208
+    ],
+    "index": 22,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:209",
+    "aliases": [
+      209
+    ],
+    "index": 23,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:210",
+    "aliases": [
+      210
+    ],
+    "index": 24,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:211",
+    "aliases": [
+      211
+    ],
+    "index": 25,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:212",
+    "aliases": [
+      212
+    ],
+    "index": 26,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -12,
+      "oy": -12,
+      "width": 24,
+      "height": 24
+    }
+  },
+  {
+    "key": "frame:213",
+    "aliases": [
+      213
+    ],
+    "index": 27,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -16,
+      "oy": -16,
+      "width": 32,
+      "height": 32
+    }
+  },
+  {
+    "key": "frame:218",
+    "aliases": [
+      214,
+      218
+    ],
+    "index": 28,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -16,
+      "oy": -16,
+      "width": 32,
+      "height": 32
+    }
+  },
+  {
+    "key": "frame:219",
+    "aliases": [
+      215,
+      219
+    ],
+    "index": 29,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -16,
+      "oy": -16,
+      "width": 32,
+      "height": 32
+    }
+  },
+  {
+    "key": "frame:220",
+    "aliases": [
+      216,
+      220
+    ],
+    "index": 30,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -16,
+      "oy": -16,
+      "width": 32,
+      "height": 32
+    }
+  },
+  {
+    "key": "frame:221",
+    "aliases": [
+      217,
+      221
+    ],
+    "index": 31,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -16,
+      "oy": -16,
+      "width": 32,
+      "height": 32
+    }
+  },
+  {
+    "key": "frame:222",
+    "aliases": [
+      222
+    ],
+    "index": 32,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -16,
+      "oy": -16,
+      "width": 32,
+      "height": 32
+    }
+  },
+  {
+    "key": "frame:223",
+    "aliases": [
+      156
+    ],
+    "index": 33,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -16,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -8,
+      "oy": 8,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "frame:224",
+    "aliases": [
+      157
+    ],
+    "index": 34,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -16,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -8,
+      "oy": 8,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "frame:225",
+    "aliases": [
+      158
+    ],
+    "index": 35,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -16,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -8,
+      "oy": 8,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:0:0",
+    "index": 36,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -16,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -8,
+      "oy": 8,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:0:1",
+    "index": 37,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -16,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -8,
+      "oy": 8,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:0:2",
+    "index": 38,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -16,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -8,
+      "oy": 8,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:1:0",
+    "index": 39,
+    "boxWorld": 64,
+    "ox": -44,
+    "oy": -20,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -20,
+      "oy": 4,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:1:1",
+    "index": 40,
+    "boxWorld": 64,
+    "ox": -44,
+    "oy": -20,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -20,
+      "oy": 4,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:1:2",
+    "index": 41,
+    "boxWorld": 64,
+    "ox": -44,
+    "oy": -20,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -20,
+      "oy": 4,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:2:0",
+    "index": 42,
+    "boxWorld": 64,
+    "ox": -48,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -24,
+      "oy": -8,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:2:1",
+    "index": 43,
+    "boxWorld": 64,
+    "ox": -48,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -24,
+      "oy": -8,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:2:2",
+    "index": 44,
+    "boxWorld": 64,
+    "ox": -48,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -24,
+      "oy": -8,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:3:0",
+    "index": 45,
+    "boxWorld": 64,
+    "ox": -44,
+    "oy": -44,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -20,
+      "oy": -20,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:3:1",
+    "index": 46,
+    "boxWorld": 64,
+    "ox": -44,
+    "oy": -44,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -20,
+      "oy": -20,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:3:2",
+    "index": 47,
+    "boxWorld": 64,
+    "ox": -44,
+    "oy": -44,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -20,
+      "oy": -20,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:4:0",
+    "index": 48,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -48,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -8,
+      "oy": -24,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:4:1",
+    "index": 49,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -48,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -8,
+      "oy": -24,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:4:2",
+    "index": 50,
+    "boxWorld": 64,
+    "ox": -32,
+    "oy": -48,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": -8,
+      "oy": -24,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:5:0",
+    "index": 51,
+    "boxWorld": 64,
+    "ox": -20,
+    "oy": -44,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": 4,
+      "oy": -20,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:5:1",
+    "index": 52,
+    "boxWorld": 64,
+    "ox": -20,
+    "oy": -44,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": 4,
+      "oy": -20,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:5:2",
+    "index": 53,
+    "boxWorld": 64,
+    "ox": -20,
+    "oy": -44,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": 4,
+      "oy": -20,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:6:0",
+    "index": 54,
+    "boxWorld": 64,
+    "ox": -16,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": 8,
+      "oy": -8,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:6:1",
+    "index": 55,
+    "boxWorld": 64,
+    "ox": -16,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": 8,
+      "oy": -8,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:6:2",
+    "index": 56,
+    "boxWorld": 64,
+    "ox": -16,
+    "oy": -32,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": 8,
+      "oy": -8,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:7:0",
+    "index": 57,
+    "boxWorld": 64,
+    "ox": -20,
+    "oy": -20,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": 4,
+      "oy": 4,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:7:1",
+    "index": 58,
+    "boxWorld": 64,
+    "ox": -20,
+    "oy": -20,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": 4,
+      "oy": 4,
+      "width": 16,
+      "height": 16
+    }
+  },
+  {
+    "key": "dust:7:2",
+    "index": 59,
+    "boxWorld": 64,
+    "ox": -20,
+    "oy": -20,
+    "worldWidth": 64,
+    "worldHeight": 64,
+    "original": {
+      "ox": 4,
+      "oy": 4,
+      "width": 16,
+      "height": 16
+    }
+  }
+]

@@ -9,7 +9,9 @@
 import { lcwDecompress } from "../rom/lcw.ts";
 import { blitTile, cramToRGBA, readU16 } from "../rom/md.ts";
 import type { DuneRom } from "../rom/dune.ts";
-import { SCREEN_H, SCREEN_W } from "../gfx/screens.ts";
+import { decodeTextCodes, SCREEN_H, SCREEN_W } from "../gfx/screens.ts";
+import { menuText, prepareMenu } from "../gfx/menu-canvas.ts";
+import type { ScreenArt } from "../gfx/screen-art.ts";
 import type { Button } from "../input/pad.ts";
 import type { Sound } from "../sound/sound.ts";
 import { loadTileList } from "./tutorial.ts";
@@ -53,12 +55,14 @@ export class FinaleScreen {
   private planeA = new Uint16Array(64 * 32);
   private planeB = new Uint16Array(64 * 32);
   private vscroll = 0;
+  private scrollFraction = 0;
   private cram = new Uint16Array(64);
   private key = false;
 
   constructor(
     private rom: DuneRom,
     private sound: Sound | null = null,
+    private art?: ScreenArt,
   ) {
     this.root = document.createElement("section");
     this.root.className = "settings finale";
@@ -205,6 +209,7 @@ export class FinaleScreen {
       row = (row + 1) & 0x1f;
       for (let i = 0; i < 8; i++) {
         for (let k = 0; k < 3; k++) {
+          this.scrollFraction = k / 3;
           yield;
           if (looped && this.key) {
             yield* this.fade(() => 0, 0, 64, 3);
@@ -212,11 +217,38 @@ export class FinaleScreen {
           }
         }
         this.vscroll = (this.vscroll + 1) & 0xff;
+        this.scrollFraction = 0;
       }
     }
   }
 
   private draw(): void {
+    if (this.art?.get("arrakis")) {
+      const out = prepareMenu(this.canvas);
+      let light = 0;
+      for (let i = 1; i < 10; i++) light = Math.max(light, this.cram[i] & 14, (this.cram[i] >> 4) & 14, (this.cram[i] >> 8) & 14);
+      out.save(); out.globalAlpha = Math.min(1, light / 10);
+      this.art.background(out, "arrakis");
+      out.fillStyle = "#03060c88"; out.fillRect(-160, -100, 640, 424);
+      const vignette=out.createRadialGradient(160,112,18,160,112,190);
+      vignette.addColorStop(0,'#0000');vignette.addColorStop(1,'#000b');
+      out.fillStyle=vignette;out.fillRect(-160,-100,640,424);
+      for (let row = 0; row < 32; row++) {
+        const words = this.planeA.subarray(row * 64, row * 64 + 40);
+        const codes = Array.from(words, word => (word & 0x7ff) >= 0x480 && (word & 0x7ff) < 0x500 ? (word & 0x7ff) - 0x480 : 32);
+        const text = decodeTextCodes(codes).trim();
+        if (!text) continue;
+        const y = (row * 8 - this.vscroll - this.scrollFraction + 256) % 256;
+        if (y >= SCREEN_H) continue;
+        const role=words.some(word => (word >> 13 & 3) === 2);
+        out.save();out.globalAlpha*=Math.max(0,Math.min(1,(y+5)/18,(224-y)/18));
+        out.shadowColor='#000';out.shadowBlur=3;out.shadowOffsetY=.5;
+        menuText(out, text, 160, y, { size: role?5.3:6.2, maxWidth: 270, align: "center", color: role ? "#d9af69" : "#f5f0e6",weight:role?'500':'600',shadow:false });
+        out.restore();
+      }
+      out.restore();
+      return;
+    }
     const pal = new Uint32Array(64);
     for (let i = 0; i < 64; i++) pal[i] = cramToRGBA(this.cram[i]);
     const px = this.px;

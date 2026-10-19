@@ -11,7 +11,10 @@ import { lcwDecompress } from "../rom/lcw.ts";
 import { blitTile, cramToRGBA, readU16 } from "../rom/md.ts";
 import type { DuneRom } from "../rom/dune.ts";
 import { SCREEN_H, SCREEN_W } from "../gfx/screens.ts";
+import { menuText, prepareMenu } from "../gfx/menu-canvas.ts";
+import type { ScreenArt } from "../gfx/screen-art.ts";
 import type { Button } from "../input/pad.ts";
+import type { VehicleArt } from "../gfx/vehicle-art.ts";
 
 export const END_ROM = {
   won: {
@@ -99,7 +102,8 @@ function stepColor(c: number, target: number): number {
 export class EndPicture {
   readonly root: HTMLElement;
   private canvas = document.createElement("canvas");
-  private ctx: CanvasRenderingContext2D;
+  private lowCanvas = document.createElement("canvas");
+  private lowCtx: CanvasRenderingContext2D;
   private img: ImageData;
   private px = new Uint32Array(SCREEN_W * SCREEN_H);
   private raf = 0;
@@ -118,15 +122,17 @@ export class EndPicture {
   private target = new Uint16Array(64);
   private pressed = false;
 
-  constructor(private rom: DuneRom) {
+  constructor(private rom: DuneRom, private art?: ScreenArt) {
     this.root = document.createElement("section");
     this.root.className = "settings endpicture";
     this.root.setAttribute("role", "dialog");
     this.root.hidden = true;
     this.canvas.width = SCREEN_W;
     this.canvas.height = SCREEN_H;
-    this.ctx = this.canvas.getContext("2d")!;
-    this.img = this.ctx.createImageData(SCREEN_W, SCREEN_H);
+    this.lowCanvas.width = SCREEN_W;
+    this.lowCanvas.height = SCREEN_H;
+    this.lowCtx = this.lowCanvas.getContext("2d")!;
+    this.img = this.lowCtx.createImageData(SCREEN_W, SCREEN_H);
     this.root.append(this.canvas);
     this.canvas.addEventListener("click", () => (this.pressed = true));
   }
@@ -215,6 +221,34 @@ export class EndPicture {
   }
 
   private draw(): void {
+    const key = this.result === "won" ? "victory" : "defeat";
+    if (this.art?.get(key)) {
+      const out = prepareMenu(this.canvas);
+      out.save();
+      out.globalAlpha = Math.min(1, this.frame / 7);
+      this.art.background(out, key);
+      // Пыль и угольки движутся независимо от картинки; она остаётся чёткой.
+      for (let i = 0; i < 32; i++) {
+        const t = this.frame / 60;
+        const x = ((i * 43.7 + t * (2 + i % 5)) % 460) - 70;
+        const y = 224 - ((i * 19.1 + t * (this.result === "lost" ? 9 : 2)) % 180);
+        const ember = this.result === "lost" && i % 3 === 0;
+        out.fillStyle = ember ? `rgba(255,177,70,${.28 + .2 * Math.sin(t * 3 + i) ** 2})` : "rgba(247,219,163,.19)";
+        out.beginPath(); out.arc(x, y, ember ? .32 : .2, 0, Math.PI * 2); out.fill();
+      }
+      const shade = out.createLinearGradient(0, 130, 0, 224);
+      shade.addColorStop(0, "#0000"); shade.addColorStop(1, "#080a0fea");
+      out.fillStyle = shade; out.fillRect(-160, 130, 640, 94);
+      const y = this.textY;
+      menuText(out, this.result === "won" ? "ПОБЕДА" : "ПОРАЖЕНИЕ", 160, y, {
+        size: 20, align: "center", color: this.result === "won" ? "#ffe1a0" : "#f0b29a", weight: "700",
+      });
+      out.strokeStyle = "#d9b16e99"; out.lineWidth = .5;
+      out.beginPath(); out.moveTo(110, y + 24); out.lineTo(210, y + 24); out.stroke();
+      if (y <= 180) menuText(out, "Нажмите, чтобы продолжить", 160, 211, { size: 5.2, align: "center", color: "#d5c9b6" });
+      out.restore();
+      return;
+    }
     const b = this.rom.bytes;
     const R = END_ROM[this.result];
     const pal = new Uint32Array(64);
@@ -226,7 +260,9 @@ export class EndPicture {
     const tiles = b.subarray(R.text);
     for (const s of objectDef(b, R.textDef)) drawObjSprite(px, SCREEN_W, SCREEN_H, tiles, 0x580, s, 0x80 + s.x, this.textY + s.y, pal);
     new Uint32Array(this.img.data.buffer).set(px);
-    this.ctx.putImageData(this.img, 0, 0);
+    this.lowCtx.putImageData(this.img, 0, 0);
+    const out = prepareMenu(this.canvas);
+    out.drawImage(this.lowCanvas, 0, 0, SCREEN_W, SCREEN_H);
   }
 }
 
@@ -243,11 +279,13 @@ export class Flyby {
   private vx = 0;
   private vy = 0;
   private line = 0;
+  private house = 0;
+  private frame = 0;
   private vram: Uint8Array;
   private palette: Uint32Array;
   active = false;
 
-  constructor(private rom: DuneRom) {
+  constructor(private rom: DuneRom, private vehicles?: VehicleArt | null) {
     this.canvas.className = "flyby";
     this.canvas.setAttribute("aria-hidden", "true");
     this.g = this.canvas.getContext("2d")!;
@@ -267,6 +305,8 @@ export class Flyby {
     this.x = s16(END_ROM.flyStart + path * 4);
     this.y = s16(END_ROM.flyStart + path * 4 + 2);
     this.line = readU16(b, END_ROM.flyLine + house * 2) >> 13;
+    this.house = house;
+    this.frame = 0;
     this.active = true;
     this.canvas.hidden = false;
   }
@@ -281,8 +321,20 @@ export class Flyby {
     if (!this.active) return;
     this.x += this.vx;
     this.y += this.vy;
+    this.frame++;
     const W = Math.ceil(w);
     const H = Math.ceil(h);
+    if(this.vehicles){
+      const scale=zoom*Math.max(1,window.devicePixelRatio||1),pw=Math.ceil(W*scale),ph=Math.ceil(H*scale);
+      if(this.canvas.width!==pw||this.canvas.height!==ph){this.canvas.width=pw;this.canvas.height=ph;}
+      this.canvas.style.width=`${W*zoom}px`;this.canvas.style.height=`${H*zoom}px`;
+      this.g.setTransform(1,0,0,1,0,0);this.g.clearRect(0,0,pw,ph);this.g.scale(scale,scale);
+      const angle=Math.atan2(this.vx,-this.vy)*128/Math.PI;
+      for(const [i,s] of this.sprites.entries())this.vehicles.ornithopter(this.g,
+        (W-SCREEN_W)/2+this.x+s.x+s.w*4,(H-SCREEN_H)/2+this.y+s.y+s.h*4,
+        angle,this.house,this.frame,i);
+      return;
+    }
     if (this.canvas.width !== W || this.canvas.height !== H) {
       this.canvas.width = W;
       this.canvas.height = H;

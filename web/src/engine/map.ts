@@ -4,8 +4,8 @@
  * поэтому Map_Update/Map_MarkTileDirty здесь пустые.
  */
 import {
-  ACTION, EXPLOSION, G, LST, MAP_INFOS, MOVEMENT, STRUCTURE, TEAM_ACTION, UNIT, findAll, idiv,
-  indexGetPackedTile, indexGetUnit, isOutOfMap, packTile, packXY, packedX, packedY, posX, posY, random256, randomRange,
+  ACTION, EXPLOSION, G, IT, LST, MAP_INFOS, MOVEMENT, STRUCTURE, TEAM_ACTION, UNIT, findAll, idiv,
+  indexGetPackedTile, indexGetStructure, indexGetType, indexGetUnit, isOutOfMap, packTile, packXY, packedX, packedY, posX, posY, random256, randomRange,
   structureFind, tile, tileAddDiff, tileGetDirectionPacked, tileGetDistance, tileMoveByDirection, tileGetDistancePacked, tileIsValid, tileMoveByRandom, unitFind, unpackTile,
   type Tile32, type Unit,
 } from "./core.ts";
@@ -16,7 +16,7 @@ import { structureConnectWall, structureDamage, structureGetByPackedTile, struct
 import { iconLandscape, structureInfo, tableMapDiff, tableTileDiff, unitInfo } from "./tables.ts";
 import {
   unitAddToTileFn, unitCreate, unitDamage, unitDeviate, unitGetByPackedTile, unitGetHouseID, unitGetTeam, unitHouseUnitCountAdd,
-  unitRemove, unitRemoveFromTeam, unitRemoveFromTileFn, unitSetAction, unitSetTarget,
+  unitRemove, unitRemoveFromTeam, unitRemoveFromTileFn, unitSetAction, unitSetTarget,unitHarvesterDefend,
 } from "./unit.ts";
 
 export const mapInfo = () => MAP_INFOS[G.mapScale];
@@ -78,7 +78,26 @@ function mapUpdateWall(packed: number): boolean {
   return true;
 }
 
-export function mapMakeExplosion(type: number, position: Tile32, hitpoints: number, unitOriginEncoded: number): void {
+export function alertNearbyBaseDefenders(structure: ReturnType<typeof structureGetByPackedTile>, attackerEncoded: number): void {
+  if (!structure || !houseAreAllied(structure.o.houseID, G.playerHouseID)) return;
+  let attackerHouse = -1;
+  const attacker = indexGetUnit(attackerEncoded);
+  if (attacker?.o.flags.allocated) attackerHouse = unitGetHouseID(attacker);
+  else if (indexGetType(attackerEncoded) === IT.STRUCTURE) attackerHouse = indexGetStructure(attackerEncoded)?.o.houseID ?? -1;
+  if (attackerHouse < 0 || houseAreAllied(attackerHouse, structure.o.houseID)) return;
+
+  for (const defender of G.units) {
+    if (!defender.o.flags.allocated || defender.o.flags.isNotOnMap || !houseAreAllied(unitGetHouseID(defender), structure.o.houseID)) continue;
+    if (!unitInfo[defender.o.type].o.actionsPlayer.includes(ACTION.ATTACK)) continue;
+    if (defender.patrolActive || defender.targetAttack !== 0 || defender.targetMove !== 0 || defender.speed !== 0) continue;
+    if (defender.actionID !== ACTION.GUARD && defender.actionID !== ACTION.AREA_GUARD && defender.actionID !== ACTION.HUNT) continue;
+    if (tileGetDistance(defender.o.position, structure.o.position) > 6 * 256) continue;
+    unitSetAction(defender, ACTION.ATTACK);
+    unitSetTarget(defender, attackerEncoded);
+  }
+}
+
+export function mapMakeExplosion(type: number, position: Tile32, hitpoints: number, unitOriginEncoded: number,groundOnly=false): void {
   const reactionDistance = type === EXPLOSION.DEATH_HAND ? 32 : 16;
   const positionPacked = packTile(position);
 
@@ -88,16 +107,25 @@ export function mapMakeExplosion(type: number, position: Tile32, hitpoints: numb
       const u = unitFind(find, unitGetHouseID);
       if (!u) break;
       const ui = unitInfo[u.o.type];
+      if(groundOnly&&ui.movementType===MOVEMENT.WINGER)continue;
       const distance = tileGetDistance(position, u.o.position) >> 4;
       if (distance >= reactionDistance) continue;
       if (!(u.o.type === UNIT.SANDWORM && type === EXPLOSION.SANDWORM_SWALLOW) && u.o.type !== UNIT.FRIGATE) {
         unitDamage(u, hitpoints >> (distance >> 2), 0);
       }
+      const infantryAttacker=indexGetUnit(unitOriginEncoded);
+      if((hitpoints>>(distance>>2))>0&&infantryAttacker&&unitHarvesterDefend(u,infantryAttacker))continue;
       if (u.o.houseID === G.playerHouseID) continue;
+      let attackerHouse = -1;
       const us = indexGetUnit(unitOriginEncoded);
-      if (!us) continue;
-      if (us === u) continue;
-      if (houseAreAllied(unitGetHouseID(u), unitGetHouseID(us))) continue;
+      if (us) {
+        if (us === u) continue;
+        attackerHouse = unitGetHouseID(us);
+      } else if (indexGetType(unitOriginEncoded) === IT.STRUCTURE) {
+        const ss = indexGetStructure(unitOriginEncoded);
+        if (ss) attackerHouse = ss.o.houseID;
+      }
+      if (attackerHouse < 0 || houseAreAllied(unitGetHouseID(u), attackerHouse)) continue;
       const t = unitGetTeam(u);
       if (t) {
         if (t.action === TEAM_ACTION.STAGING) {
@@ -110,7 +138,7 @@ export function mapMakeExplosion(type: number, position: Tile32, hitpoints: numb
         if (unitInfo[target.o.type].bulletType === UNIT.INVALID) t.target = unitOriginEncoded;
         continue;
       }
-      if (u.o.type === UNIT.HARVESTER) {
+      if (u.o.type === UNIT.HARVESTER && us) {
         const uis = unitInfo[us.o.type];
         if (uis.movementType === MOVEMENT.FOOT && u.targetMove === 0) {
           if (u.actionID !== ACTION.MOVE) unitSetAction(u, ACTION.MOVE);
@@ -138,6 +166,7 @@ export function mapMakeExplosion(type: number, position: Tile32, hitpoints: numb
         if (idiv(si.o.hitpoints, 2) > s.o.hitpoints) type = EXPLOSION.SMOKE_PLUME;
       }
       structureHouseUnderAttack(s.o.houseID);
+      alertNearbyBaseDefenders(s, unitOriginEncoded);
       structureDamage(s, hitpoints, 0);
     }
   }
@@ -210,7 +239,7 @@ function mapFixupSpiceEdges(packed: number): void {
     }
     spriteID += type === LST.SPICE ? 49 : 65;
     spriteID = landscapeIcon(spriteID);
-    G.mapTileID[packed] = 0x8000 | spriteID;
+    G.mapTileID[packed] |= 0x8000;
     G.map[packed].groundTileID = spriteID;
   }
 }
@@ -225,12 +254,15 @@ export function mapChangeSpiceAmount(packed: number, dir: number): void {
   if (type !== LST.NORMAL_SAND && type !== LST.ENTIRELY_DUNE && type !== LST.SPICE && dir > 0) return;
   if (dir > 0) type = type === LST.SPICE ? LST.THICK_SPICE : LST.SPICE;
   else type = type === LST.THICK_SPICE ? LST.SPICE : LST.NORMAL_SAND;
-  let spriteID = 0;
-  if (type === LST.SPICE) spriteID = 49;
-  if (type === LST.THICK_SPICE) spriteID = 65;
-  spriteID = landscapeIcon(spriteID);
-  G.mapTileID[packed] = 0x8000 | spriteID;
-  G.map[packed].groundTileID = spriteID;
+  if (type === LST.NORMAL_SAND) {
+    G.mapTileID[packed] &= 0x7fff;
+    G.map[packed].groundTileID = G.mapTileID[packed] & 0x1ff;
+  } else {
+    let spriteID = type === LST.SPICE ? 49 : 65;
+    spriteID = landscapeIcon(spriteID);
+    G.mapTileID[packed] |= 0x8000;
+    G.map[packed].groundTileID = spriteID;
+  }
   mapFixupSpiceEdges(packed);
   mapFixupSpiceEdges(packed + 1);
   mapFixupSpiceEdges(packed - 1);

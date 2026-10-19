@@ -2,13 +2,12 @@
  * Функции, которые вызывают скрипты EMC (OpenDUNE src/script/general.c, unit.c, structure.c, team.c),
  * и таблицы их номеров — как в оригинале, MD использует тот же байт-код.
  */
-import { animationStart, animationStopByTile } from "./animation.ts";
 import {
   ACTION, EXPLOSION, G, INDEX_INVALID, IT, LST, MOVEMENT, STATE, STRUCTURE, TEAM_ACTION, UNIT, adjustToGameSpeed, findAll, idiv,
   indexDecode, indexEncode, indexGetObject, indexGetPackedTile, indexGetStructure, indexGetTile, indexGetType, indexGetUnit,
   indexIsValid, orientation8, packTile, packXY, random256, randomRange, s16, s8, structureFind, tile, tileCenter, tileGetDirection,
   tileGetDirectionPacked, tileGetDistance, tileGetDistancePacked, tileGetDistanceRoundedUp, tileMoveByDirection, tileMoveByRandom,
-  u16, unitFind, unpackTile, type ScriptEngine, type ScriptFunction, type Structure, type Unit,
+  u16, unitFind, unpackTile, type ScriptEngine, type ScriptFunction, type Structure, type Tile32, type Unit,
 } from "./core.ts";
 import { houseAreAllied } from "./house.ts";
 import { mapChangeSpiceAmount, mapGetLandscapeType, mapIsValidPosition, mapMakeExplosion, mapSearchSpice, tileGetTileInDirectionOf } from "./map.ts";
@@ -16,16 +15,21 @@ import { objectGetByPackedTile, objectGetDistanceToEncoded, objectScriptVariable
 import { peek } from "./script.ts";
 import { scriptLoad, scriptReset } from "./script.ts";
 import { msg } from "./strings.ts";
+import {refineryExit} from './refinery-dock.ts';
+import {carryallReadyForService} from './carryall-flight.ts';
+import {fireLaser,initializeDrone} from './advanced-units.ts';
 import {
   structureCreate, structureFindFreePosition, structureRemove, structureRemoveFog, structureSetState,
+  structureGetByPackedTile,
 } from "./structure.ts";
-import { animationUnitScript1, animationUnitScript2, landscapeInfo, layoutTileCount, layoutTiles, structureInfo, unitInfo } from "./tables.ts";
+import { layoutTileCount, layoutTiles, structureInfo, unitInfo } from "./tables.ts";
 import {
   unitAddToTeam, unitCallUnitByType, unitCreate, unitCreateBullet, unitDeviationDecrease, unitEnterStructure, unitFindBestTargetEncoded,
   unitFindClosestRefinery, unitGetHouseID, unitGetTargetStructurePriority, unitGetTargetUnitPriority, unitGetTileEnterScore, unitHide,
   unitHouseUnitCountRemove, unitIsTileOccupied, unitIsValidMovementIntoStructure, unitRemove, unitRemoveFog, unitRemoveFromTeam,
   unitRemovePlayer, unitSandwormFindBestTarget, unitSelect, unitSetAction, unitSetDestination, unitSetOrientation, unitSetPosition,
   unitSetSpeed, unitSetTarget, unitStartMovement, unitUpdateMap,
+  unitDestinationTile,
 } from "./unit.ts";
 
 const P = peek;
@@ -115,7 +119,9 @@ const generalDecodeIndex: ScriptFunction = (script) => {
 const generalGetIndexType: ScriptFunction = (script) => {
   const index = P(script, 1);
   if (!indexIsValid(index)) return 0xffff;
-  return indexGetType(index);
+  // MD EMC constants differ from the PC enum used by the port: unit=1,
+  // structure=2, tile=3. RETURN otherwise mistakes its carryall for a refinery.
+  return [0, 3, 1, 2][indexGetType(index)];
 };
 
 const generalGetLinkedUnitType: ScriptFunction = () => {
@@ -201,10 +207,13 @@ const unitGetTargetPriority: ScriptFunction = (script) => {
   return unitGetTargetStructurePriority(u, s);
 };
 
-const unitTransportDeliver: ScriptFunction = () => {
+const unitTransportDeliver: ScriptFunction = (script) => {
   const u = cur();
   if (u.o.linkedID === 0xff) return 0;
   if (indexGetType(u.targetMove) === IT.UNIT) return 0;
+  if(u.o.type===UNIT.CARRYALL&&!carryallReadyForService(u)){
+    unitSetSpeed(u,0);script.delay=2;script.pc--;return 0;
+  }
   if (indexGetType(u.targetMove) === IT.STRUCTURE) {
     const s = indexGetStructure(u.targetMove)!;
     const si = structureInfo[s.o.type];
@@ -248,6 +257,16 @@ const unitTransportDeliver: ScriptFunction = () => {
   unitSetSpeed(u2, 0);
   u.o.linkedID = u2.o.linkedID;
   u2.o.linkedID = 0xff;
+  // A delivered harvester has no refinery release script to send it back to spice.
+  // Resume its normal harvesting order immediately after the carryall drops it.
+  if (u2.o.type === UNIT.HARVESTER) {
+    const field = mapSearchSpice(packTile(u2.o.position), 64);
+    if (field) {
+      u2.targetLast = tileCenter(unpackTile(field));
+      unitSetAction(u2, ACTION.HARVEST);
+      unitSetDestination(u2, indexEncode(field, IT.TILE));
+    }
+  }
   if (u.o.linkedID !== 0xff) return 1;
   u.o.flags.inTransport = false;
   objectScriptVariable4Clear(u.o);
@@ -255,9 +274,12 @@ const unitTransportDeliver: ScriptFunction = () => {
   return 1;
 };
 
-const unitPickup: ScriptFunction = () => {
+const unitPickup: ScriptFunction = (script) => {
   const u = cur();
   if (u.o.linkedID !== 0xff) return 0;
+  if(u.o.type===UNIT.CARRYALL&&u.targetMove&&!carryallReadyForService(u)){
+    unitSetSpeed(u,0);script.delay=2;script.pc--;return 0;
+  }
   switch (indexGetType(u.targetMove)) {
     case IT.STRUCTURE: {
       const s = indexGetStructure(u.targetMove)!;
@@ -350,7 +372,7 @@ const unitSetSprite: ScriptFunction = (script) => {
 const unitMoveToTarget: ScriptFunction = (script) => {
   const u = cur();
   if (u.targetMove === 0) return 0;
-  const t = indexGetTile(u.targetMove);
+  const t = unitDestinationTile(u,u.targetMove);
   const distance = tileGetDistance(u.o.position, t);
   if (s16(distance) < 128) {
     unitSetSpeed(u, 0);
@@ -382,6 +404,7 @@ const unitDie: ScriptFunction = () => {
   const u = cur();
   const ui = unitInfo[u.o.type];
   unitRemove(u);
+  if (u.o.houseID === G.playerHouseID && (u.o.type < UNIT.MISSILE_HOUSE || u.o.type === UNIT.LASER_TANK || u.o.type === UNIT.COMBAT_DRONE)) G.scenario.unitsLostAllied++;
   if (ui.movementType !== MOVEMENT.WINGER) {
     const credits = Math.max(idiv(ui.o.buildCredits, 100), 1);
     if (u.o.houseID === G.playerHouseID) {
@@ -414,6 +437,53 @@ const unitExplosionMultiple: ScriptFunction = (script) => {
   return 0;
 };
 
+function friendlyStructureOnRay(from: Tile32, to: Tile32, houseID: number): boolean {
+  let x = packTile(from) & 63;
+  let y = packTile(from) >> 6;
+  const endX = packTile(to) & 63;
+  const endY = packTile(to) >> 6;
+  const dx = Math.abs(endX - x);
+  const sx = x < endX ? 1 : -1;
+  const dy = -Math.abs(endY - y);
+  const sy = y < endY ? 1 : -1;
+  let error = dx + dy;
+  while (x !== endX || y !== endY) {
+    const twice = error * 2;
+    if (twice >= dy) { error += dy; x += sx; }
+    if (twice <= dx) { error += dx; y += sy; }
+    if (x === endX && y === endY) break;
+    const structure = structureGetByPackedTile(packXY(x, y));
+    if (structure && houseAreAllied(structure.o.houseID, houseID)) return true;
+  }
+  return false;
+}
+
+function unitFindClearShotTile(unit: Unit, target: number): number {
+  const targetPosition = indexGetTile(target);
+  const packedTarget = packTile(targetPosition);
+  const targetX = packedTarget & 63;
+  const targetY = packedTarget >> 6;
+  const range = Math.max(1, unitInfo[unit.o.type].fireDistance);
+  let best = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let y = Math.max(0, targetY - range); y <= Math.min(63, targetY + range); y++) {
+    for (let x = Math.max(0, targetX - range); x <= Math.min(63, targetX + range); x++) {
+      const packed = packXY(x, y);
+      if (!mapIsValidPosition(packed) || structureGetByPackedTile(packed)) continue;
+      if (unitGetTileEnterScore(unit, packed, 0) >= 256) continue;
+      const point = tileCenter(unpackTile(packed));
+      if (tileGetDistance(point, targetPosition) > range * 256) continue;
+      if (friendlyStructureOnRay(point, targetPosition, unitGetHouseID(unit))) continue;
+      const distance = tileGetDistance(unit.o.position, point);
+      if (distance < bestDistance) {
+        best = packed;
+        bestDistance = distance;
+      }
+    }
+  }
+  return best;
+}
+
 const unitFire: ScriptFunction = (script) => {
   const u = cur();
   const target = u.targetAttack;
@@ -431,12 +501,22 @@ const unitFire: ScriptFunction = (script) => {
   const distance = objectGetDistanceToEncoded(u.o, target);
   if (s16(ui.fireDistance << 8) < s16(distance)) return 0;
   const tu = indexGetUnit(target);
+  if(tu&&unitInfo[tu.o.type].movementType===MOVEMENT.WINGER&&!ui.o.flags.targetAir)return 0;
   if (u.o.type !== UNIT.SANDWORM && (indexGetType(target) !== IT.UNIT || unitInfo[tu!.o.type].movementType !== MOVEMENT.WINGER)) {
     const orientation = tileGetDirection(u.o.position, indexGetTile(target));
     let diff = Math.abs(u.orientation[turret].current - orientation);
     if (ui.movementType === MOVEMENT.WINGER) diff = idiv(diff, 8);
     if (diff >= 8) return 0;
   }
+  if (ui.bulletType !== UNIT.SANDWORM && ui.bulletType !== UNIT.INVALID && ui.movementType !== MOVEMENT.WINGER &&
+      friendlyStructureOnRay(u.o.position, indexGetTile(target), unitGetHouseID(u))) {
+    if (u.speed === 0 && u.currentDestination.x === 0 && u.currentDestination.y === 0) {
+      const detour = unitFindClearShotTile(u, target);
+      if (detour !== 0) unitSetDestination(u, indexEncode(detour, IT.TILE));
+    }
+    return 0;
+  }
+  if(u.o.type===UNIT.LASER_TANK)return fireLaser(u,target);
   let damage = ui.damage;
   let typeID = ui.bulletType;
   const fireTwice = ui.flags.firesTwice && u.o.hitpoints > idiv(ui.o.hitpoints, 2);
@@ -446,6 +526,7 @@ const unitFire: ScriptFunction = (script) => {
       unitUpdateMap(0, u);
       const u2 = indexGetUnit(target);
       if (u2) {
+        u.o.position = { ...u2.o.position };
         u2.o.script.variables[1] = 0xffff;
         unitRemovePlayer(u2);
         unitHouseUnitCountRemove(u2);
@@ -469,12 +550,13 @@ const unitFire: ScriptFunction = (script) => {
       const bullet = unitCreateBullet(u.o.position, typeID, unitGetHouseID(u), damage, target);
       if (!bullet) return 0;
       bullet.originEncoded = indexEncode(u.o.index, IT.UNIT);
+      G.onUnitShot(u, bullet);
       // $044B38: выстрел пулей у танка и осадного танка ставит кадры отдачи башни
       if (typeID === UNIT.BULLET && (u.o.type === UNIT.TANK || u.o.type === UNIT.SIEGE_TANK)) {
         u.recoil = true;
         u.recoilShown = true;
       }
-      G.onSound(ui.bulletSound, u.o.position);
+      G.onSound(ui.bulletSound, u.o.position, u.o.type === UNIT.SONIC_TANK ? 0.45 : 1);
       unitDeviationDecrease(u, 20);
       break;
     }
@@ -576,7 +658,7 @@ const unitSetDestinationDirect: ScriptFunction = (script) => {
   if (!indexIsValid(encoded)) return 0;
   const u = cur();
   if ((u.currentDestination.x === 0 && u.currentDestination.y === 0) || unitInfo[u.o.type].flags.isNormalUnit) {
-    u.currentDestination = indexGetTile(encoded);
+    u.currentDestination = unitDestinationTile(u,encoded);
   }
   unitSetOrientation(u, tileGetDirection(u.o.position, u.currentDestination), false, 0);
   return 0;
@@ -789,7 +871,7 @@ const unitCalculateRoute: ScriptFunction = (script) => {
   const encoded = P(script, 1);
   if (u.currentDestination.x !== 0 || u.currentDestination.y !== 0 || !indexIsValid(encoded)) return 1;
   const packedSrc = packTile(u.o.position);
-  const packedDst = indexGetPackedTile(encoded);
+  const packedDst = packTile(unitDestinationTile(u,encoded));
   if (packedDst === packedSrc) {
     u.route[0] = 0xff;
     u.targetMove = 0;
@@ -800,6 +882,11 @@ const unitCalculateRoute: ScriptFunction = (script) => {
     const n = Math.min(res.routeSize, 14);
     for (let i = 0; i < n; i++) u.route[i] = res.buffer[i];
     if (u.route[0] === 0xff) {
+      const refinery=indexGetStructure(encoded);
+      if(u.o.type===UNIT.HARVESTER&&refinery?.o.type===STRUCTURE.REFINERY&&refinery.o.houseID===unitGetHouseID(u)){
+        objectScriptVariable4Clear(u.o);u.targetMove=0;
+        unitSetAction(u,ACTION.RETURN);return 1;
+      }
       u.targetMove = 0;
       if (u.o.type === UNIT.SANDWORM) script.delay = 720;
     }
@@ -855,15 +942,7 @@ const unitGetAmount: ScriptFunction = () => {
 const unitIsInTransport: ScriptFunction = () => (cur().o.flags.inTransport ? 1 : 0);
 
 const unitStartAnimation: ScriptFunction = () => {
-  const u = cur();
-  const position = packTile(tileCenter(u.o.position));
-  animationStopByTile(position);
-  let id = landscapeInfo[mapGetLandscapeType(packTile(u.o.position))].isSand ? 0 : 1;
-  if (u.o.script.variables[1] === 1) id += 2;
-  G.map[position].houseID = unitGetHouseID(u);
-  // DISPLAYMODE_INFANTRY_3_FRAMES = 3
-  if (unitInfo[u.o.type].displayMode === 3) animationStart(animationUnitScript1[id], u.o.position, 0, unitGetHouseID(u), 4);
-  else animationStart(animationUnitScript2[id], u.o.position, 0, unitGetHouseID(u), 4);
+  // В Mega Drive версии нет оверлейных иконок трупов пехоты (группа 4 в ROM занята частями зданий)
   return 1;
 };
 
@@ -872,7 +951,7 @@ const unitCallUnitByTypeFn: ScriptFunction = (script) => {
   if (u.o.script.variables[4] !== 0) return u.o.script.variables[4];
   if (!unitInfo[u.o.type].o.flags.canBePickedUp || u.deviated !== 0) return 0;
   const encoded = indexEncode(u.o.index, IT.UNIT);
-  const u2 = unitCallUnitByType(P(script, 1), unitGetHouseID(u), encoded, false);
+  const u2 = unitCallUnitByType(P(script, 1), unitGetHouseID(u), encoded, harvesterNeedsLift(u));
   if (!u2) return 0;
   const encoded2 = indexEncode(u2.o.index, IT.UNIT);
   objectScriptVariable4Link(encoded, encoded2);
@@ -926,6 +1005,7 @@ const unitHarvest: ScriptFunction = () => {
   u.o.flags.inTransport = true;
   unitUpdateMap(2, u);
   if (u.amount > 100) u.amount = 100;
+  if (G.infiniteSpice) return 1;
   if ((random256() & 0x1f) !== 0) return 1;
   mapChangeSpiceAmount(packed, -1);
   return 0;
@@ -996,10 +1076,46 @@ const unitGoToClosestStructure: ScriptFunction = (script) => {
     s = s2;
   }
   if (!s) return 0;
+  if(u.o.type===UNIT.HARVESTER&&s.o.type===STRUCTURE.REFINERY&&harvesterNeedsLift(u,s)){
+    const encoded=indexEncode(u.o.index,IT.UNIT);
+    const plane=unitCallUnitByType(UNIT.CARRYALL,unitGetHouseID(u),encoded,true);
+    if(plane){objectScriptVariable4Link(encoded,indexEncode(plane.o.index,IT.UNIT));return 1;}
+  }
   unitSetAction(u, ACTION.MOVE);
   unitSetDestination(u, indexEncode(s.o.index, IT.STRUCTURE));
   return 1;
 };
+
+function harvesterNeedsLift(u:Unit,refinery?:Structure):boolean{
+  if(u.o.type!==UNIT.HARVESTER)return false;
+  let s=refinery;
+  if(!s){
+    let nearest=Infinity;
+    for(const candidate of G.structureFind){
+      if(candidate.o.type!==STRUCTURE.REFINERY||candidate.o.houseID!==unitGetHouseID(u)||candidate.o.flags.isNotOnMap||candidate.o.linkedID!==255||candidate.o.script.variables[4]!==0)continue;
+      const distance=tileGetDistance(u.o.position,candidate.o.position);
+      if(distance<nearest){nearest=distance;s=candidate;}
+    }
+  }
+  if(!s)return false;
+  const exit=packTile(refineryExit(s.o.position));
+  if(unitGetTileEnterScore(u,exit,0)>255)return true;
+  // The pad itself can be free while walls or other buildings enclose its approach.
+  const queue=new Uint16Array(4096),seen=new Uint8Array(4096);
+  let head=0,tail=1;queue[0]=packTile(u.o.position);seen[queue[0]]=1;
+  while(head<tail){
+    const p=queue[head++];if(p===exit)return false;
+    const x=p&63,y=p>>6;
+    for(let direction=0;direction<8;direction++){
+      const nx=x+[0,1,1,1,0,-1,-1,-1][direction],ny=y+[-1,-1,0,1,1,1,0,-1][direction];
+      if(nx<0||nx>63||ny<0||ny>63)continue;
+      const next=packXY(nx,ny);
+      if(seen[next]||!mapIsValidPosition(next)||structureGetByPackedTile(next)||unitGetTileEnterScore(u,next,direction)>255)continue;
+      seen[next]=1;queue[tail++]=next;
+    }
+  }
+  return true;
+}
 
 const MCV_OFFSETS = [0, -1, -64, -65];
 
@@ -1111,8 +1227,8 @@ const structureFindUnitByType: ScriptFunction = (script) => {
   if (s.state !== STATE.READY) return IT.NONE;
   if (s.o.linkedID === 0xff) return IT.NONE;
   const type = P(script, 1);
-  const position = structureFindFreePosition(s, false);
   const u = G.units[s.o.linkedID];
+  const position = structureGroundExit(s,u,false);
   if (G.playerHouseID === s.o.houseID && u.o.type === UNIT.HARVESTER && u.targetLast.x === 0 && u.targetLast.y === 0 && position !== 0) return IT.NONE;
   const carryall = unitCallUnitByType(type, s.o.houseID, indexEncode(s.o.index, IT.STRUCTURE), position === 0);
   if (!carryall) return IT.NONE;
@@ -1121,23 +1237,44 @@ const structureFindUnitByType: ScriptFunction = (script) => {
   return carryallIndex;
 };
 
+/** The carryall request must test the same actual exit as ground deployment. */
+function structureGroundExit(s:Structure,u:Unit,checkForSpice:boolean):number{
+  if(s.o.type===STRUCTURE.REFINERY&&u.o.type===UNIT.HARVESTER){
+    const exit=packTile(refineryExit(s.o.position));
+    return mapIsValidPosition(exit)&&unitGetTileEnterScore(u,exit,0)<=255?exit:0;
+  }
+  return structureFindFreePosition(s,checkForSpice);
+}
+
 const structureUnknown0C5A: ScriptFunction = () => {
   const s = curS();
   if (s.o.linkedID === 0xff) return 0;
   const u = G.units[s.o.linkedID];
   if (unitInfo[u.o.type].movementType === MOVEMENT.WINGER && unitSetPosition(u, s.o.position)) {
+    if(u.o.type===UNIT.COMBAT_DRONE)initializeDrone(u,s);
     s.o.linkedID = u.o.linkedID;
     u.o.linkedID = 0xff;
     if (s.o.linkedID === 0xff) structureSetState(s, STATE.IDLE);
     objectScriptVariable4Clear(s.o);
-    if (s.o.houseID === G.playerHouseID) G.onFeedback(G.playerHouseID + 49);
+    // MD $0233c4: готовый юнит игрока — голос 1 ("Unit ready", GEMS seq 64)
+    if (s.o.houseID === G.playerHouseID) G.onFeedback(1);
     return 1;
   }
-  const position = structureFindFreePosition(s, u.o.type === UNIT.HARVESTER);
+  const position = structureGroundExit(s,u,u.o.type===UNIT.HARVESTER);
   if (position === 0) return 0;
   u.o.seenByHouses |= s.o.seenByHouses;
   const t = tileCenter(unpackTile(position));
   if (!unitSetPosition(u, t)) return 0;
+  if(s.o.type===STRUCTURE.REFINERY&&u.o.type===UNIT.HARVESTER){
+    const last=packTile(u.targetLast),kind=mapGetLandscapeType(last);
+    const field=(u.targetLast.x||u.targetLast.y)&&(kind===LST.SPICE||kind===LST.THICK_SPICE)
+      ?last:mapSearchSpice(packTile(u.o.position),64);
+    if(field){
+      u.targetLast=tileCenter(unpackTile(field));
+      unitSetAction(u,ACTION.HARVEST);
+      unitSetDestination(u,indexEncode(field,IT.TILE));
+    }
+  }
   s.o.linkedID = u.o.linkedID;
   u.o.linkedID = 0xff;
   unitSetOrientation(u, tileGetDirection(s.o.position, u.o.position) & 0xe0, true, 0);
@@ -1147,7 +1284,8 @@ const structureUnknown0C5A: ScriptFunction = () => {
   objectScriptVariable4Clear(s.o);
   if (s.o.houseID !== G.playerHouseID) return 1;
   if (s.o.type === STRUCTURE.REPAIR) return 1;
-  G.onFeedback(G.playerHouseID + (u.o.type === UNIT.HARVESTER ? 68 : 30));
+  // MD $0233c4: готовый юнит игрока — голос 1 ("Unit ready", GEMS seq 64)
+  G.onFeedback(1);
   return 1;
 };
 

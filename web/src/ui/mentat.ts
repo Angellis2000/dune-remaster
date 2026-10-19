@@ -11,7 +11,13 @@
  * Цвета 8–11 строки 2 крутятся раз в 8 кадров ($024728).
  */
 import { drawZoom, MentatGfx, toRGBA, zoomTiles, type MdSprite } from "../gfx/mentat.ts";
-import { SCREEN_H, SCREEN_W } from "../gfx/screens.ts";
+import { decodeTextCodes, SCREEN_H, SCREEN_W } from "../gfx/screens.ts";
+import { menuPoint, menuText, prepareMenu } from "../gfx/menu-canvas.ts";
+import type { ScreenArt, ScreenArtKey } from "../gfx/screen-art.ts";
+import { drawMentatPortrait } from "../gfx/mentat-portrait.ts";
+import {MentatMotion} from '../gfx/mentat-motion.ts';
+import {CampaignZoom} from '../gfx/campaign-zoom.ts';
+import { StrategicMapArt } from "../gfx/strategic-map-art.ts";
 import type { DuneRom } from "../rom/dune.ts";
 import type { Button } from "../input/pad.ts";
 import type { HouseCode } from "./settings.ts";
@@ -88,8 +94,13 @@ export class MentatScreen {
   private canvas = document.createElement("canvas");
   private ctx: CanvasRenderingContext2D;
   private gfx: MentatGfx;
+  private strategic: StrategicMapArt;
+  private hdZoom:CampaignZoom|null=null;
+  private hdZoomStarted=0;
   private px = new Uint32Array(SCREEN_W * SCREEN_H);
   private img: ImageData;
+  private lowCanvas=document.createElement('canvas');
+  private lowCtx:CanvasRenderingContext2D;
   private raf = 0;
   private last = 0;
   private acc = 0;
@@ -98,6 +109,37 @@ export class MentatScreen {
   private done: ((choice: number) => void) | null = null;
   private house = 0;
   private vram = new Uint8Array(0);
+  private voiceAudio: HTMLAudioElement | null = null;
+  private syncChoiceVoice = false;
+  private voicePlan: { src: string; firstPage: number; endPage: number }[] = [];
+  private voicePlanIndex = 0;
+
+  private playVoice(src: string): void {
+    this.stopVoice(false);
+    try {
+      const a = new Audio(src);
+      a.volume = 1.0;
+      this.sound?.setVoiceDucking(true);
+      a.play().catch(() => {
+        if (this.voiceAudio === a) {
+          this.stopVoice();
+          this.syncChoiceVoice = false;
+        }
+      });
+      this.voiceAudio = a;
+    } catch {}
+  }
+
+  private stopVoice(restoreMusic = true): void {
+    if (this.voiceAudio) {
+      try {
+        this.voiceAudio.pause();
+        this.voiceAudio.currentTime = 0;
+      } catch {}
+      this.voiceAudio = null;
+    }
+    if (restoreMusic) this.sound?.setVoiceDucking(false);
+  }
   private sprites: MdSprite[] = [];
   private phase: Phase = "idle";
   /** счётчик кадров ($E01A) */
@@ -137,6 +179,9 @@ export class MentatScreen {
   private planeDx = 0;
   private portraitDx = 0;
   private portraitGone = false;
+  private motion=new MentatMotion();
+  private atreidesMotion=new MentatMotion('atreides');
+  private ordosMotion=new MentatMotion('ordos');
   private mapMask = 0x3ff;
   private slots: (FallingRegion | null)[] = [null, null, null, null];
   private physics = false;
@@ -153,8 +198,10 @@ export class MentatScreen {
   constructor(
     rom: DuneRom,
     private sound: Sound | null = null,
+    private art?: ScreenArt,
   ) {
     this.gfx = new MentatGfx(rom);
+    this.strategic = new StrategicMapArt(this.gfx, art);
     this.root = document.createElement("section");
     this.root.className = "settings mentat";
     this.root.setAttribute("role", "dialog");
@@ -164,6 +211,8 @@ export class MentatScreen {
     this.canvas.height = SCREEN_H;
     this.ctx = this.canvas.getContext("2d")!;
     this.img = this.ctx.createImageData(SCREEN_W, SCREEN_H);
+    this.lowCanvas.width=SCREEN_W;this.lowCanvas.height=SCREEN_H;
+    this.lowCtx=this.lowCanvas.getContext('2d')!;
     this.root.append(this.canvas);
     this.canvas.addEventListener("click", (e) => this.onClick(e));
   }
@@ -179,9 +228,16 @@ export class MentatScreen {
 
   /** Показать сцену; done(0 — ДА/ПРИНЯТЬ или любая кнопка, 1 — НЕТ/СОВЕТ). */
   open(scene: MentatScene, done: (choice: number) => void): void {
+    this.motion.stop();
+    this.atreidesMotion.stop();
+    this.ordosMotion.stop();
+    this.stopVoice();
     this.scene = scene;
     this.done = done;
     this.house = HOUSE_INDEX[scene.house];
+    if(this.house===0)this.motion.prepare();
+    else if(this.house===1)this.atreidesMotion.prepare();
+    else if(this.house===2)this.ordosMotion.prepare();
     this.sprites = this.gfx.sprites();
     if (!scene.again || !this.vram.length) {
       this.vram = this.gfx.spriteVram(this.house).slice();
@@ -206,8 +262,12 @@ export class MentatScreen {
     this.physics = false;
     this.cycling = true;
     this.zoomImg = null;
+    this.hdZoom=null;
     // $01F9DA: начальное состояние
     this.pages = this.gfx.pages(scene.text);
+    this.voicePlan = this.voicePlanFor(scene);
+    this.voicePlanIndex = 0;
+    this.syncChoiceVoice = this.voicePlan.length > 0;
     this.remaining = this.pages.length;
     this.shown = 0;
     this.state = 1;
@@ -235,6 +295,10 @@ export class MentatScreen {
   }
 
   close(): void {
+    this.motion.stop();
+    this.atreidesMotion.stop();
+    this.ordosMotion.stop();
+    this.stopVoice();
     this.root.hidden = true;
     this.phase = "idle";
     cancelAnimationFrame(this.raf);
@@ -258,9 +322,7 @@ export class MentatScreen {
   }
 
   private onClick(e: MouseEvent): void {
-    const r = this.canvas.getBoundingClientRect();
-    const y = ((e.clientY - r.top) / r.height) * SCREEN_H;
-    const x = ((e.clientX - r.left) / r.width) * SCREEN_W;
+    const { x, y } = menuPoint(this.canvas, e);
     if (this.phase === "buttons" && x >= 192 && y >= BUTTON_TOP && y < BUTTON_BOTTOM + 16) {
       this.buttonY = y < BUTTON_BOTTOM ? BUTTON_TOP : BUTTON_BOTTOM;
       this.buttonMove = 0;
@@ -300,7 +362,8 @@ export class MentatScreen {
         this.fade();
         break;
       case "typer":
-        this.typer(pressed);
+        if (this.syncChoiceVoice && this.voiceAudio) this.typerWithVoice(pressed);
+        else this.typer(pressed);
         if (this.phase === "typer") this.face();
         break;
       case "buttons":
@@ -445,6 +508,8 @@ export class MentatScreen {
     let fadeIn = 40;
     let frame = 0;
     const steps = Array.from({ length: 17 }, (_, k) => this.gfx.zoomStep(target, k));
+    this.hdZoom=new CampaignZoom(this.zoomHs,this.zoomVs,steps,ZOOM_FRAMES);
+    this.hdZoomStarted=this.timer;
     // кадр k показывает шаг k (чётные — буфер B), прокрутка уже сдвинута на шаг k + 1
     for (let k = 0; k < ZOOM_FRAMES.length; k++) {
       while (frame < ZOOM_FRAMES[k]) {
@@ -492,6 +557,7 @@ export class MentatScreen {
     } else {
       this.phase = "typer";
       this.wait = this.timer + 30;
+      if (this.voicePlan.length) this.playVoice(this.voicePlan[0].src);
     }
   }
 
@@ -544,7 +610,77 @@ export class MentatScreen {
     }
   }
 
+  private voicePlanFor(scene: MentatScene): { src: string; firstPage: number; endPage: number }[] {
+    const introFiles: Record<HouseCode, string> = {
+      A: "./voice/atreides-choice.mp3",
+      O: "./voice/ordos-choice.mp3",
+      H: "./voice/harkonnen-choice.mp3",
+    };
+    if (scene.buttons === "yesno" && scene.level === 0)
+      return [{ src: introFiles[scene.house], firstPage: 0, endPage: this.pages.length }];
+
+    if(scene.buttons==='accept'&&scene.level===0&&scene.again){
+      const house={A:'atreides',O:'ordos',H:'harkonnen'}[scene.house];
+      return [{src:`./voice/${house}-m01-advice.mp3`,firstPage:0,endPage:this.pages.length}];
+    }
+    if (scene.buttons !== "accept" || scene.level !== 0 || scene.again) return [];
+    const briefingFiles: Record<HouseCode, { part2: string; part3: string; split: number }> = {
+      A: { part2: "atreides-briefing-2.mp3", part3: "atreides-briefing-3.mp3", split: 2 },
+      O: { part2: "ordos-briefing-2.mp3", part3: "ordos-briefing-3.mp3", split: 1 },
+      H: { part2: "harkonnen-briefing-2.mp3", part3: "harkonnen-briefing-3.mp3", split: 1 },
+    };
+    const { part2, part3, split } = briefingFiles[scene.house];
+    const boundary = Math.min(split, this.pages.length);
+    return [
+      { src: `./voice/${part2}`, firstPage: 0, endPage: boundary },
+      { src: `./voice/${part3}`, firstPage: boundary, endPage: this.pages.length },
+    ];
+  }
+
+  /** Реплики ментата идут по страницам текста в темпе соответствующей записи. */
+  private typerWithVoice(pressed: boolean): void {
+    const audio = this.voiceAudio;
+    if (!audio) return;
+    if (pressed) {
+      this.stopVoice();
+      this.endText();
+      return;
+    }
+    const segment = this.voicePlan[this.voicePlanIndex];
+    if (audio.ended) {
+      if (this.voicePlanIndex + 1 < this.voicePlan.length) {
+        this.voicePlanIndex++;
+        const next = this.voicePlan[this.voicePlanIndex];
+        this.page = this.pages[next.firstPage] ?? [];
+        this.playVoice(next.src);
+      } else {
+        this.stopVoice();
+        this.endText();
+      }
+      return;
+    }
+    if (!segment || audio.paused) {
+      if (segment) this.page = this.pages[segment.firstPage] ?? [];
+      return;
+    }
+    const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+    const spokenDuration = Math.max(0.1, duration - 0.5);
+    const weights = this.pages.slice(segment.firstPage, segment.endPage)
+      .map((page) => Math.max(20, page.filter((code) => code !== 0x0d).length));
+    if (!weights.length) return;
+    const total = weights.reduce((sum, weight) => sum + weight, 0);
+    const progress = Math.min(0.999, audio.currentTime / spokenDuration) * total;
+    let index = 0;
+    let boundary = weights[0] ?? 0;
+    while (index < weights.length - 1 && progress >= boundary) boundary += weights[++index];
+    this.page = this.pages[segment.firstPage + index] ?? [];
+    this.state = 3;
+    this.talk = 1;
+  }
+
   private endText(): void {
+    this.stopVoice();
+    this.syncChoiceVoice = false;
     if (this.scene.buttons === "key") {
       this.phase = "key";
       return;
@@ -572,6 +708,7 @@ export class MentatScreen {
   }
 
   private finish(choice: number): void {
+    this.stopVoice();
     this.choice = choice;
     // совет — на том же экране, без затемнения
     if (this.scene.buttons === "accept" && choice === 1) {
@@ -593,7 +730,8 @@ export class MentatScreen {
   /** Порт $01F626: глаза и рот. */
   private face(): void {
     const t = this.timer;
-    if (this.talk === 1) {
+    const isSpeaking = !!(this.voiceAudio && !this.voiceAudio.paused && !this.voiceAudio.ended);
+    if (this.talk === 1 || isSpeaking) {
       if (t > this.mouthAt) {
         this.mouth = rnd(0, 4);
         this.gfx.setFace(this.vram, this.house, "mouth", this.mouth);
@@ -643,24 +781,28 @@ export class MentatScreen {
   }
 
   private draw(): void {
+    const portraitKey: ScreenArtKey = this.house === 1 ? "mentatAtreides" : this.house === 2 ? "mentatOrdos" : "mentatHarkonnen";
+    const portrait = this.art?.get(portraitKey);
+    const hdMap = this.strategic.ready;
     const px = this.px;
-    px.fill(0xff000000);
+    px.fill(hdMap ? 0 : 0xff000000);
     const pal = toRGBA(this.cram);
     // падающие области — спрайты без приоритета: под картой (её тайлы с приоритетом), третье место поверх первого
-    for (const s of this.slots) if (s?.visible) this.gfx.drawRegion(px, s.region, s.line, Math.floor(s.y / 0x10000), pal);
-    if (this.zoomImg) drawZoom(px, this.zoomImg, pal, this.zoomHs, this.zoomVs);
-    if (this.mapMask) this.gfx.drawMap(px, this.house, this.scene.level, pal, this.mapMask, this.planeDx);
-    if (this.page.length) this.gfx.drawText(px, this.vram, this.page, pal);
+    if (!hdMap) {
+      for (const s of this.slots) if (s?.visible) this.gfx.drawRegion(px, s.region, s.line, Math.floor(s.y / 0x10000), pal);
+      if (this.zoomImg) drawZoom(px, this.zoomImg, pal, this.zoomHs, this.zoomVs);
+      if (this.mapMask) this.gfx.drawMap(px, this.house, this.scene.level, pal, this.mapMask, this.planeDx);
+    }
+    // Page text is drawn separately with the native UI font below; keep the original bytes for timing/voice.
     const eyes = this.gfx.faceOffset("eyes", this.house);
     const mouth = this.gfx.faceOffset("mouth", this.house);
     // спрайт с меньшим номером — сверху: рисуем с конца
     for (let i = 39; i >= 0; i--) {
       const s = this.sprites[i];
       if (i <= 8) {
-        if (this.phase !== "buttons") continue;
-        const y = i <= 2 ? this.buttonY : s.y + 128;
-        this.gfx.drawSprite(px, this.vram, { ...s, x: s.x + 320, y }, pal);
+        continue; // Кнопки рисуются в разрешении экрана ниже.
       } else if (this.portraitGone) continue;
+      else if (portrait) continue;
       else if (EYES.includes(i)) {
         if (!this.faceHidden) this.gfx.drawSprite(px, this.vram, s, pal, eyes.dx + this.portraitDx, eyes.dy);
       } else if (MOUTH.includes(i)) {
@@ -668,6 +810,67 @@ export class MentatScreen {
       } else this.gfx.drawSprite(px, this.vram, s, pal, this.portraitDx);
     }
     new Uint32Array(this.img.data.buffer).set(px);
-    this.ctx.putImageData(this.img, 0, 0);
+    this.lowCtx.putImageData(this.img,0,0);
+    const out=prepareMenu(this.canvas);
+    if (hdMap) {
+      let light = 0, targetLight = 0;
+      for (let i = 0; i < 32; i++) {
+        light += (this.cram[i] & 14) + ((this.cram[i] >> 4) & 14) + ((this.cram[i] >> 8) & 14);
+        targetLight += (this.target[i] & 14) + ((this.target[i] >> 4) & 14) + ((this.target[i] >> 8) & 14);
+      }
+      const zoomFrame=this.timer-this.hdZoomStarted+this.acc*60/1000;
+      out.save();out.globalAlpha=this.zoomImg&&this.hdZoom
+        ?Math.max(0,Math.min(1,(98-zoomFrame)/58))
+        :Math.min(1,light/Math.max(1,targetLight));
+      this.strategic.backdrop(out,this.portraitGone);
+      for (const s of this.slots) if (s?.visible) this.strategic.draw(out, this.house, this.scene.level, s.region, 0, s.y / 0x10000, true);
+      if (this.zoomImg) {
+        const camera=this.hdZoom?.sample(this.timer-this.hdZoomStarted+this.acc*60/1000)
+          ??{hs:this.zoomHs,vs:this.zoomVs,scale:1};
+        this.strategic.zoom(out,this.house,this.scene.level,this.gfx.targetRegion(this.house,this.scene.level),camera.hs,camera.vs,camera.scale);
+      }
+      for (let r = 0; r < 10; r++) if (this.mapMask & (1 << (9 - r))) this.strategic.draw(out, this.house, this.scene.level, r, this.planeDx);
+      out.restore();
+    }
+    out.drawImage(this.lowCanvas,0,0,SCREEN_W,SCREEN_H);
+    if (portrait && !this.portraitGone) {
+      let level = 0, targetLevel = 0;
+      for (let i = 48; i < 64; i++) {
+        level += (this.cram[i] & 14) + ((this.cram[i] >> 4) & 14) + ((this.cram[i] >> 8) & 14);
+        targetLevel += (this.target[i] & 14) + ((this.target[i] >> 4) & 14) + ((this.target[i] >> 8) & 14);
+      }
+      out.save(); out.globalAlpha = Math.min(1, level / Math.max(1, targetLevel));
+      const speaking=this.phase==='typer'&&(this.talk===1||!!(this.voiceAudio&&!this.voiceAudio.paused&&!this.voiceAudio.ended));
+      const animation=this.house===0?this.motion:this.house===1?this.atreidesMotion:this.ordosMotion;
+      const moving=animation?.draw(out,this.portraitDx,speaking)??false;
+      if(!moving)drawMentatPortrait(out, portrait, this.house, this.portraitDx, this.mouth, this.eyes === 4 && !this.faceHidden);
+      out.restore();
+    }
+    if (this.phase === "buttons") {
+      const labels = this.scene.buttons === "yesno" ? ["ДА", "НЕТ"] : ["ПРИНЯТЬ", "СОВЕТ"];
+      labels.forEach((label, i) => {
+        const y = i ? BUTTON_BOTTOM : BUTTON_TOP;
+        const selected = Math.abs(this.buttonY - y) < 12;
+        const fill = out.createLinearGradient(0, y, 0, y + 16);
+        fill.addColorStop(0, selected ? "#394852" : "#17222c"); fill.addColorStop(1, "#101920");
+        out.fillStyle = fill; out.beginPath(); out.roundRect(192, y, 104, 16, 2); out.fill();
+        out.strokeStyle = selected ? "#e8c27d" : "#647784"; out.lineWidth = .5; out.stroke();
+        menuText(out, label, 244, y + 4, { size: 7, align: "center", color: selected ? "#ffe2a8" : "#b7c5cc" });
+      });
+    }
+    if(this.page.length){
+      const decoded = decodeTextCodes(this.page)
+        // Кириллические тексты ROM местами используют латинские символы-
+        // двойники. Нормализуем их только для исправления имени Атрейдесов.
+        .replace(/[ABCEHKMOPTXY]/g, (letter) => ({ A: "А", B: "В", C: "С", E: "Е", H: "Н", K: "К", M: "М", O: "О", P: "Р", T: "Т", X: "Х", Y: "У" })[letter] ?? letter)
+        .replace(/АТРИДЕС/g, "АТРЕЙДЕС");
+      const lines=decoded.split('\n');
+      const height = lines.length * 8 + 4;
+      out.fillStyle = 'rgba(18,14,7,.78)';
+      out.fillRect(12, 12, 296, height);
+      out.fillStyle = '#e6b94e';
+      out.fillRect(12, 12, 2, height);
+      lines.forEach((line,i)=>menuText(out,line,16,16+i*8,{size:7.4,color:'#ffe3a0',weight:'700',shadow:true,maxWidth:288}));
+    }
   }
 }

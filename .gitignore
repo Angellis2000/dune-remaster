@@ -16,3 +16,15 @@ __pycache__/
 # веб-движок
 web/node_modules/
 web/dist/
+
+# медиа и рабочие файлы, которые живут только в рабочей папке (репозиторий публичный):
+# музыка PC-версии и логотип SEGA — чужие; озвучка и видео ментатов сделаны по текстам и портретам из ROM
+/web/public/music/
+/web/public/voice/
+/web/public/video/
+/озвучка-ментатов-осталось/
+/piper_models/
+/scratch/
+/hd-vehicles/
+/*.log
+/inspect_sounds.js

@@ -56,12 +56,41 @@ export class Intro {
   private ship: { x: number; y: number; sprites: ObjSprite[]; house: number } | null = null;
   private vram: Uint8Array;
   private original = document.createElement("canvas");
-  private stars: { x: number; y: number }[] = [];
+  private animationFrame = 0;
+  private menuStartFrame = 0;
+  private stars: { x: number; y: number; phase: number }[] = [];
+  private starStamps: { x: number; y: number; canvas: HTMLCanvasElement; size: number; phase: number }[] | null = null;
   private shipBounds = new Map<string, { x: number; y: number; w: number; h: number }>();
+  private segaVideo: HTMLVideoElement | null = null;
+
+  private getSegaVideo(): HTMLVideoElement | null {
+    if (typeof document === "undefined") return null;
+    if (!this.segaVideo) {
+      const base = (typeof import.meta !== "undefined" && import.meta.env?.BASE_URL) || "/";
+      const cleanBase = base.endsWith("/") ? base : base + "/";
+      const video = document.createElement("video");
+      video.src = `${cleanBase}video/sega.mp4`;
+      video.playsInline = true;
+      video.preload = "auto";
+      video.muted = false;
+      this.segaVideo = video;
+    }
+    return this.segaVideo;
+  }
+
+  stopVideo(): void {
+    if (this.segaVideo) {
+      this.segaVideo.pause();
+      this.segaVideo.currentTime = 0;
+    }
+  }
 
   constructor(
     private gfx: ScreenGfx,
     private play: (seq: number) => void = () => {},
+    private stop: (seq: number) => void = () => {},
+    private openingTime: () => number = () => this.animationFrame / 60,
+    private difficultyText: () => string = () => "Сложность: Сложно",
   ) {
     this.sega = gfx.segaData();
     this.title = gfx.titleData(false);
@@ -71,21 +100,23 @@ export class Intro {
     this.original.height = SCREEN_H;
     const pal = Uint32Array.from(this.title.palette, (c) => cramToRGBA(c));
     const tile = new Uint32Array(64);
-    // Позиции звёзд берём из той же плоскости ROM; сами лучи рисуем гладкими линиями.
+    // Координаты пролёта оставляем из ROM, а сами звёзды оформляем HD-образцами ниже.
     for (let cy = 0; cy < 28; cy++) for (let cx = 0; cx < 88; cx++) {
       tile.fill(0);
       blitTile(this.vram, readU16(this.title.maps, 0xe000 + (cy * 128 + cx) * 2), pal, tile, 8, 0, 0);
-      const points = Array.from(tile.keys()).filter((i) => tile[i]);
-      if (points.length) this.stars.push({ x: cx * 8 + points.reduce((sum, i) => sum + i % 8, 0) / points.length,
-        y: cy * 8 + points.reduce((sum, i) => sum + Math.floor(i / 8), 0) / points.length });
+      let count = 0, sumX = 0, sumY = 0;
+      for (let i = 0; i < 64; i++) if (tile[i]) { count++; sumX += i % 8; sumY += Math.floor(i / 8); }
+      if (count) this.stars.push({ x: cx * 8 + sumX / count, y: cy * 8 + sumY / count, phase: this.stars.length * 2.17 });
     }
   }
 
   start(): void {
+    this.stopVideo();
     this.cram.fill(0);
     this.mode = "black";
     this.hsA = this.hsB = 0;
     this.showA = this.menu = this.scrolling = this.braking = false;
+    this.menuStartFrame = 0;
     this.pos = -1;
     this.speed = 0x8000;
     this.loopOn = this.loopAgain = true;
@@ -96,8 +127,14 @@ export class Intro {
 
   /** Кадр; false — заставка кончилась. */
   tick(): boolean {
+    this.animationFrame++;
     if (this.scrolling) this.scrollB();
     return !this.gen?.next().done;
+  }
+
+  /** Время сборки DUNE, чтобы главный экран продолжил её с текущего кадра заставки. */
+  titleElapsedSeconds(): number {
+    return this.menu ? Math.max(0, (this.animationFrame - this.menuStartFrame) / 60) : 0;
   }
 
   private *wait(n: number): Step {
@@ -169,13 +206,26 @@ export class Intro {
     const b = this.gfx.romBytes;
     // «SEGA»
     this.mode = "sega";
-    this.cram.set(this.sega.palette);
-    for (let cycle = 0; cycle < 3; cycle++)
-      for (let d = 40; ; d -= 2) {
-        yield* this.wait(3);
-        if (d < 0) break;
-        for (let i = 0; i < 11; i++) this.cram[2 + i] = readU16(b, this.sega.cycle + d + i * 2);
+    const v = this.getSegaVideo();
+    if (v) {
+      v.currentTime = 0;
+      v.muted = false;
+      const p = v.play();
+      if (p) {
+        p.catch(() => {
+          v.muted = true;
+          v.play().catch(() => {});
+        });
       }
+      let frames = 0;
+      while (!v.ended && v.currentTime < 3.65 && frames < 240) {
+        frames++;
+        yield;
+      }
+      v.pause();
+    } else {
+      yield* this.wait(180);
+    }
     // $017418: тайлы и звёзды ($0C7D68, кадр 12), строки 0 и 2 палитры
     this.mode = "black";
     this.cram.fill(0);
@@ -185,6 +235,7 @@ export class Intro {
     this.cram.set(this.title.palette.subarray(32, 48), 32);
     yield* this.wait(3);
     this.scrolling = true;
+    this.play(0);
     yield* this.wait(200);
     // логотипы: плоскость A с 0, строки 1–3 проявляются, 300 кадров, гаснут
     this.showA = true;
@@ -206,6 +257,7 @@ export class Intro {
     for (const n of [1, 0, 2]) {
       this.play(10);
       yield* this.cutscene(n);
+      this.stop(10);
     }
     this.cram.fill(0, 16, 64);
     yield* this.wait(180);
@@ -215,6 +267,7 @@ export class Intro {
     this.showA = true;
     this.menu = true;
     this.hsA = -512;
+    this.menuStartFrame = this.animationFrame;
     yield* this.fade(this.titleMenu.palette);
   }
 
@@ -247,6 +300,13 @@ export class Intro {
     const px = this.px;
     px.fill(pal[0]);
     if (this.mode === "sega") {
+      const v = this.getSegaVideo();
+      if (v && v.readyState >= 2) {
+        ctx.save();
+        ctx.drawImage(v, 0, 0, SCREEN_W, SCREEN_H);
+        ctx.restore();
+        return;
+      }
       for (let cy = 0; cy < 28; cy++) for (let cx = 0; cx < 40; cx++) blitTile(this.sega.vram, readU16(this.sega.map, (cy * 64 + cx) * 2), pal, px, SCREEN_W, cx * 8, cy * 8);
     } else if (this.mode === "title") {
       this.plane(this.title.maps, 0xe000, this.hsB, pal);
@@ -261,38 +321,106 @@ export class Intro {
     ctx.restore();
   }
 
+  /** Share the exact starfield with the title screen after the intro stops scrolling. */
+  drawBackdrop(ctx: CanvasRenderingContext2D, frame: number, scroll = -704): boolean {
+    const art = this.gfx.art;
+    if (!art.get("arrakis")) return false;
+    ctx.save();
+    art.background(ctx, "arrakis", 704 + scroll);
+    const image = art.get("arrakis");
+    if (image) {
+      const matrix = ctx.getTransform();
+      const logicalW = ctx.canvas.width / matrix.a;
+      const logicalH = ctx.canvas.height / matrix.d;
+      const viewLeft = (320 - logicalW) / 2;
+      const viewRight = (320 + logicalW) / 2;
+      const bgW = Math.max(logicalW, logicalH * image.width / image.height);
+      const bgH = bgW * image.height / image.width;
+      const bgX = (320 - bgW) / 2 + 704 + scroll;
+      const bgY = (224 - bgH) / 2;
+      const cx = bgX + 1052 / image.width * bgW;
+      const cy = bgY + 440 / image.height * bgH;
+      const rx = 267 / image.width * bgW;
+      const ry = 267 / image.height * bgH;
+
+      // Берём формы звёзд прямо из этого фона, сохраняя ROM-траектории пролёта.
+      if (!this.starStamps) {
+        const samples = [
+          [56, 109, 30], [118, 72, 24], [354, 92, 25], [648, 67, 24], [705, 188, 32],
+          [888, 95, 25], [978, 36, 25], [1102, 98, 24], [1220, 98, 25], [1404, 68, 28],
+          [1560, 135, 24], [1626, 81, 25], [323, 279, 34], [472, 461, 25], [161, 249, 23],
+          [65, 365, 24], [44, 615, 24], [414, 608, 24], [646, 725, 28], [830, 846, 30],
+          [1375, 639, 26], [1608, 719, 30], [1540, 869, 24],
+        ];
+        this.starStamps = samples.map(([x, y, size], i) => {
+          const canvas = document.createElement("canvas");
+          canvas.width = canvas.height = size;
+          const stampCtx = canvas.getContext("2d", { willReadFrequently: true })!;
+          stampCtx.drawImage(image, x - size / 2, y - size / 2, size, size, 0, 0, size, size);
+          const pixels = stampCtx.getImageData(0, 0, size, size);
+          for (let p = 0; p < pixels.data.length; p += 4) {
+            const brightness = Math.max(pixels.data[p], pixels.data[p + 1], pixels.data[p + 2]);
+            pixels.data[p + 3] = brightness < 10 ? 0 : Math.min(255, brightness * 1.15);
+            if (brightness) {
+              pixels.data[p] = Math.min(255, pixels.data[p] * 255 / brightness);
+              pixels.data[p + 1] = Math.min(255, pixels.data[p + 1] * 255 / brightness);
+              pixels.data[p + 2] = Math.min(255, pixels.data[p + 2] * 255 / brightness);
+            }
+          }
+          stampCtx.putImageData(pixels, 0, 0);
+          return { x, y, canvas, size, phase: i * 2.17 };
+        });
+      }
+      ctx.globalCompositeOperation = "screen";
+      for (let i = 0; i < this.stars.length; i++) {
+        const star = this.stars[i];
+        const stamp = this.starStamps[i % this.starStamps.length];
+        const x = ((star.x + scroll) % 704 + 704) % 704;
+        const pulse = (1 + Math.sin(frame * 0.055 + star.phase)) / 2;
+        const size = stamp.size / image.height * bgH;
+        for (const sx of [x - 704, x, x + 704]) {
+          if (sx < viewLeft - size || sx > viewRight + size) continue;
+          ctx.globalAlpha = 0.48 + pulse * 0.42;
+          ctx.drawImage(stamp.canvas, sx - size / 2, star.y - size / 2, size, size);
+        }
+      }
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
+
+      // Небольшой медленный оборот фактуры внутри диска без смещения его края.
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.translate(cx, cy);
+      ctx.rotate(Math.sin(frame * 0.006) * 0.004);
+      ctx.drawImage(image, 0, 0, image.width, image.height, bgX - cx, bgY - cy, bgW, bgH);
+      ctx.restore();
+    }
+    ctx.restore();
+    return true;
+  }
+
   /** Состояния и координаты анимации прежние; HD-слои рисуются сразу в нативный широкий холст. */
   private drawHD(ctx: CanvasRenderingContext2D): boolean {
     const art = this.gfx.art;
     if (this.mode === "black") return true;
     if (this.mode === "sega") {
-      const sega = art.get("sega");
-      if (!sega) return false;
-      ctx.save();
-      const color = cramToRGBA(this.cram[6]);
-      ctx.filter = `brightness(${0.65 + 0.35 * ((color >>> 16) & 255) / 255})`;
-      ctx.drawImage(sega, 0, 0, SCREEN_W, SCREEN_H);
-      ctx.restore();
+      const v = this.getSegaVideo();
+      if (v && v.readyState >= 2) {
+        ctx.save();
+        const transform = ctx.getTransform();
+        const width = ctx.canvas.width / (transform.a || 1);
+        const x = (320 - width) / 2;
+        ctx.drawImage(v, x, 0, width, SCREEN_H);
+        ctx.restore();
+        return true;
+      }
       return true;
     }
     if (!art.get("arrakis") || (this.showA && !this.menu && !art.get("publishers")) || (this.ship && !art.get("ships"))) return false;
     ctx.save();
-    ctx.strokeStyle = "#3485e7";
-    ctx.lineWidth = 0.35;
-    const width = ctx.canvas.width / ctx.getTransform().a;
-    for (const star of this.stars) {
-      const x = ((star.x + this.hsB) % 704 + 704) % 704;
-      for (const sx of [x - 704, x]) {
-        if (sx < (320 - width) / 2 || sx > (320 + width) / 2) continue;
-        ctx.beginPath();
-        ctx.moveTo(sx - 1.4, star.y);
-        ctx.lineTo(sx + 1.4, star.y);
-        ctx.moveTo(sx, star.y - 1.4);
-        ctx.lineTo(sx, star.y + 1.4);
-        ctx.stroke();
-      }
-    }
-    art.background(ctx, "arrakis", 704 + this.hsB);
+    this.drawBackdrop(ctx, this.animationFrame, this.hsB);
     if (this.showA) {
       let brightness = 0, full = 0;
       const target = this.menu ? this.titleMenu.palette : this.title.palette;
@@ -302,7 +430,9 @@ export class Intro {
         full += level(target[i]);
       }
       ctx.globalAlpha = Math.min(1, brightness / Math.max(1, full));
-      if (this.menu) this.gfx.drawTitleLettering(ctx);
+      if (this.menu) this.gfx.drawTitleLettering(
+        ctx, (this.animationFrame - this.menuStartFrame) / 60, this.openingTime(), this.difficultyText(),
+      );
       else {
         const publishers = art.get("publishers");
         if (publishers) {
@@ -316,7 +446,7 @@ export class Intro {
           menuText(ctx, "AND", 160, 106, { size: 7, align: "center" });
           menuText(ctx, "©1994 VIRGIN INTERACTIVE", 160, 176, { size: 6.5, align: "center" });
           menuText(ctx, "ENTERTAINMENT", 160, 184, { size: 6.5, align: "center" });
-          menuText(ctx, "©1994 WESTWOOD STUDIOS, INC.", 160, 200, { size: 6.5, align: "center" });
+          menuText(ctx, "TALCO design studio · 2026", 160, 200, { size: 6.5, align: "center" });
         }
       }
       ctx.globalAlpha = 1;

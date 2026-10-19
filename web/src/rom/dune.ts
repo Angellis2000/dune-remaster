@@ -206,6 +206,7 @@ export class DuneRom {
   }
 
   unitDisplay(type: number): { baseFrame: number; mode: number } {
+    if(type===27)type=9;else if(type===28)type=1;
     const info = readU32(this.bytes, ROM.unitInfoTable + type * 4);
     return {
       baseFrame: readU16(this.bytes, info + 70),
