@@ -5,11 +5,11 @@
  */
 import { CELL_PX, type DuneRom } from "../rom/dune.ts";
 import type { Scenario } from "../rom/scenario.ts";
-import { G, LST, MAP_INFOS, MOVEMENT, STRUCTURE, packTile, packXY, type Structure as EStructure, type Unit as EUnit } from "../engine/core.ts";
+import { G, LST, MAP_INFOS, MOVEMENT, STRUCTURE, isOutOfMap, packTile, packXY, type Structure as EStructure, type Unit as EUnit } from "../engine/core.ts";
 import { explosions } from "../engine/explosion.ts";
 import { mapGetLandscapeType } from "../engine/map.ts";
 import { Game, type NetSetup } from "../engine/game.ts";
-import { layoutSize, structureInfo, unitInfo } from "../engine/tables.ts";
+import { layoutSize, structureInfo, tableMapDiff, unitInfo } from "../engine/tables.ts";
 import { MAP_SIZE } from "../rom/dune.ts";
 import type { UnitDrawState } from "../gfx/sprites.ts";
 
@@ -139,11 +139,12 @@ export class World {
       this.map.unveiled[i] = t.isUnveiled || G.revealAll ? 1 : 0;
       if (G.revealAll) this.map.overlay[i] = 0;
     }
+    if (G.net && !G.revealAll) this.netFog(G.net.view);
     const alive = new Set<EUnit>();
     const units: Unit[] = [];
     for (const u of G.unitFind) {
       if (u.o.flags.isNotOnMap) continue;
-      if (!G.map[packTile(u.o.position)].isUnveiled && !G.revealAll) continue;
+      if (!this.map.unveiled[packTile(u.o.position)]) continue;
       alive.add(u);
       let v = this.unitViews.get(u);
       if (!v || v.type !== u.o.type) {
@@ -218,12 +219,34 @@ export class World {
     for (const e of explosions) {
       if (!e.commands || e.spriteID === 0) continue;
       const p = packTile(e.position);
-      if (!G.map[p].isUnveiled && !G.revealAll) continue;
+      if (!this.map.unveiled[p]) continue;
       this.blasts.push({ x: e.position.x / 8, y: e.position.y / 8, type: e.type, spriteID: e.spriteID, age: e.current });
     }
 
     this.houses.clear();
     for (const h of G.houseFind) this.houses.set(h.index, { id: h.index, credits: h.credits, quota: h.creditsQuota, human: h.flags.human });
+  }
+
+  /**
+   * Сеть: туман по домам. Общий слой движка открыт, поэтому туман экрана строится из маски раскрытия домов
+   * `view` (местный игрок, у наблюдателя — все люди) так же, как Map_UnveilTile_Neighbour кладёт иконки:
+   * закрытая клетка — сплошной туман, раскрытая у края — иконка группы 7 по закрытым соседям.
+   */
+  private netFog(view: number): void {
+    const { unveiled, overlay } = this.map;
+    for (let i = 0; i < 4096; i++) unveiled[i] = (G.map[i].unveiledHouses & view) !== 0 ? 1 : 0;
+    for (let i = 0; i < 4096; i++) {
+      if (!unveiled[i]) {
+        overlay[i] = G.veiledTileID;
+        continue;
+      }
+      let edge = 0;
+      for (let k = 0; k < 4; k++) {
+        const n = i + tableMapDiff[k];
+        if (isOutOfMap(n) || !unveiled[n]) edge |= 1 << k;
+      }
+      if (edge !== 0) overlay[i] = G.iconGroups[7][edge];
+    }
   }
 
   private onSpice(u: EUnit): boolean {

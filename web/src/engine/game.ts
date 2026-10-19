@@ -12,7 +12,7 @@ import {
 } from "./core.ts";
 import { explosionInit, explosionTick } from "./explosion.ts";
 import { gameLoopHouse, houseCalculatePowerAndCredit, houseResetTimers, houseUpdateCreditsStorage } from "./house.ts";
-import { mapBloomExplodeSpice, mapGetLandscapeType, mapIsValidPosition, mapUnveilTile } from "./map.ts";
+import { mapBloomExplodeSpice, mapGetLandscapeType, mapIsUnveiledLocal, mapIsValidPosition, mapUnveilTile } from "./map.ts";
 import { objectGetByPackedTile, objectScriptVariable4Clear } from "./object.ts";
 import { loadEmc, scriptLoad } from "./script.ts";
 import { scriptFunctionsStructure, scriptFunctionsTeam, scriptFunctionsUnit, structureDeployProducedUnit } from "./scriptfns.ts";
@@ -28,6 +28,7 @@ import { actionInfo, applyRomTables, landscapeInfo, structureInfo, unitInfo } fr
 import { gameLoopTeam, teamCreate, teamResetTimers } from "./team.ts";
 import {configureNetworkPools} from './core.ts';
 import {NETWORK_UNIT_LIMIT} from './network-rules.ts';
+import { netBuildAIBase, netCreateAITeams, netHandOver, netSetupAIHouse } from "./net-ai.ts";
 import {
   gameLoopUnit, unitCreate, unitCreateWrapper, unitDeviationDecrease, unitFindTargetAround, unitGetByPackedTile, unitGetHouseID,
   unitHouseUnitCountAdd, unitLaunchHouseMissile, unitRemoveFog, unitResetTimers, unitSelect, unitSetAction, unitSetDestination,
@@ -50,6 +51,8 @@ export interface NetPlayer {
   house: number;
   team: number;
   name: string;
+  /** противник-компьютер (engine/net-ai.ts): готовая база, заводы и команды ИИ */
+  ai?: boolean;
 }
 /** Всё, что нужно, чтобы у всех клиентов матч начался одинаково. */
 export interface NetSetup {
@@ -135,6 +138,10 @@ export class Game {
   private netSeed = 0;
   /** живые дома сетевого матча, как их видел последний подсчёт */
   netAlive = 0;
+  /** все дома матча: люди и компьютеры (кто может победить) */
+  private netPlayersMask = 0;
+  /** кому ушла база последнего вышедшего: дом союзника, −1 — компьютеру (только для сообщения) */
+  netLastHandOver = -2;
   /** выполняется ли сейчас команда сети: интерфейсные вызовы снаружи не должны менять таблицы */
   private netExecuting = false;
 
@@ -211,6 +218,7 @@ export class Game {
       G.mapTileID[i] = m.ground[i];
       t.groundTileID = m.ground[i];
       t.isUnveiled = false;
+      t.unveiledHouses = 0;
       t.overlayTileID = G.veiledTileID;
     }
 
@@ -328,7 +336,8 @@ export class Game {
       const s = structureGetByPackedTile(i);
       if (!u || !u.o.flags.used) t.hasUnit = false;
       if (!s || !s.o.flags.used) t.hasStructure = false;
-      if (t.isUnveiled) mapUnveilTile(i, G.playerHouseID);
+      // в сети общий слой открыт, а туман по домам снимают юниты и здания ниже
+      if (!G.net && t.isUnveiled) mapUnveilTile(i, G.playerHouseID);
     }
     let find = findAll();
     for (;;) {
@@ -454,19 +463,19 @@ export class Game {
 
   // ------------------------------------------------------------------ что видно игроку
   isVisible(packed: number): boolean {
-    return G.map[packed & 0xfff].isUnveiled;
+    return mapIsUnveiledLocal(packed);
   }
 
   /** Юниты на карте, которые должен видеть игрок (GUI_Widget_Viewport_Draw). */
   visibleUnits(): Unit[] {
-    return G.unitFind.filter((u) => !u.o.flags.isNotOnMap && G.map[packTile(u.o.position)].isUnveiled);
+    return G.unitFind.filter((u) => !u.o.flags.isNotOnMap && mapIsUnveiledLocal(packTile(u.o.position)));
   }
 
   // ------------------------------------------------------------------ команды игрока
   /** Map_SetSelection: выбрать юнит или здание на клетке. */
   selectAt(packed: number): Unit | Structure | null {
     if (G.selectionType === SELECTION.TARGET || G.selectionType === SELECTION.PLACE) return null;
-    if (G.map[packed].overlayTileID === G.veiledTileID) return null;
+    if (G.net ? !mapIsUnveiledLocal(packed) : G.map[packed].overlayTileID === G.veiledTileID) return null;
     const s = structureGetByPackedTile(packed);
     if (s) {
       unitSelect(null);
@@ -539,7 +548,7 @@ export class Game {
     const actions = unitInfo[u.o.type].o.actionsPlayer;
     const has = (a: number) => actions.includes(a);
     const target = objectGetByPackedTile(unitFindTargetAround(packed));
-    if (target && G.map[packed].isUnveiled) {
+    if (target && mapIsUnveiledLocal(packed)) {
       const enemyHouse = target.flags.isUnit ? unitGetHouseID(G.units[target.index]) : target.houseID;
       if (enemyHouse !== G.playerHouseID && has(ACTION.ATTACK)) return ACTION.ATTACK;
     }
@@ -869,12 +878,14 @@ export class Game {
    * (как в 9-й миссии). Всё зависит только от setup, поэтому у всех клиентов состояние совпадает такт в такт.
    */
   loadNetwork(setup: NetSetup): { cursor: { x: number; y: number }; spawns: Map<number, number> } {
-    const humans = setup.players.reduce((m, p) => m | (1 << p.house), 0);
+    const humans = setup.players.reduce((m, p) => (p.ai ? m : m | (1 << p.house)), 0);
+    this.netPlayersMask = setup.players.reduce((m, p) => m | (1 << p.house), 0);
     const team = new Array<number>(8).fill(-1);
     for (const p of setup.players) team[p.house] = p.team;
-    G.net = { humans, team };
+    // туман: наблюдатель (local < 0) видит всё, что раскрыли люди
+    G.net = { humans, team, view: setup.local >= 0 ? 1 << setup.local : humans };
     configureNetworkPools(true);
-    G.playerHouseID = setup.local >= 0 ? setup.local : setup.players[0].house;
+    G.playerHouseID = setup.local >= 0 ? setup.local : (setup.players.find((p) => !p.ai) ?? setup.players[0]).house;
     G.infiniteSpice = true;
     G.droneGrenades.length = 0;
     G.difficulty = 1;
@@ -887,7 +898,7 @@ export class Game {
     this.afterEnd = 0;
     this.selectedStructure = null;
     this.levelEndTimer = 0;
-    this.netAlive = humans;
+    this.netAlive = this.netPlayersMask;
 
     poolsReset();
     animationInit();
@@ -925,7 +936,9 @@ export class Game {
       const t = G.map[i];
       G.mapTileID[i] = m.ground[i];
       t.groundTileID = m.ground[i];
+      // общий слой открыт (от него зависят стены, кратеры, черви), туман по домам — в unveiledHouses
       t.isUnveiled = true;
+      t.unveiledHouses = 0;
       t.overlayTileID = 0;
     }
 
@@ -933,6 +946,10 @@ export class Game {
     for (const p of setup.players) {
       const h = houseAllocate(p.house);
       if (!h) continue;
+      if (p.ai) {
+        netSetupAIHouse(p.house, setup.credits);
+        continue;
+      }
       h.flags.human = true;
       h.credits = setup.credits;
       h.creditsNoSilo = setup.credits;
@@ -957,6 +974,10 @@ export class Game {
         if (u) unitSetAction(u, ACTION.GUARD);
       }
     }
+    // противники-компьютеры: готовая база у своей точки и команды атаки (engine/net-ai.ts)
+    const ai = setup.players.filter((p) => p.ai && spawns.has(p.house));
+    for (const p of ai) netBuildAIBase(p.house, spawns.get(p.house)!, [...spawns].filter(([h]) => h !== p.house).map(([, c]) => c));
+    netCreateAITeams(ai.map((p) => p.house));
     G.tickScenarioStart = 0;
     this.prepare();
     G.validateStrictIfZero--;
@@ -1041,7 +1062,7 @@ export class Game {
       if (!u.o.flags.used || u.o.flags.isNotOnMap || !unitInfo[u.o.type].flags.isNormalUnit) continue;
       alive |= 1 << u.o.houseID;
     }
-    this.netAlive = alive & G.net!.humans;
+    this.netAlive = alive & this.netPlayersMask;
     if (this.ended) return;
     const team = G.net!.team;
     const teamsAlive = new Set<number>();
@@ -1162,6 +1183,8 @@ export class Game {
         return;
       }
       case "left":
+        // база вышедшего — союзнику-человеку, а если его нет — компьютеру (engine/net-ai.ts)
+        this.netLastHandOver = netHandOver(house);
         return;
     }
   }
@@ -1216,6 +1239,7 @@ export class Game {
       mix(s.readyUnits?.length??0);for(const index of s.readyUnits??[])mix(index);
     }
     for (const hh of G.houses) if (hh.flags.used) { mix(hh.index); mix(hh.credits); }
+    for (const t of G.map) mix(t.unveiledHouses);
     for(const p of G.droneGrenades){mix(p.from.x);mix(p.from.y);mix(p.to.x);mix(p.to.y);mix(p.released);mix(p.impact);mix(p.damage);mix(p.origin);mix(p.house);}
     return h;
   }

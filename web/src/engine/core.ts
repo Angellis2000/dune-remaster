@@ -280,6 +280,8 @@ export interface Tile {
   overlayTileID: number;
   houseID: number;
   isUnveiled: boolean;
+  /** Сеть: маска домов, раскрывших клетку (бит = дом). В кампании не используется — там туман игрока в isUnveiled. */
+  unveiledHouses: number;
   hasUnit: boolean;
   hasStructure: boolean;
   hasAnimation: boolean;
@@ -322,7 +324,7 @@ export function newTeam(): Team {
 }
 
 export function newTile(): Tile {
-  return { groundTileID: 0, overlayTileID: 0, houseID: 0, isUnveiled: false, hasUnit: false, hasStructure: false, hasAnimation: false, hasExplosion: false, index: 0 };
+  return { groundTileID: 0, overlayTileID: 0, houseID: 0, isUnveiled: false, unveiledHouses: 0, hasUnit: false, hasStructure: false, hasAnimation: false, hasExplosion: false, index: 0 };
 }
 
 // ------------------------------------------------------------------ глобальное состояние
@@ -463,6 +465,8 @@ export const playerHouse = (): House => G.houses[G.playerHouseID];
 export interface NetGame {
   humans: number;
   team: number[];
+  /** Чей туман показывать на экране: местный игрок или, у наблюдателя, все люди. Симуляция это не читает. */
+  view: number;
 }
 /** Дом под управлением человека: в кампании — игрок, в сети — любой человек. */
 export const isHuman = (h: number): boolean => (G.net ? ((G.net.humans >> h) & 1) === 1 : h === G.playerHouseID);

@@ -7,7 +7,7 @@ interface NetworkMap {id:string;name:string;description:string;width:number;heig
 export interface NetworkRoom {id:string;name:string;map:string;players:number;capacity:number;state:'waiting'|'playing'|'finished';passwordRequired?:boolean}
 /** Комната и состав с сервера (net/session.ts). */
 export interface ServerRoomInfo {id:string;name:string;map:number;teamSize:number;players:number;capacity:number;state:'waiting'|'playing'|'finished';passwordRequired:boolean}
-export interface ServerRoomState extends ServerRoomInfo {host:number;config:{map:number;teamSize:number;credits:number};observers:number;members:{slot:number;name:string;house:string;team:number;connected:boolean}[]}
+export interface ServerRoomState extends ServerRoomInfo {host:number;config:{map:number;teamSize:number;credits:number};observers:number;members:{slot:number;name:string;house:string;team:number;connected:boolean;ai?:boolean}[]}
 /** Карта для лобби: каталог сетевых карт или карты ROM (id «rom-N»). */
 export type LobbyMap={id:string;name:string;description:string;width:number;height:number;teamSize:number;capacity:number;preview:string;data:string};
 const HOUSE_OPTIONS=[['A','Атрейдесы'],['H','Харконнены'],['O','Ордосы'],['F','Фримены'],['S','Сардаукары'],['M','Наёмники']] as const;
@@ -62,7 +62,8 @@ export class NetworkMenu {
   private server=false;private serverReady=false;private you:number|null=null;private room:ServerRoomState|null=null;
   constructor(private host:{back():void;ui?(sequence?:number):void;endpoint?:string;refreshRooms?():void;joinRoom?(id:string,role:'player'|'observer',password?:string):void;leaveObservation?():void;
     romMaps?():LobbyMap[];connect?(name:string):Promise<void>;createRoom?(c:{roomName:string;password:string;map:number;teamSize:number;credits:number;house:string}):void;
-    leaveRoom?():void;setOwn?(c:{house?:string;team?:number}):void;setConfig?(c:{map:number;teamSize:number;credits:number}):void;startMatch?():void}){
+    leaveRoom?():void;setOwn?(c:{house?:string;team?:number}):void;setConfig?(c:{map:number;teamSize:number;credits:number}):void;startMatch?():void;
+    bot?(c:{op:'add';team:number;house?:string}|{op:'remove';slot:number}|{op:'set';slot:number;house:string}):void;openReplays?():void}){
     this.root.hidden=true;this.root.setAttribute('role','dialog');this.root.setAttribute('aria-modal','true');this.root.setAttribute('aria-label','Сетевая игра');
     this.dialog.style.setProperty('--network-console',`url("${consoleUrl}")`);
     this.root.style.setProperty('--network-backdrop',`url("${consoleUrl}")`);
@@ -134,7 +135,8 @@ export class NetworkMenu {
     note.append(this.observerBadge);footer.append(note,actions);this.lobby.append(layout,footer);this.lobby.hidden=true;
     const roomsHeading=node('div','network-rooms-heading');roomsHeading.append(node('h2','','ОТКРЫТЫЕ КОМНАТЫ'),node('span','network-room-preview-label','ПРЕДПРОСМОТР'));
     const refresh=node('button','','Обновить');refresh.type='button';refresh.addEventListener('click',()=>{this.host.refreshRooms?.();if(!this.server)this.status.textContent='Сервер не подключён · макет интерфейса';});
-    const create=node('button','network-create','Создать комнату');create.type='button';create.addEventListener('click',()=>this.openCreateRoom());roomsHeading.append(refresh,create);
+    const create=node('button','network-create','Создать комнату');create.type='button';create.addEventListener('click',()=>this.openCreateRoom());
+    const replays=node('button','network-replays-open','Записи');replays.type='button';replays.title='Записи сыгранных матчей';replays.addEventListener('click',()=>this.host.openReplays?.());roomsHeading.append(refresh,replays,create);
     const columns=node('div','network-room-columns');['Комната','Карта','Игроки','Состояние'].forEach(text=>columns.append(node('span','',text)));
     const roomFooter=node('div','network-rooms-footer');roomFooter.append(node('p','','Выберите комнату и нажмите A / Enter, чтобы войти. ↑ ↓ выбор · B / Esc назад'));
     const join=node('button','network-join','Войти в комнату');join.type='button';join.addEventListener('click',()=>this.joinSelected());roomFooter.append(join);
@@ -359,7 +361,19 @@ export class NetworkMenu {
       this.lobby.querySelectorAll<HTMLElement>('.network-add').forEach(button=>button.hidden=true);
       this.slots.forEach(slot=>{
         slot.difficulty.hidden=true;slot.row.querySelector<HTMLElement>('.network-remove')?.setAttribute('hidden','');
-        slot.house.addEventListener('change',()=>{if(this.room&&this.you!==null&&this.slotOf(slot)===this.you&&slot.house.value!=='random')this.host.setOwn?.({house:slot.house.value});});
+        slot.house.addEventListener('change',()=>{
+          if(!this.room||this.you===null||slot.house.value==='random')return;
+          const at=this.slotOf(slot),member=this.room.members.find(m=>m.slot===at);
+          if(at===this.you)this.host.setOwn?.({house:slot.house.value});
+          else if(member?.ai&&this.you===this.room.host)this.host.bot?.({op:'set',slot:at,house:slot.house.value});
+        });
+        // хозяин: свободное место → «Компьютер», место компьютера → «Свободно»
+        slot.controller.addEventListener('change',()=>{
+          if(!this.room||this.room.state!=='waiting'||this.you!==this.room.host)return;
+          const at=this.slotOf(slot),member=this.room.members.find(m=>m.slot===at),team=Math.floor(this.slots.indexOf(slot)/4);
+          if(slot.controller.value==='ai'&&!member)this.host.bot?.({op:'add',team});
+          else if(slot.controller.value==='open'&&member?.ai)this.host.bot?.({op:'remove',slot:at});
+        });
       });
       const sendConfig=()=>{if(!this.room||this.room.state!=='waiting'||this.you!==this.room.host)return;this.host.setConfig?.({map:Number(this.map.value.replace('rom-',''))||1,teamSize:Number(this.format.value),credits:Number(this.resources.value)});};
       for(const control of [this.format,this.map,this.resources])control.addEventListener('change',sendConfig);
@@ -395,10 +409,14 @@ export class NetworkMenu {
     this.slots.forEach((slot,id)=>{
       const team=Math.floor(id/4),index=id%4,visible=index<size;slot.active=visible;slot.row.hidden=!visible;if(!visible)return;
       const member=room.members.find(m=>m.slot===team*size+index),own=member!==undefined&&member.slot===you;
-      slot.controller.replaceChildren();const label=node('option','',member?`${member.name}${own?' (вы)':''}${member.connected?'':' · нет связи'}${member.slot===room.host?' · хозяин':''}`:'Свободно');label.value=member?'human':'open';slot.controller.append(label);slot.controller.value=label.value;slot.controller.disabled=true;
+      slot.controller.replaceChildren();
+      const canEdit=host&&(!member||!!member.ai);
+      if(member?.ai){slot.controller.append(node('option','',member.name),node('option','','Свободно'));(slot.controller.options[0] as HTMLOptionElement).value='ai';(slot.controller.options[1] as HTMLOptionElement).value='open';slot.controller.value='ai';}
+      else{const label=node('option','',member?`${member.name}${own?' (вы)':''}${member.connected?'':' · нет связи'}${member.slot===room.host?' · хозяин':''}`:'Свободно');label.value=member?'human':'open';slot.controller.append(label);if(!member&&host){const ai=node('option','','Компьютер');ai.value='ai';slot.controller.append(ai);}slot.controller.value=label.value;}
+      slot.controller.disabled=!canEdit||room.state!=='waiting';
       slot.row.classList.toggle('slot-closed',!member);
       if(member)slot.house.value=member.house;else slot.house.value='random';
-      slot.house.disabled=!own||room.state!=='waiting';
+      slot.house.disabled=!(own||(member?.ai&&host))||room.state!=='waiting';
       if(own)this.playerHouse.value=member!.house;
     });
     const [start,team]=[...this.lobby.querySelectorAll<HTMLButtonElement>('.network-actions button')];

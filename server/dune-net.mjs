@@ -44,7 +44,7 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
     name: room.name,
     map: room.config.map,
     teamSize: room.config.teamSize,
-    players: room.players.size,
+    players: room.players.size + room.bots.length,
     capacity: room.config.teamSize * 2,
     state: room.state,
     passwordRequired: !!room.passHash,
@@ -54,7 +54,10 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
     host: room.hostSlot,
     config: room.config,
     observers: room.observers.size,
-    members: [...room.players.values()].map((p) => ({ slot: p.slot, name: p.name, house: p.house, team: p.team, connected: p.connected })),
+    members: [
+      ...[...room.players.values()].map((p) => ({ slot: p.slot, name: p.name, house: p.house, team: p.team, connected: p.connected })),
+      ...room.bots.map((b) => ({ slot: b.slot, name: b.name, house: b.house, team: b.team, connected: true, ai: true })),
+    ],
   });
   const broadcastRoom = (room) => {
     for (const p of room.players.values()) if (p.connected) send(p.client, { t: "room", room: roomState(room), you: p.slot });
@@ -65,18 +68,33 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
     for (const o of room.observers) send(o, msg);
   };
   const freeHouse = (room, wanted) => {
-    const used = new Set([...room.players.values()].map((p) => p.house));
+    const used = new Set([...room.players.values(), ...room.bots].map((p) => p.house));
     if (wanted in HOUSES && !used.has(wanted)) return wanted;
     return Object.keys(HOUSES).find((h) => !used.has(h)) ?? null;
   };
   const freeSlot = (room, team) => {
     const size = room.config.teamSize;
-    const used = new Set([...room.players.values()].map((p) => p.slot));
+    const used = new Set([...room.players.values(), ...room.bots].map((p) => p.slot));
     const teams = team === 0 || team === 1 ? [team] : [0, 1].sort((a, b) => teamCount(room, a) - teamCount(room, b) || a - b);
     for (const t of teams) for (let i = 0; i < size; i++) if (!used.has(t * size + i)) return t * size + i;
     return null;
   };
-  const teamCount = (room, team) => [...room.players.values()].filter((p) => p.team === team).length;
+  const teamCount = (room, team) => [...room.players.values(), ...room.bots].filter((p) => p.team === team).length;
+  /** Места компьютеров (их ведёт ИИ движка у каждого клиента): ставит и убирает хозяин до начала матча. */
+  function onBot(room, msg) {
+    if (msg.op === "add") {
+      if (msg.team !== 0 && msg.team !== 1) return;
+      const slot = freeSlot(room, msg.team), house = freeHouse(room, msg.house);
+      if (slot === null || house === null) return;
+      const n = Math.max(0, ...room.bots.map((b) => Number(b.name.split(" ").pop()) || 0)) + 1;
+      room.bots.push({ slot, house, team: msg.team, name: `Компьютер ${n}` });
+    } else if (msg.op === "remove") {
+      room.bots = room.bots.filter((b) => b.slot !== msg.slot);
+    } else if (msg.op === "set") {
+      const bot = room.bots.find((b) => b.slot === msg.slot);
+      if (bot && msg.house in HOUSES && msg.house !== bot.house && freeHouse(room, msg.house) === msg.house) bot.house = msg.house;
+    }
+  }
   const validConfig = (c) => {
     const map = Number(c?.map), teamSize = Number(c?.teamSize), credits = Number(c?.credits);
     if (!Number.isInteger(map) || map < 1 || map > 27) return null;
@@ -179,7 +197,8 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
       matchId: randomUUID(),
       seed: room.seed,
       config: room.config,
-      players: [...room.players.values()].sort((a, b) => a.slot - b.slot).map((p) => ({ slot: p.slot, name: p.name, house: HOUSES[p.house], team: p.team })),
+      players: [...room.players.values(), ...room.bots.map((b) => ({ ...b, ai: true }))].sort((a, b) => a.slot - b.slot)
+        .map((p) => ({ slot: p.slot, name: p.name, house: HOUSES[p.house], team: p.team, ...(p.ai ? { ai: true } : {}) })),
       turnMs,
       framesPerTurn: FRAMES_PER_TURN,
     };
@@ -191,7 +210,7 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
       if (cmds.length) room.log.push([n, cmds]);
       toAll(room, { t: "turn", n, c: cmds });
     }, turnMs);
-    log(`комната ${room.id}: матч начат, игроков ${room.players.size}, зерно ${room.seed}`);
+    log(`комната ${room.id}: матч начат, игроков ${room.players.size}, компьютеров ${room.bots.length}, зерно ${room.seed}`);
     broadcastRoom(room);
   }
 
@@ -265,6 +284,7 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
           observers: new Set(),
           sessions: new Map(),
           hostSlot: -1,
+          bots: [],
           pending: [],
           log: [],
         };
@@ -307,15 +327,21 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
         }
         return broadcastRoom(room);
       }
+      case "bot": {
+        const p = room?.players.get(client.id);
+        if (!room || !p || room.state !== "waiting" || p.slot !== room.hostSlot) return;
+        onBot(room, msg);
+        return broadcastRoom(room);
+      }
       case "config": {
         const p = room?.players.get(client.id);
         if (!room || !p || room.state !== "waiting" || p.slot !== room.hostSlot) return;
         const config = validConfig(msg.config);
         if (!config) return;
-        if (config.teamSize < room.config.teamSize && [...room.players.values()].some((x) => x.slot % room.config.teamSize >= config.teamSize))
+        if (config.teamSize < room.config.teamSize && [...room.players.values(), ...room.bots].some((x) => x.slot % room.config.teamSize >= config.teamSize))
           return send(client, { t: "error", code: "config", text: "Сначала освободите лишние места" });
         // номера мест зависят от размера команды
-        for (const x of room.players.values()) x.slot = x.team * config.teamSize + (x.slot % room.config.teamSize);
+        for (const x of [...room.players.values(), ...room.bots]) x.slot = x.team * config.teamSize + (x.slot % room.config.teamSize);
         room.hostSlot = [...room.players.values()].find((x) => x.client === client)?.slot ?? room.hostSlot;
         room.config = config;
         return broadcastRoom(room);
@@ -323,8 +349,8 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
       case "start": {
         const p = room?.players.get(client.id);
         if (!room || !p || room.state !== "waiting" || p.slot !== room.hostSlot) return;
-        const teams = new Set([...room.players.values()].map((x) => x.team));
-        if (room.players.size < 2 || teams.size < 2) return send(client, { t: "error", code: "players", text: "Нужны игроки в обеих командах" });
+        const teams = new Set([...room.players.values(), ...room.bots].map((x) => x.team));
+        if (room.players.size + room.bots.length < 2 || teams.size < 2) return send(client, { t: "error", code: "players", text: "Нужны игроки или компьютеры в обеих командах" });
         if ([...room.players.values()].some((x) => !x.connected)) return send(client, { t: "error", code: "players", text: "Дождитесь подключения всех игроков" });
         return startMatch(room);
       }

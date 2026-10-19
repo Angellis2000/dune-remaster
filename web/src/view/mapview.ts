@@ -28,7 +28,7 @@ import {drawBuildingActivity,drawBuildingNightLights} from '../gfx/building-acti
 import {drawStructureLife} from '../gfx/structure-life.ts';
 import {WorldAtmosphere,desertLight} from '../gfx/world-atmosphere.ts';
 import {drawFactoryActivity} from '../gfx/factory-activity.ts';
-import {drawAdvancedWeapons,drawDroneRadius} from '../gfx/advanced-unit-effects.ts';
+import {drawAdvancedWeapons,drawDroneRadius,drawDroneStatus} from '../gfx/advanced-unit-effects.ts';
 import {FogOfWar} from '../gfx/fog-of-war.ts';
 import type { Pad } from "../input/pad.ts";
 import { CELL_PX, MAP_SIZE } from "../rom/dune.ts";
@@ -659,6 +659,7 @@ export class MapView {
 
     (this.fog??=new FogOfWar()).draw(ctx,map.overlay,this.veiledIcon,ox,oy,z);
     drawDroneRadius(ctx,this.selectedStructure,this.selectedUnits,z,ox,oy);
+    if(this.world)drawDroneStatus(ctx,this.world.units,G.playerHouseID,z,ox,oy);
     // постановка здания: рамка на клетках под курсором
     if (this.placement) {
       const pl = this.placement;

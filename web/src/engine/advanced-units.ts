@@ -3,7 +3,7 @@ import {unitInfo,layoutSize,structureInfo} from './tables.ts';
 import {houseAreAllied} from './house.ts';
 import {mapGetLandscapeType,mapMakeExplosion,tileRemoveFogInRadius,alertNearbyBaseDefenders} from './map.ts';
 import {structureGetByPackedTile,structureDamage} from './structure.ts';
-import {unitDamage,unitUpdateMap,unitSetAction,unitSetTarget,unitSetOrientation} from './unit.ts';
+import {unitDamage,unitGetHouseID,unitUpdateMap,unitSetAction,unitSetTarget,unitSetOrientation} from './unit.ts';
 import {COMBAT_DRONE,LASER_TANK,DRONE_RADIUS,DRONE_RETURN_BATTERY} from './custom-unit-defs.ts';
 import {COMBAT_SFX} from '../sound/combat-sfx.ts';
 import {tileGetDirection,tileMoveByDirection} from './core.ts';
@@ -84,7 +84,7 @@ function moveDrone(u:Unit,goal:Tile32,dt:number):boolean{
   u.orientation[1].current=u.orientation[0].current;u.speed=255;
   unitUpdateMap(0,u);
   u.o.position=clampDronePoint(u,{x:u.o.position.x+state.vx*dt,y:u.o.position.y+state.vy*dt});
-  unitUpdateMap(1,u);tileRemoveFogInRadius(u.o.position,unitInfo[COMBAT_DRONE].o.fogUncoverRadius);
+  unitUpdateMap(1,u);tileRemoveFogInRadius(u.o.position,unitInfo[COMBAT_DRONE].o.fogUncoverRadius,G.net?unitGetHouseID(u):G.playerHouseID);
   return false;
 }
 

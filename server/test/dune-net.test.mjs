@@ -163,3 +163,40 @@ test('комната переживает общий обрыв, но истёк
     assert.equal((await c.next(m=>m.t==='error')).code,'resume');
   } finally { await server.close(); }
 });
+
+test('хозяин ставит компьютеры: место и дом заняты, матч с одним человеком, компьютеры в составе старта', async () => {
+  const server = await startServer({ port: 0, log: () => {}, turnMs: 20 });
+  try {
+    const a = connect(server.port), b = connect(server.port);
+    await Promise.all([a.opened, b.opened]);
+    a.send({ t: 'create', config: { map: 5, teamSize: 2, credits: 5000 }, house: 'A' });
+    const created = await a.next((m) => m.t === 'room');
+    a.send({ t: 'start' });
+    assert.equal((await a.next((m) => m.t === 'error')).code, 'players', 'одному без противника начинать нельзя');
+    a.send({ t: 'bot', op: 'add', team: 1, house: 'A' });
+    const withBot = await a.next((m) => m.t === 'room' && m.room.members.some((x) => x.ai));
+    const bot = withBot.room.members.find((x) => x.ai);
+    assert.equal(bot.team, 1);
+    assert.notEqual(bot.house, 'A', 'дом компьютера не повторяет дом игрока');
+    assert.equal(withBot.room.players, 2);
+    a.send({ t: 'bot', op: 'set', slot: bot.slot, house: 'O' });
+    assert.equal((await a.next((m) => m.t === 'room' && m.room.members.some((x) => x.ai && x.house === 'O'))).room.members.length, 2);
+    a.send({ t: 'bot', op: 'add', team: 0 });
+    await a.next((m) => m.t === 'room' && m.room.members.filter((x) => x.ai).length === 2);
+    // чужой (не хозяин) компьютеры не трогает
+    b.send({ t: 'join', id: created.room.id, house: 'H' });
+    const joined = await b.next((m) => m.t === 'room');
+    assert.equal(joined.room.members.length, 4, 'команды 2×2 заполнены');
+    b.send({ t: 'bot', op: 'remove', slot: bot.slot });
+    a.send({ t: 'bot', op: 'remove', slot: joined.room.members.find((x) => x.ai && x.team === 0).slot });
+    const after = await a.next((m) => m.t === 'room' && m.room.members.filter((x) => x.ai).length === 1);
+    assert.ok(after.room.members.some((x) => x.slot === bot.slot), 'компьютер, которого пытался убрать гость, на месте');
+    a.send({ t: 'start' });
+    const start = await a.next((m) => m.t === 'start');
+    const ai = start.players.filter((p) => p.ai);
+    assert.equal(ai.length, 1);
+    assert.equal(ai[0].house, 2);
+    assert.ok(start.players.filter((p) => !p.ai).length === 2);
+    for (const c of [a, b]) c.ws.close();
+  } finally { await server.close(); }
+});

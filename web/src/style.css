@@ -963,3 +963,19 @@ button[aria-pressed="true"] {
   .network-menu[data-section=rules] .network-teams { display: none; }
   .network-footer p { font-size: 10px; }
 }
+
+/* Записи сетевых матчей (ui/replays.ts) */
+.network-replays { position: absolute; z-index: 40; left: 50%; top: 50%; transform: translate(-50%,-50%); width: min(720px,calc(100% - 32px)); max-height: calc(100% - 48px); display: flex; flex-direction: column; padding: 22px 24px; border: 2px solid #a98c54; background: linear-gradient(#293039,#0b1116); box-shadow: 0 0 0 100vmax #03080dc9,0 12px 60px #000; color: #e8e2cf; }
+.network-replays h2 { margin: 0 0 8px; color: #f0cc83; font-size: 20px; }
+.network-replays > p { color: #c6c2b3; font-size: 13px; margin: 0 0 12px; }
+.network-replay-list { overflow: auto; display: grid; gap: 8px; min-height: 60px; }
+.network-replay { display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid #5d5440; background: #0d151bcc; }
+.network-replay-info { display: grid; gap: 3px; min-width: 0; }
+.network-replay-info span { color: #b9b4a2; font-size: 12px; overflow-wrap: anywhere; }
+.network-replay-message { color: #ff9a7a; font-size: 13px; min-height: 1em; }
+.network-replays .network-actions { margin-top: 12px; justify-content: flex-end; }
+@media (max-width: 560px) { .network-replay { grid-template-columns: 1fr 1fr 1fr; } .network-replay-info { grid-column: 1 / -1; } }
+.replay-bar { position: absolute; z-index: 30; left: 50%; top: 8px; transform: translateX(-50%); display: flex; gap: 6px; align-items: center; padding: 6px 10px; border: 1px solid #a98c54; background: #0b1116e6; color: #f0cc83; font: 600 13px/1 sans-serif; }
+.replay-bar button { min-width: 34px; padding: 4px 8px; border: 1px solid #6d6046; background: #1d252c; color: #e8e2cf; cursor: pointer; }
+.replay-bar button[aria-pressed="true"] { background: #a98c54; color: #10151a; }
+.replay-time { min-width: 120px; text-align: center; color: #e8e2cf; font-variant-numeric: tabular-nums; }

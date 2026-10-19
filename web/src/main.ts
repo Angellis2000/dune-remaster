@@ -14,7 +14,7 @@ import { WormArt } from "./gfx/worm-art.ts";
 import { ImpactParticles } from "./gfx/impact-particles.ts";
 import { InfantryArt } from "./gfx/infantry-art.ts";
 import {Portraits} from './gfx/portraits.ts';
-import { mapGetLandscapeType } from "./engine/map.ts";
+import { mapGetLandscapeType, mapIsUnveiledLocal } from "./engine/map.ts";
 import { buildPackZip, importPack, packCanvases } from "./gfx/pack.ts";
 import { Skins } from "./gfx/skins.ts";
 import { ScreenGfx } from "./gfx/screens.ts";
@@ -30,6 +30,8 @@ import { FactoryWindow } from "./ui/factory.ts";
 import { FrontEnd } from "./ui/frontend.ts";
 import {NetworkMenu,type LobbyMap} from './ui/network.ts';
 import { NetSession, defaultEndpoint, type MatchStart } from './net/session.ts';
+import { saveRecording } from './net/replay.ts';
+import { ReplayBar, ReplayList } from './ui/replays.ts';
 import { installNetControls } from './net/controls.ts';
 import { HOUSE_INDEX, MentatScreen } from "./ui/mentat.ts";
 import { EndPicture, Flyby, FLYBY_FRAMES } from "./ui/endgame.ts";
@@ -157,7 +159,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   };
   G.onVisualExplosion = (type, position) => {
     const p = ((position.y >> 8) << 6) | (position.x >> 8);
-    if (!G.map[p]?.isUnveiled && !G.revealAll) return;
+    if (p < 0 || p > 4095 || (!mapIsUnveiledLocal(p) && !G.revealAll)) return;
     const kind = mapGetLandscapeType(p), x = position.x / 8, y = position.y / 8;
     const surface = kind >= 10 && kind <= 13 ? 'structure' : kind === 8 || kind === 9 ? 'spice' :
       ([4,6,7].includes(kind) || ([1,5].includes(kind) && terrain?.isRockAt(x,y))) ? 'rock' : 'sand';
@@ -555,6 +557,16 @@ async function startGame(rom: DuneRom): Promise<void> {
     setOwn: (c) => net.setOwn(c),
     setConfig: (c) => net.setConfig(c),
     startMatch: () => net.startMatch(),
+    bot: (c) => net.bot(c),
+    openReplays: () => replayList.open(),
+  });
+  // записи матчей: сохраняются сами в конце матча и при выходе, смотрятся как наблюдатель (net/replay.ts)
+  net.onRecording = (rec) => saveRecording(rec);
+  const replayList = new ReplayList((rec) => net.play(rec));
+  const replayBar = new ReplayBar({
+    paused: () => net.paused, setPaused: (v) => { net.paused = v; },
+    speed: () => net.speed, setSpeed: (v) => { net.speed = v; net.paused = false; },
+    exit: () => leaveNetMatch(),
   });
   net.onRooms = (rooms) => networkMenu.setServerRooms(rooms);
   net.onRoom = (room, you) => {
@@ -588,7 +600,10 @@ async function startGame(rom: DuneRom): Promise<void> {
       (slot, c) => {
         const p = start.players.find((x) => x.slot === slot);
         if (p) world.game.execNet(p.house, c);
-        if (c.k === "left" && p) G.onMessage(`${p.name} покинул матч`, 0);
+        if (c.k === "left" && p) {
+          const to = start.players.find((x) => x.house === world.game.netLastHandOver);
+          G.onMessage(`${p.name} покинул матч · база ${to ? `у союзника ${to.name}` : "под управлением компьютера"}`, 0);
+        }
       },
       () => world.game.tick(),
       () => world.game.netHash(),
@@ -607,12 +622,20 @@ async function startGame(rom: DuneRom): Promise<void> {
     updateHud();
     inMission = true;
     sound.battleMusic();
-    G.onMessage(start.you === null ? "Вы наблюдаете за матчем" : `Матч начался · игроков: ${start.players.length}`, 0);
+    replayBar.root.hidden = !net.playback;
+    replayBar.update(0, net.playbackFrames);
+    G.onMessage(net.playback ? "Запись матча" : start.you === null ? "Вы наблюдаете за матчем" : `Матч начался · игроков: ${start.players.length}`, 0);
   };
   net.onStart = (start) => startNetMatch(start);
   /** Свой результат: победа или поражение; у остальных игра продолжается, поэтому симуляция не останавливается. */
   const onNetEnd = (result: "won" | "lost"): void => {
     net.reportOver(result);
+    net.flushRecording();
+    if (net.playback) {
+      endBanner.textContent = "МАТЧ ОКОНЧЕН · запись можно досмотреть · «Выйти» — в лобби";
+      endBanner.hidden = false;
+      return;
+    }
     endBanner.textContent = result === "won" ? "ПОБЕДА · Start → «Начать сначала» — выйти в лобби" : "ПОРАЖЕНИЕ · Start → «Начать сначала» — выйти в лобби";
     endBanner.hidden = false;
     if (!net.replaying) sound.playMusic((result === "won" ? MUSIC.WIN : MUSIC.LOSE)[world.player] ?? 0);
@@ -624,6 +647,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     netRestore?.();
     netRestore = null;
     endBanner.hidden = true;
+    replayBar.root.hidden = true;
   };
   /** Выйти из матча в сетевое лобби. */
   const leaveNetMatch = (): void => {
@@ -635,7 +659,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     sound.playMusic(MUSIC.HOUSE_SELECT);
     void networkMenu.open();
   };
-  stage.append(networkMenu.root);
+  stage.append(networkMenu.root, replayList.root, replayBar.root);
   const tutorial = new TutorialScreen(rom, sound);
   const finale = new FinaleScreen(rom, sound, screens.art);
   stage.append(tutorial.root, finale.root);
@@ -895,6 +919,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       const now = performance.now();
       net.advance(Math.min(250, now - netClock));
       netClock = now;
+      if (net.playback) replayBar.update(net.frame, net.playbackFrames);
     }
     if (!paused || netActive) {
       if (!netActive) world.step();

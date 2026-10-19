@@ -29,6 +29,8 @@ function hash(): number {
     mix(s.o.index); mix(s.o.type); mix(s.o.houseID); mix(s.o.hitpoints); mix(s.state); mix(s.countDown);
   }
   for (const hh of G.houses) if (hh.flags.used) { mix(hh.index); mix(hh.credits); mix(hh.unitCountEnemy); mix(hh.flags.isAIActive ? 1 : 0); }
+  // туман: флаг и иконка поверх клетки (в кампании они и есть туман игрока), в сети ещё маска по домам
+  for (const t of G.map) { mix(t.isUnveiled ? 1 : 0); mix(t.overlayTileID); mix(t.unveiledHouses ?? 0); }
   return h;
 }
 

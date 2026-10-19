@@ -4,6 +4,7 @@
  * Игра идёт с частотой 60 Гц по часам, но никогда не обгоняет полученные ходы: если ход не пришёл — ждёт.
  */
 import type { NetCommand } from "../engine/game.ts";
+import type { MatchRecording } from "./replay.ts";
 
 export interface RoomConfig {
   map: number;
@@ -27,6 +28,8 @@ export interface RoomMember {
   house: string;
   team: number;
   connected: boolean;
+  /** место компьютера */
+  ai?: boolean;
 }
 export interface RoomState extends RoomInfo {
   host: number;
@@ -39,7 +42,7 @@ export interface MatchStart {
   seed: number;
   config: RoomConfig;
   /** house — номер дома движка */
-  players: { slot: number; name: string; house: number; team: number }[];
+  players: { slot: number; name: string; house: number; team: number; ai?: boolean }[];
   turnMs: number;
   framesPerTurn: number;
   /** своё место или null — наблюдатель */
@@ -76,6 +79,8 @@ export class NetSession {
   onStatus: (text: string) => void = () => {};
   onDesync: (turn: number) => void = () => {};
   onClosed: () => void = () => {};
+  /** запись матча готова к сохранению (конец матча, выход) */
+  onRecording: (rec: MatchRecording) => void = () => {};
 
   // ---- матч
   private start: MatchStart | null = null;
@@ -89,6 +94,15 @@ export class NetSession {
   private tick: () => void = () => {};
   private hash: () => number = () => 0;
   private pendingOrders = new Map<string, NetCommand & { k: "order" }>();
+  // ---- запись: все ходы с командами (turns после выполнения удаляются, эти — нет)
+  private recordLog = new Map<number, Turn>();
+  // ---- просмотр записи: ходы берутся из неё, сеть не нужна
+  /** идёт просмотр записи */
+  playback = false;
+  /** скорость просмотра (×) */
+  speed = 1;
+  /** просмотр на паузе */
+  paused = false;
 
   get connected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
@@ -100,7 +114,34 @@ export class NetSession {
     return this.start;
   }
   /** Historical ticks must not play their old sounds or accept new orders. */
-  get replaying(): boolean { return this.awaitingCatchup || this.frame < this.catchupTarget; }
+  get replaying(): boolean { return this.awaitingCatchup || this.frame < this.catchupTarget || (this.playback && this.speed > 2); }
+  /** длина просмотра в кадрах (0 — не просмотр) */
+  get playbackFrames(): number { return this.playback && this.start ? (this.lastTurn + 1) * this.start.framesPerTurn : 0; }
+
+  /** Запись текущего матча (без своего места) или null. */
+  recording(): MatchRecording | null {
+    const s = this.start;
+    if (!s || this.playback || !s.matchId || this.lastTurn < 0) return null;
+    const { you: _you, catchup: _catchup, t: _t, ...start } = s as MatchStart & { catchup?: boolean; t?: string };
+    return { v: 1, id: s.matchId, date: Date.now(), start, log: [...this.recordLog].sort((a, b) => a[0] - b[0]), turns: this.lastTurn + 1 };
+  }
+  /** Отдать запись на сохранение (её можно сохранять несколько раз — та же запись заменяется). */
+  flushRecording(): void {
+    const rec = this.recording();
+    if (rec) this.onRecording(rec);
+  }
+  /** Смотреть запись: тот же прогон, что у наблюдателя, но ходы — из записи. */
+  play(rec: MatchRecording): void {
+    this.endMatch();
+    this.playback = true;
+    this.speed = 1;
+    this.paused = false;
+    this.acc = 0;
+    this.start = { ...rec.start, you: null };
+    for (const [n, c] of rec.log) this.turns.set(n, c);
+    this.lastTurn = rec.turns - 1;
+    this.onStart(this.start);
+  }
 
   private readTicket(url: string): { id: string; token: string } | null {
     try {
@@ -251,11 +292,15 @@ export class NetSession {
   setConfig(config: RoomConfig): void {
     this.send({ t: "config", config });
   }
+  /** Места компьютеров (только хозяин, до начала матча). */
+  bot(change: { op: "add"; team: number; house?: string } | { op: "remove"; slot: number } | { op: "set"; slot: number; house: string }): void {
+    this.send({ t: "bot", ...change });
+  }
   startMatch(): void {
     this.send({ t: "start" });
   }
   reportOver(result: "won" | "lost"): void {
-    if (this.replaying) return;
+    if (this.replaying || this.playback) return;
     this.send({ t: "over", result });
   }
 
@@ -305,7 +350,9 @@ export class NetSession {
           this.start = msg as MatchStart;
           return;
         }
+        if (this.playback) return;
         this.start = msg as MatchStart;
+        this.recordLog.clear();
         this.awaitingCatchup = !!msg.catchup;
         this.catchupTarget = 0;
         this.turns.clear();
@@ -314,7 +361,8 @@ export class NetSession {
         this.acc = 0;
         return this.onStart(this.start);
       case "catchup":
-        for (const [n, c] of msg.log as [number, Turn][]) this.turns.set(n, c);
+        if (this.playback) return;
+        for (const [n, c] of msg.log as [number, Turn][]) { this.turns.set(n, c); if (c.length) this.recordLog.set(n, c); }
         if (msg.final === false) return;
         this.lastTurn = Math.max(this.lastTurn, (msg.turn as number) - 1);
         this.catchupTarget = msg.turn * (this.start?.framesPerTurn ?? 6);
@@ -323,7 +371,9 @@ export class NetSession {
         return;
       case "turn":
         if (!this.start) return;
+        if (this.playback) return;
         this.turns.set(msg.n, msg.c);
+        if (msg.c.length) this.recordLog.set(msg.n, msg.c);
         if (msg.n > this.lastTurn) this.lastTurn = msg.n;
         // requestAnimationFrame pauses in hidden tabs; incoming turns keep the
         // simulation moving without relying on a throttled background timer.
@@ -347,6 +397,11 @@ export class NetSession {
   }
 
   endMatch(): void {
+    this.flushRecording();
+    this.recordLog.clear();
+    this.playback = false;
+    this.paused = false;
+    this.speed = 1;
     this.start = null;
     this.turns.clear();
     this.lastTurn = -1;
@@ -359,13 +414,14 @@ export class NetSession {
   /** Продвинуть игру на прошедшее время (мс). Возвращает число выполненных тактов. */
   advance(dtMs: number): number {
     const start = this.start;
-    if (!start || this.awaitingCatchup) return 0;
+    if (!start || this.awaitingCatchup || (this.playback && this.paused)) return 0;
     const fpt = start.framesPerTurn;
     const available = this.buffered;
-    this.acc = Math.min(this.acc + (dtMs * 60) / 1000, 4);
+    const speed = this.playback ? this.speed : 1;
+    this.acc = Math.min(this.acc + (dtMs * 60 * speed) / 1000, this.playback ? 8 * speed : 4);
     let budget = Math.floor(this.acc);
     // отстали (вкладка была скрыта, медленный компьютер) — догоняем, оставляя ход запаса
-    if (available > 4 * fpt) budget = Math.max(budget, available - 2 * fpt);
+    if (available > 4 * fpt && !this.playback) budget = Math.max(budget, available - 2 * fpt);
     budget = Math.min(budget, available, 600);
     this.acc = Math.max(0, this.acc - budget);
     for (let i = 0; i < budget; i++) this.runFrame(fpt);

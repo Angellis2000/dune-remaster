@@ -292,7 +292,7 @@ export function structurePlace(s: Structure | null, position: number): boolean {
       t.groundTileID = G.wallTileID + 1;
       t.houseID = s.o.houseID;
       G.mapTileID[position] |= 0x8000;
-      if (isHuman(s.o.houseID)) tileRemoveFogInRadius(unpackTile(position), 1);
+      if (isHuman(s.o.houseID)) tileRemoveFogInRadius(unpackTile(position), 1, s.o.houseID);
       if (mapIsPositionUnveiled(position)) t.overlayTileID = 0;
       structureConnectWall(position, true);
       structureFree(s);
@@ -312,7 +312,7 @@ export function structurePlace(s: Structure | null, position: number): boolean {
           t.groundTileID = G.builtSlabTileID;
           t.houseID = s.o.houseID;
           G.mapTileID[curPos] |= 0x8000;
-          if (isHuman(s.o.houseID)) tileRemoveFogInRadius(unpackTile(curPos), 1);
+          if (isHuman(s.o.houseID)) tileRemoveFogInRadius(unpackTile(curPos), 1, s.o.houseID);
           if (mapIsPositionUnveiled(curPos)) t.overlayTileID = 0;
           result = 1;
           changed = true;
@@ -326,7 +326,7 @@ export function structurePlace(s: Structure | null, position: number): boolean {
 
   const validBuildLocation = structureIsValidBuildLocation(position, s.o.type);
   if (validBuildLocation === 0 && isHuman(s.o.houseID) && G.validateStrictIfZero === 0) return false;
-  if (isHuman(s.o.houseID)) tileRemoveFogInRadius(unpackTile(position), 2);
+  if (isHuman(s.o.houseID)) tileRemoveFogInRadius(unpackTile(position), 2, s.o.houseID);
   s.o.seenByHouses |= 1 << s.o.houseID;
   if (isHuman(s.o.houseID)) s.o.seenByHouses |= 0xff;
   s.o.flags.isNotOnMap = false;
@@ -678,7 +678,7 @@ export function structureActivateSpecial(s: Structure | null): void {
 
 export function structureRemoveFog(s: Structure | null): void {
   if (!s || !isHuman(s.o.houseID)) return;
-  tileRemoveFogInRadius(s.o.position, structureInfo[s.o.type].o.fogUncoverRadius);
+  tileRemoveFogInRadius(s.o.position, structureInfo[s.o.type].o.fogUncoverRadius, s.o.houseID);
 }
 
 function structureDestroy(s: Structure | null): void {

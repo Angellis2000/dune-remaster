@@ -44,6 +44,28 @@ export function mapIsPositionUnveiled(position: number): boolean {
   return true;
 }
 
+/**
+ * Раскрыта ли клетка для дома. В кампании туман один — игрока (как mapIsPositionUnveiled); в сети у каждого
+ * человека своя маска `unveiledHouses`, а общий слой (`isUnveiled`, иконки тумана) открыт всем, как на этапе 1.
+ */
+export function mapIsUnveiledFor(position: number, houseID: number): boolean {
+  if (!G.net) return mapIsPositionUnveiled(position);
+  return ((G.map[position & 0xfff].unveiledHouses >> houseID) & 1) === 1;
+}
+
+/** Раскрыта ли клетка хоть для одного человека (в кампании — для игрока). */
+export function mapIsUnveiledByAnyHuman(position: number): boolean {
+  if (!G.net) return mapIsPositionUnveiled(position);
+  return (G.map[position & 0xfff].unveiledHouses & G.net.humans) !== 0;
+}
+
+/** Видна ли клетка на экране местного игрока (у наблюдателя — всё, что видят люди). Только для интерфейса. */
+export function mapIsUnveiledLocal(position: number): boolean {
+  const t = G.map[position & 0xfff];
+  if (!G.net) return t.isUnveiled;
+  return (t.unveiledHouses & G.net.view) !== 0;
+}
+
 /** Видна ли точка в окне игрока: в оригинале окно 15×10 клеток, у нас — текущий вид. */
 export function mapIsPositionInViewport(position: Tile32): boolean {
   const x = (position.x >> 8) - packedX(G.viewportPacked);
@@ -465,13 +487,19 @@ function mapUnveilTileNeighbour(packed: number): void {
 }
 
 export function mapUnveilTile(packed: number, houseID: number): boolean {
-  // в сетевой игре первого этапа тумана нет: карта открыта всем с начала
-  if (G.net) return false;
   if (!isHuman(houseID)) return false;
   if (isOutOfMap(packed)) return false;
   const t = G.map[packed];
-  if (t.isUnveiled && tileIsUnveiled(t.overlayTileID)) return false;
-  t.isUnveiled = true;
+  if (G.net) {
+    // туман по домам: раскрываем только для этого дома; общий слой и иконки краёв не трогаем — края тумана
+    // местного игрока рисует экран по маске (World.sync)
+    const bit = 1 << houseID;
+    if ((t.unveiledHouses & bit) !== 0) return false;
+    t.unveiledHouses |= bit;
+  } else {
+    if (t.isUnveiled && tileIsUnveiled(t.overlayTileID)) return false;
+    t.isUnveiled = true;
+  }
   const u = unitGetByPackedTile(packed);
   if (u) unitHouseUnitCountAdd(u, houseID);
   const s = structureGetByPackedTile(packed);
@@ -479,6 +507,7 @@ export function mapUnveilTile(packed: number, houseID: number): boolean {
     s.o.seenByHouses |= 1 << houseID;
     if (houseID === 1) s.o.seenByHouses |= 1 << 3;
   }
+  if (G.net) return true;
   mapUnveilTileNeighbour(packed);
   mapUnveilTileNeighbour(packed + 1);
   mapUnveilTileNeighbour(packed - 1);
@@ -487,8 +516,8 @@ export function mapUnveilTile(packed: number, houseID: number): boolean {
   return true;
 }
 
-/** Tile_RemoveFogInRadius */
-export function tileRemoveFogInRadius(t: Tile32, radius: number): void {
+/** Tile_RemoveFogInRadius. В оригинале — всегда для игрока; в сети вызывающий передаёт дом, чей туман снимается. */
+export function tileRemoveFogInRadius(t: Tile32, radius: number, houseID = G.playerHouseID): void {
   let packed = packTile(t);
   if (!mapIsValidPosition(packed)) return;
   const x = packedX(packed);
@@ -502,7 +531,7 @@ export function tileRemoveFogInRadius(t: Tile32, radius: number): void {
       packed = packXY(x + i, y + j);
       const tt = { x: ((x + i) << 8) | 0x80, y: ((y + j) << 8) | 0x80 };
       if (((tileGetDistance(center, tt) + 0x80) >> 8) > radius) continue;
-      mapUnveilTile(packed, G.playerHouseID);
+      mapUnveilTile(packed, houseID);
     }
   }
 }

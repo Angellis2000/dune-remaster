@@ -18,7 +18,7 @@ import {COMBAT_SFX} from '../sound/combat-sfx.ts';
 import {blockingWall} from './combat-obstacles.ts';
 import {
   mapBloomExplodeSpice, mapDeviateArea, mapFillCircleWithSpice, mapFindLocationTile, mapGetLandscapeType, mapIsPositionInViewport,
-  mapIsPositionUnveiled, mapIsValidPosition, mapMakeExplosion, mapSearchSpice, mapUnveilTile, mapUpdateAround, tileRemoveFogInRadius,
+  mapIsPositionUnveiled, mapIsUnveiledByAnyHuman, mapIsUnveiledFor, mapIsValidPosition, mapMakeExplosion, mapSearchSpice, mapUnveilTile, mapUpdateAround, tileRemoveFogInRadius,
 } from "./map.ts";
 import { objectGetByPackedTile, objectScriptVariable4Clear, objectScriptVariable4Link, objectScriptVariable4Set } from "./object.ts";
 import { scriptIsLoaded, scriptLoad, scriptLoadAsSubroutine, scriptReset, scriptRun, SCRIPT_UNIT_OPCODES_PER_TICK } from "./script.ts";
@@ -551,7 +551,7 @@ export function unitGetTargetUnitPriority(unit: Unit | null, target: Unit | null
   if (!ti.o.flags.priority) return 0;
   if (ti.movementType === MOVEMENT.WINGER) {
     if (!ui.o.flags.targetAir) return 0;
-    if (isHuman(target.o.houseID) && !mapIsPositionUnveiled(packTile(target.o.position))) return 0;
+    if (isHuman(target.o.houseID) && !mapIsUnveiledFor(packTile(target.o.position), target.o.houseID)) return 0;
   }
   if (!mapIsValidPosition(packTile(target.o.position))) return 0;
   const distance = tileGetDistanceRoundedUp(unit.o.position, target.o.position);
@@ -611,7 +611,12 @@ export function unitSetPosition(u: Unit | null, position: Tile32): boolean {
   u.currentDestination = { x: 0, y: 0 };
   u.targetMove = 0;
   u.targetAttack = 0;
-  if (G.map[packTile(u.o.position)].isUnveiled) {
+  if (G.net) {
+    // туман по домам: юнит замечают те люди, у кого раскрыта клетка
+    const packed = packTile(u.o.position);
+    u.o.seenByHouses &= ~(1 << u.o.houseID);
+    for (const hid of humanHouses()) if (mapIsUnveiledFor(packed, hid)) unitHouseUnitCountAdd(u, hid);
+  } else if (G.map[packTile(u.o.position)].isUnveiled) {
     u.o.seenByHouses &= ~(1 << u.o.houseID);
     for (const hid of humanHouses()) unitHouseUnitCountAdd(u, hid);
   }
@@ -663,7 +668,7 @@ export function unitFindBestTargetUnit(u: Unit | null, mode: number): Unit | nul
 
 function unitSandwormGetTargetPriority(unit: Unit | null, target: Unit | null): number {
   if (!unit || !target) return 0;
-  if (!mapIsPositionUnveiled(packTile(target.o.position))) return 0;
+  if (!mapIsUnveiledByAnyHuman(packTile(target.o.position))) return 0;
   if (!landscapeInfo[mapGetLandscapeType(packTile(target.o.position))].isSand) return 0;
   let res: number;
   switch (unitInfo[target.o.type].movementType) {
@@ -801,7 +806,7 @@ export function unitRemoveFog(unit: Unit | null): void {
   if (!houseAlliedToHuman(unitGetHouseID(unit))) return;
   const r = unitInfo[unit.o.type].o.fogUncoverRadius;
   if (r === 0) return;
-  tileRemoveFogInRadius(unit.o.position, r);
+  tileRemoveFogInRadius(unit.o.position, r, G.net ? unitGetHouseID(unit) : G.playerHouseID);
 }
 
 export function unitDeviate(unit: Unit | null, probability: number, houseID: number): boolean {
@@ -1186,8 +1191,8 @@ export function unitCreateBullet(position: Tile32, type: number, houseID: number
       bullet.fireDelay = ui.fireDistance & 0xff;
       const u = indexGetUnit(target);
       if (u && unitInfo[u.o.type].movementType === MOVEMENT.WINGER) bullet.fireDelay = u8(bullet.fireDelay << 1);
-      if (type === UNIT.MISSILE_HOUSE || (bullet.o.seenByHouses & (1 << G.playerHouseID)) !== 0) return bullet;
-      tileRemoveFogInRadius(bullet.o.position, 2);
+      if (type === UNIT.MISSILE_HOUSE) return bullet;
+      bulletRemoveFog(bullet);
       return bullet;
     }
     case UNIT.BULLET:
@@ -1200,8 +1205,7 @@ export function unitCreateBullet(position: Tile32, type: number, houseID: number
       bullet.currentDestination = { ...t };
       bullet.o.hitpoints = damage;
       if (damage > 15) bullet.o.flags.bulletIsBig = true;
-      if ((bullet.o.seenByHouses & (1 << G.playerHouseID)) !== 0) return bullet;
-      tileRemoveFogInRadius(bullet.o.position, 2);
+      bulletRemoveFog(bullet);
       return bullet;
     }
     default:
@@ -1410,10 +1414,19 @@ export function unitUpdateMap(type: number, unit: Unit | null): void {
   const position = unit.o.position;
   const packed = packTile(position);
   const t = G.map[packed];
-  if (t.isUnveiled || isHuman(unit.o.houseID)) for (const hid of humanHouses()) unitHouseUnitCountAdd(unit, hid);
+  if (G.net) {
+    // туман по домам: каждый человек видит юнит по своей маске
+    for (const hid of humanHouses()) {
+      if (isHuman(unit.o.houseID) || mapIsUnveiledFor(packed, hid)) unitHouseUnitCountAdd(unit, hid);
+      else unitHouseUnitCountRemoveFor(unit, hid);
+    }
+  } else if (t.isUnveiled || isHuman(unit.o.houseID)) for (const hid of humanHouses()) unitHouseUnitCountAdd(unit, hid);
   else unitHouseUnitCountRemove(unit);
   if (type === 1) {
-    if (houseAlliedToHuman(unitGetHouseID(unit)) && !mapIsPositionUnveiled(packed) && unit.o.type !== UNIT.SANDWORM) {
+    if (G.net) {
+      const hid = unitGetHouseID(unit);
+      if (isHuman(hid) && !mapIsUnveiledFor(packed, hid) && unit.o.type !== UNIT.SANDWORM) tileRemoveFogInRadius(position, 1, hid);
+    } else if (houseAlliedToHuman(unitGetHouseID(unit)) && !mapIsPositionUnveiled(packed) && unit.o.type !== UNIT.SANDWORM) {
       tileRemoveFogInRadius(position, 1);
     }
     if (objectGetByPackedTile(packed) === null) {
@@ -1484,6 +1497,30 @@ export function unitHouseUnitCountRemove(unit: Unit | null): void {
     if (!houseAreAllied(h.index, unitGetHouseID(unit))) h.unitCountEnemy--;
     else h.unitCountAllied--;
     unit.o.seenByHouses &= ~(1 << h.index);
+  }
+}
+
+/** Сеть: дом houseID перестаёт видеть юнит (как unitHouseUnitCountRemove, но для одного дома). */
+function unitHouseUnitCountRemoveFor(unit: Unit, houseID: number): void {
+  if ((unit.o.seenByHouses & (1 << houseID)) === 0) return;
+  const h = G.houses[houseID];
+  if (!houseAreAllied(houseID, unitGetHouseID(unit))) h.unitCountEnemy--;
+  else h.unitCountAllied--;
+  unit.o.seenByHouses &= ~(1 << houseID);
+}
+
+/**
+ * Выстрел, которого игрок не видел, снимает туман вокруг стрелка (радиус 2). В сети — для каждого человека,
+ * который пулю не видел.
+ */
+function bulletRemoveFog(bullet: Unit): void {
+  if (!G.net) {
+    if ((bullet.o.seenByHouses & (1 << G.playerHouseID)) !== 0) return;
+    tileRemoveFogInRadius(bullet.o.position, 2);
+    return;
+  }
+  for (const hid of humanHouses()) {
+    if ((bullet.o.seenByHouses & (1 << hid)) === 0) tileRemoveFogInRadius(bullet.o.position, 2, hid);
   }
 }
 
