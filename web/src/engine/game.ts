@@ -6,7 +6,7 @@ import type { DuneRom } from "../rom/dune.ts";
 import type { Scenario } from "../rom/scenario.ts";
 import { animationInit, animationTick } from "./animation.ts";
 import {
-  ACTION, G, HOUSE, HOUSE_INVALID, INDEX_INVALID, IT, MAP_INFOS, MOVEMENT, SELECTION, STATE, STRUCTURE, UNIT, findAll, houseAllocate, houseFind, isHuman, isLocal, randomState,
+  ACTION, G, HOUSE, HOUSE_INVALID, HOUSE_WEAPON, INDEX_INVALID, IT, MAP_INFOS, MOVEMENT, SELECTION, STATE, STRUCTURE, UNIT, findAll, houseAllocate, houseFind, isHuman, isLocal, randomState,
   idiv, indexEncode, indexGetUnit, newScenario, packTile, packXY, poolsReset, randomLCGSeed, randomRange, randomSeed, s8, structureFind, unitAllocate,
   tileCenter, unitFind, unitFree, unpackTile, type House, type Structure, type Unit,
 } from "./core.ts";
@@ -24,7 +24,7 @@ import {
   structureRemoveFog, structureResetTimers, structureSetRepairingState, structureSetState, structureSetUpgradingState,
   structureStarportBuy,structureCanQueueUnits,structureEnqueueUnit,structureCancelQueuedUnit,structureEnqueueBuilding,structureCancelQueuedBuilding,structureStartNextBuilding,setStructureReleaseUnit,
 } from "./structure.ts";
-import { actionInfo, applyRomTables, landscapeInfo, structureInfo, unitInfo } from "./tables.ts";
+import { actionInfo, applyRomTables, houseInfo, landscapeInfo, structureInfo, unitInfo } from "./tables.ts";
 import { gameLoopTeam, teamCreate, teamResetTimers } from "./team.ts";
 import {configureNetworkPools} from './core.ts';
 import {NETWORK_UNIT_LIMIT} from './network-rules.ts';
@@ -144,6 +144,16 @@ export class Game {
   netLastHandOver = -2;
   /** выполняется ли сейчас команда сети: интерфейсные вызовы снаружи не должны менять таблицы */
   private netExecuting = false;
+  /**
+   * Дворец, чья ракета ждёт цели (MD $FFDC4C). Как в MD ($027D28 → $027E90): A по дворцу только включает прицел,
+   * ракета создаётся и сразу летит по выбору клетки ($22CC8 → $2313E), поэтому, пока игрок целится, она сама не
+   * улетит. В PC (OpenDUNE) ракета создавалась сразу и через 7 секунд улетала в случайную точку.
+   */
+  private missilePalace: Structure | null = null;
+  /** Ждёт ли ракета дворца цели (значок «OK» над дворцом в это время не показывается, $00DD1A). */
+  get missileAiming(): boolean {
+    return this.missilePalace !== null;
+  }
 
   constructor(private rom: DuneRom) {
     if (!tablesReady) {
@@ -179,6 +189,7 @@ export class Game {
     this.mission = mission;
     this.ended = null;
     this.selectedStructure = null;
+    this.missilePalace = null;
     this.levelEndTimer = 0;
 
     poolsReset();
@@ -483,6 +494,7 @@ export class Game {
       return s;
     }
     this.selectedStructure = null;
+    this.missilePalace = null;
     const u = unitGetByPackedTile(packed);
     if (u && u.o.type !== UNIT.CARRYALL) {
       unitSelect(u);
@@ -645,6 +657,15 @@ export class Game {
 
   /** Цель выбрана: приказ активному юниту и (others) остальным выделенным — одной группой. */
   targetClick(packed: number, others: Unit[] = []): void {
+    if (this.missilePalace) {
+      const s = this.missilePalace;
+      this.missilePalace = null;
+      G.selectionType = SELECTION.STRUCTURE;
+      if (!s.o.flags.used || s.o.type !== STRUCTURE.PALACE || s.countDown !== 0) return;
+      structureActivateSpecial(s);
+      if (G.unitHouseMissile) unitLaunchHouseMissile(packed);
+      return;
+    }
     if (G.unitHouseMissile) {
       unitLaunchHouseMissile(packed);
       return;
@@ -676,6 +697,12 @@ export class Game {
 
   cancelTarget(): void {
     if (G.structureActiveType !== 0xffff) this.cancelPlace();
+    if (this.missilePalace) {
+      // $0284C4: отмена снимает прицел, ракета не создавалась
+      this.missilePalace = null;
+      if (G.selectionType === SELECTION.TARGET) G.selectionType = SELECTION.STRUCTURE;
+      return;
+    }
     if (!G.unitActive) return;
     G.unitActive = null;
     G.activeAction = 0xffff;
@@ -885,6 +912,12 @@ export class Game {
 
   palaceSpecial(s: Structure): void {
     if (s.o.type !== STRUCTURE.PALACE || s.countDown !== 0) return;
+    if (houseInfo[s.o.houseID].specialWeapon === HOUSE_WEAPON.MISSILE && isHuman(s.o.houseID)) {
+      // ракету наводит игрок: сначала только прицел (см. missilePalace)
+      this.missilePalace = s;
+      G.selectionType = SELECTION.TARGET;
+      return;
+    }
     structureActivateSpecial(s);
   }
 
@@ -956,6 +989,7 @@ export class Game {
     this.ended = null;
     this.afterEnd = 0;
     this.selectedStructure = null;
+    this.missilePalace = null;
     this.levelEndTimer = 0;
     this.netAlive = this.netPlayersMask;
 

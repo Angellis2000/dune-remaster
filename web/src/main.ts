@@ -164,6 +164,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     const surface = kind >= 10 && kind <= 13 ? 'structure' : kind === 8 || kind === 9 ? 'spice' :
       ([4,6,7].includes(kind) || ([1,5].includes(kind) && terrain?.isRockAt(x,y))) ? 'rock' : 'sand';
     particles?.burst(x, y, type, surface, G.timerGame);
+    if (type === 11) view.nukes.add(x, y, G.timerGame);
   };
   skins.onChange = () => view.invalidate();
   const minimap = new Minimap(view, icons);
@@ -967,7 +968,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       } else if (s.type === STRUCTURE.PALACE) {
         // $00DCFE: спецоружие готово ($56 = 0), ракета не ждёт цели ($FFDC4C) и нет бита 8
         // (у Атрейдесов — пул наземных юнитов полон, фрименам негде появиться)
-        if (s.ref.countDown === 0 && !G.unitHouseMissile && !structureLimitReached(s.ref)) icon(s, fromTable(ROM.statusIcons.ok, 6), 6);
+        if (s.ref.countDown === 0 && !G.unitHouseMissile && !world.game.missileAiming && !structureLimitReached(s.ref)) icon(s, fromTable(ROM.statusIcons.ok, 6), 6);
         else if (s.ref.o.flags.repairing) icon(s, fromTable(ROM.statusIcons.repair, si.layout), 7);
       } else if (s.type === STRUCTURE.WINDTRAP) {
         // $00DD6A: молния, пока потребление дома больше выработки

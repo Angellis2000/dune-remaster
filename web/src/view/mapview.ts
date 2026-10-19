@@ -20,12 +20,13 @@ import type { ImpactParticles } from "../gfx/impact-particles.ts";
 import { G, type Unit as EUnit } from "../engine/core.ts";
 import { drawTargetLines, unitTargetLine } from "../gfx/target-lines.ts";
 import { drawWall } from "../gfx/wall-art.ts";
-import { drawStatusIcon, type StatusKind } from "../gfx/status-icons.ts";
+import { drawStatusIcon, statusIconHidden, type StatusKind } from "../gfx/status-icons.ts";
 import { VehicleTracks } from "../gfx/vehicle-tracks.ts";
 import type { InfantryArt } from "../gfx/infantry-art.ts";
 import {drawRefineryActivity} from '../gfx/refinery-activity.ts';
 import {drawBuildingActivity,drawBuildingNightLights} from '../gfx/building-activity.ts';
 import {drawStructureLife} from '../gfx/structure-life.ts';
+import {NukeEffects} from '../gfx/nuke-effect.ts';
 import {WorldAtmosphere,desertLight} from '../gfx/world-atmosphere.ts';
 import {drawFactoryActivity} from '../gfx/factory-activity.ts';
 import {drawAdvancedWeapons,drawDroneRadius,drawDroneStatus} from '../gfx/advanced-unit-effects.ts';
@@ -125,6 +126,8 @@ export class MapView {
   }
 
   private fog?:FogOfWar;
+  /** взрыв ракеты дворца (взрыв 11): вспышка, огненный шар, волна, гриб, гарь — только рисование */
+  readonly nukes = new NukeEffects();
   /** Полностью скрытая клетка; HD-туман рисуется отдельным мягким слоем. */
   veiledIcon = 0;
   /** постановка здания: размер и годность места (1 — да, <0 — без бетона, 0 — нельзя), cells — годность каждой клетки */
@@ -158,6 +161,7 @@ export class MapView {
     this.world = world;
     this.vehicles?.reset();
     this.particles?.reset();
+    this.nukes.reset();
     this.tracks.reset();
     this.infantry?.reset();
     this.terrain?.setMap(world.map);
@@ -582,6 +586,7 @@ export class MapView {
       ctx.restore();
     };
     drawParticles('ground');
+    ctx.save();ctx.setTransform(z,0,0,z,-ox,-oy);this.nukes.drawGround(ctx,G.timerGame,isVisible);ctx.restore();
     drawWormMouths();
     let blastsDrawn = false;
     for (const u of visible) {
@@ -664,7 +669,9 @@ export class MapView {
       ctx.restore();
     }
 
+    ctx.save();ctx.setTransform(z,0,0,z,-ox,-oy);this.nukes.drawAir(ctx,G.timerGame,isVisible);ctx.restore();
     (this.fog??=new FogOfWar()).draw(ctx,map.overlay,this.veiledIcon,ox,oy,z);
+    this.nukes.drawFlash(ctx,G.timerGame,this.canvas.width,this.canvas.height,isVisible);
     drawDroneRadius(ctx,this.selectedStructure,this.selectedUnits,z,ox,oy);
     if(this.world)drawDroneStatus(ctx,this.world.units,G.playerHouseID,z,ox,oy);
     // постановка здания: рамка на клетках под курсором
@@ -690,7 +697,9 @@ export class MapView {
         const x=(s.x*CELL_PX+img.ox+img.canvas.width/2)*z-ox;
         const y=(s.y*CELL_PX+img.oy+img.canvas.height/2)*z-oy;
         if(!map.inBounds(s.x,s.y)||(this.veiledIcon&&map.overlay[(s.y<<6)|s.x]===this.veiledIcon))continue;
-        drawStatusIcon(ctx,kind,x,y,18*z,G.timerGame,s.ref.o.index);continue;
+        // как спрайт MD: диск 24 точки, мигает по счётчику кадров (statusIconHidden)
+        if(statusIconHidden(kind,G.timerGame))continue;
+        drawStatusIcon(ctx,kind,x,y,22*z,G.timerGame,s.ref.o.index);continue;
       }
       ctx.drawImage(img.canvas, Math.round((s.x * CELL_PX + img.ox) * z) - ox, Math.round((s.y * CELL_PX + img.oy) * z) - oy, img.canvas.width * z, img.canvas.height * z);
     }
