@@ -27,6 +27,7 @@ import {drawRefineryActivity} from '../gfx/refinery-activity.ts';
 import {drawBuildingActivity,drawBuildingNightLights} from '../gfx/building-activity.ts';
 import {drawStructureLife} from '../gfx/structure-life.ts';
 import {NukeEffects} from '../gfx/nuke-effect.ts';
+import {drawMapBackdrop} from '../gfx/map-backdrop.ts';
 import {WorldAtmosphere,desertLight,drawDayClock,DAY_CLOCK_W} from '../gfx/world-atmosphere.ts';
 import {drawFactoryActivity} from '../gfx/factory-activity.ts';
 import {drawAdvancedWeapons,drawDroneRadius,drawDroneStatus} from '../gfx/advanced-unit-effects.ts';
@@ -684,6 +685,8 @@ export class MapView {
 
     ctx.save();ctx.setTransform(z,0,0,z,-ox,-oy);this.nukes.drawAir(ctx,G.timerGame,isVisible);ctx.restore();
     (this.fog??=new FogOfWar()).draw(ctx,map.overlay,this.veiledIcon,ox,oy,z);
+    // за краем поля — фон «ночная пустыня» и рамка (видно, когда камера выходит из-под правого меню)
+    {const b=map.bounds;drawMapBackdrop(ctx,b.x*CELL_PX,b.y*CELL_PX,b.w*CELL_PX,b.h*CELL_PX,z,ox,oy,this.canvas.width,this.canvas.height);}
     this.nukes.drawFlash(ctx,G.timerGame,this.canvas.width,this.canvas.height,isVisible);
     drawDroneRadius(ctx,this.selectedStructure,this.selectedUnits,z,ox,oy);
     if(this.world)drawDroneStatus(ctx,this.world.units,G.playerHouseID,z,ox,oy);

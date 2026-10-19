@@ -238,7 +238,7 @@ button[aria-pressed="true"] {
   position: absolute;
   right: max(12px, env(safe-area-inset-right, 0px));
   bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-  width: 160px;
+  width: 220px;
   height: auto;
   image-rendering: pixelated;
   border: 1px solid var(--line);
@@ -518,7 +518,7 @@ button[aria-pressed="true"] {
   top: 110px;
   right: max(12px, env(safe-area-inset-right, 0px));
   width: 252px;
-  max-height: calc(100% - 260px);
+  max-height: calc(100% - 350px);
   min-height: 120px;
   display: grid;
   grid-template-rows: auto 1fr;
