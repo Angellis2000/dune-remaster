@@ -27,7 +27,7 @@ import {drawRefineryActivity} from '../gfx/refinery-activity.ts';
 import {drawBuildingActivity,drawBuildingNightLights} from '../gfx/building-activity.ts';
 import {drawStructureLife} from '../gfx/structure-life.ts';
 import {NukeEffects} from '../gfx/nuke-effect.ts';
-import {WorldAtmosphere,desertLight} from '../gfx/world-atmosphere.ts';
+import {WorldAtmosphere,desertLight,drawDayClock,DAY_CLOCK_W} from '../gfx/world-atmosphere.ts';
 import {drawFactoryActivity} from '../gfx/factory-activity.ts';
 import {drawAdvancedWeapons,drawDroneRadius,drawDroneStatus} from '../gfx/advanced-unit-effects.ts';
 import {FogOfWar} from '../gfx/fog-of-war.ts';
@@ -104,6 +104,8 @@ export class MapView {
   private acc = 0;
   private tracks = new VehicleTracks();
   private atmosphere = new WorldAtmosphere();
+  /** часы суток в левом верхнем углу карты */
+  showDayClock = true;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -220,13 +222,24 @@ export class MapView {
     this.dirty = true;
   }
 
+  /**
+   * Сколько точек CSS справа закрыто панелями (HUD, меню, радар). Как в Red Alert, где боковая панель — отдельная
+   * колонка: камера может уйти за правый край карты на эту ширину, и крайние клетки выходят из-под меню.
+   */
+  private rightInset = 0;
+  setRightInset(px: number): void {
+    if (Math.abs(px - this.rightInset) < 1) return;
+    this.rightInset = px;
+    this.clampCamera();
+  }
+
   private clampCamera(): void {
     if (!this.world) return;
     const b = this.world.map.bounds;
     const v = this.viewSize();
     const minX = b.x * CELL_PX;
     const minY = b.y * CELL_PX;
-    const maxX = (b.x + b.w) * CELL_PX - v.w;
+    const maxX = (b.x + b.w) * CELL_PX - v.w + this.rightInset / this.zoom;
     const maxY = (b.y + b.h) * CELL_PX - v.h;
     // поле меньше окна — по центру
     this.camX = maxX < minX ? (minX + maxX) / 2 : Math.min(Math.max(this.camX, minX), maxX);
@@ -760,6 +773,12 @@ export class MapView {
     // как в оригинале; в режиме мыши системный указатель уже виден.
     if (!this.placement || !this.mouseMode) {
       drawCursor(ctx,this.cursorKind,this.cursorX*z-ox,this.cursorY*z-oy,32*z,G.timerGame);
+    }
+    // часы суток: который час, день или ночь и когда смена (смена света — только при включённой атмосфере)
+    if(this.atmosphere&&this.showDayClock){
+      // справа, слева от панели «СПАЙС» (ui/hud.ts: 252 точки шириной, отступ 12), вровень с ней
+      const dpr=window.devicePixelRatio||1,cssW=this.canvas.width/dpr;
+      drawDayClock(ctx,Math.max(0,G.timerGame-G.tickScenarioStart),Math.max(12,cssW-12-252-8-DAY_CLOCK_W),12,dpr);
     }
   }
 

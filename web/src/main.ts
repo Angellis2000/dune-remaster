@@ -6,6 +6,7 @@ import { structureLimitReached } from "./engine/structure.ts";
 import { unitSelect } from "./engine/unit.ts";
 import { World, type Structure as WorldStructure, type Unit as WorldUnit } from "./game/world.ts";
 import { buildCursors } from "./gfx/cursors.ts";
+import { dayPhase } from "./gfx/world-atmosphere.ts";
 import { IconSet } from "./gfx/icons.ts";
 import { ContinuousTerrain } from "./gfx/continuous-terrain.ts";
 import { MapEffects } from "./gfx/map-effects.ts";
@@ -201,6 +202,11 @@ async function startGame(rom: DuneRom): Promise<void> {
   endBanner.hidden = true;
   stage.append(message, endBanner);
   let messageTimer = 0;
+  let lastDayPhase = '', lastDayElapsed = 0;
+  const DAY_MESSAGES: Record<string, string> = {
+    Рассвет: 'Рассвет. Через 2 минуты день.', День: 'Наступил день.',
+    Закат: 'Солнце садится. Через 2 минуты ночь.', Ночь: 'Наступила ночь.',
+  };
   let networkReplaying = () => false;
   G.onMessage = (text: string) => {
     if (networkReplaying()) return;
@@ -897,8 +903,20 @@ async function startGame(rom: DuneRom): Promise<void> {
     selectUnits(inside);
     updateHud();
   };
+  /** Ширина правых панелей поверх карты (HUD, меню мыши, радар) — на неё камера может уйти за край карты. */
+  const rightCover = () => {
+    const r = canvas.getBoundingClientRect();
+    let left = r.right;
+    for (const el of [hud.canvas, panel.root, minimap.canvas]) {
+      if (el.hidden || !el.isConnected) continue;
+      const b = el.getBoundingClientRect();
+      if (b.width > 0 && b.height > 0 && b.left > r.left + r.width / 2) left = Math.min(left, b.left);
+    }
+    return Math.max(0, r.right - left);
+  };
   view.onFrame = () => {
     frame++;
+    if (frame % 30 === 0) view.setRightInset(rightCover());
     // звуки, отложенные до кадра ($00182E); время боевой мелодии ($004668)
     sound.frame();
     if (inMission) {
@@ -948,6 +966,13 @@ async function startGame(rom: DuneRom): Promise<void> {
       view.invalidate();
     }
     if (messageTimer > 0 && --messageTimer === 0) message.hidden = true;
+    // смена суток — короткое сообщение, как предупреждение ментата (свет — только украшение, в игру не пишет)
+    {
+      const elapsed = Math.max(0, G.timerGame - G.tickScenarioStart), phase = dayPhase(elapsed).name;
+      if (elapsed < lastDayElapsed) lastDayPhase = '';
+      if (lastDayPhase && phase !== lastDayPhase && !world.game.ended) G.onMessage(DAY_MESSAGES[phase] ?? phase);
+      lastDayPhase = phase; lastDayElapsed = elapsed;
+    }
     // значки над своими зданиями, как $00DC9C: у двора и дворца «OK», иначе при ремонте — молоток
     view.structureIcons = [];
     // Preserve original status conditions; animate HD badges continuously instead of hiding frames.

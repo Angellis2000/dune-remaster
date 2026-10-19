@@ -76,3 +76,53 @@ export class WorldAtmosphere {
     ctx.restore();
   }
 }
+
+/**
+ * Фазы суток для игрока — по той же кривой света (keys): рассвет 5–7, день 7–18, закат 18–20, ночь 20–5.
+ * Сутки — DAY_TICKS игровых кадров (24 мин при 60 кадрах/с), миссия начинается в 9:00.
+ */
+const PHASES = [
+  { from: 5, name: 'Рассвет', next: 'день' }, { from: 7, name: 'День', next: 'закат' },
+  { from: 18, name: 'Закат', next: 'ночь' }, { from: 20, name: 'Ночь', next: 'рассвет' },
+] as const;
+export function dayPhase(tick:number):{hour:number;name:string;next:string;secondsLeft:number}{
+  const hour=desertLight(tick).hour;
+  let i=PHASES.length-1;for(let j=0;j<PHASES.length;j++)if(hour>=PHASES[j].from)i=j;
+  const end=PHASES[(i+1)%PHASES.length].from;
+  const hoursLeft=mod(end-hour,24);
+  return{hour,name:PHASES[i].name,next:PHASES[i].next,secondsLeft:hoursLeft/24*DAY_TICKS/60};
+}
+
+/**
+ * Часы суток — плашка в оформлении панели «СПАЙС» (ui/hud.ts: фон #101820, рамка #8B7650, подписи #C3B89E, цифры
+ * #FFE4AA): фаза и маленькая дуга неба с солнцем или луной, время и сколько до смены. x, y, ширина — в точках CSS,
+ * dpr — плотность экрана (масштаб карты не влияет).
+ */
+export const DAY_CLOCK_W = 150, DAY_CLOCK_H = 46;
+export function drawDayClock(ctx:CanvasRenderingContext2D,tick:number,x:number,y:number,dpr:number):void{
+  const light=desertLight(tick),phase=dayPhase(tick);
+  const hh=Math.floor(light.hour),mm=Math.floor((light.hour-hh)*60);
+  const left=Math.ceil(phase.secondsLeft),time=`${Math.floor(left/60)}:${String(left%60).padStart(2,'0')}`;
+  const W=DAY_CLOCK_W,H=DAY_CLOCK_H;
+  ctx.save();ctx.setTransform(dpr,0,0,dpr,x*dpr,y*dpr);
+  ctx.fillStyle='#101820ed';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='#8b7650';ctx.lineWidth=1;ctx.strokeRect(.5,.5,W-1,H-1);
+  ctx.textBaseline='alphabetic';
+  ctx.textAlign='left';ctx.font='700 11px "Segoe UI", sans-serif';ctx.fillStyle='#c3b89e';
+  ctx.fillText(phase.name.toUpperCase(),10,16);
+  // дуга неба справа вверху: днём солнце 6→18, ночью луна 18→6
+  const cx=W-20,cy=19,r=11;
+  ctx.fillStyle=light.night>.5?'#24324c':`rgb(${light.rgb.map(c=>Math.round(c*200)).join(',')})`;
+  ctx.beginPath();ctx.arc(cx,cy,r,Math.PI,0);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='#514733';ctx.beginPath();ctx.moveTo(cx-r-3,cy+.5);ctx.lineTo(cx+r+3,cy+.5);ctx.stroke();
+  const day=light.hour>=6&&light.hour<18,f=day?(light.hour-6)/12:mod(light.hour-18,24)/12;
+  const a=Math.PI+f*Math.PI,bx=cx+Math.cos(a)*(r-3),by=cy+Math.sin(a)*(r-3);
+  if(day){ctx.fillStyle='#ffd25a';ctx.beginPath();ctx.arc(bx,by,3,0,TAU);ctx.fill();}
+  else{ctx.fillStyle='#e8eef8';ctx.beginPath();ctx.arc(bx,by,2.8,0,TAU);ctx.fill();ctx.fillStyle='#24324c';ctx.beginPath();ctx.arc(bx+1.3,by-.8,2.4,0,TAU);ctx.fill();}
+  ctx.strokeStyle='#514733';ctx.beginPath();ctx.moveTo(8,24.5);ctx.lineTo(W-8,24.5);ctx.stroke();
+  ctx.font='700 16px "IBM Plex Mono", monospace';ctx.fillStyle='#ffe4aa';ctx.shadowColor='#000';ctx.shadowBlur=2;
+  ctx.fillText(`${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`,10,41);ctx.shadowBlur=0;
+  ctx.textAlign='right';ctx.font='600 10px "IBM Plex Mono", monospace';ctx.fillStyle='#f2d59a';
+  ctx.fillText(`${phase.next.toUpperCase()} ${time}`,W-8,40);
+  ctx.restore();
+}
