@@ -89,7 +89,7 @@ function moveDrone(u:Unit,goal:Tile32,dt:number):boolean{
 }
 
 function updateDroneMembers(u:Unit,dt:number):void{
-  const d=u.drone!,parked=d.phase==='dock'||d.phase==='guard'&&length(u.o.position.x-d.homePosition.x,u.o.position.y-d.homePosition.y-64)<24;
+  const d=u.drone!,parked=d.phase==='dock'||!!d.landed||d.phase==='guard'&&length(u.o.position.x-d.homePosition.x,u.o.position.y-d.homePosition.y-64)<24;
   const offsets=parked?[[-56,-56],[48,-56],[0,24]]:[[-40,-28],[40,-28],[0,40]],a=sineCosine(parked?0:u.orientation[0].current);
   for(let i=0;i<d.members.length;i++){
     const m=d.members[i],offset=offsets[i],goal=clampDronePoint(u,{x:u.o.position.x+offset[0]*a.cos-offset[1]*a.sin,y:u.o.position.y+offset[0]*a.sin+offset[1]*a.cos});
@@ -103,6 +103,42 @@ export function tickDroneGrenades():void{
   const due=G.droneGrenades.filter(p=>p.impact<=G.timerGame);
   G.droneGrenades=G.droneGrenades.filter(p=>p.impact>G.timerGame);
   for(const p of due)mapMakeExplosion(EXPLOSION.IMPACT_SMALL,p.to,p.damage,p.origin,true);
+}
+
+/** Можно ли выпустить звено с площадки по приказу: заряда на вылет, гранаты есть, прочность не меньше 30%. */
+export function droneCanLaunch(u:Unit):boolean{
+  const d=u.drone;if(!d)return false;
+  const survivors=Math.max(1,Math.ceil(u.o.hitpoints/(unitInfo[COMBAT_DRONE].o.hitpoints/3)));
+  return d.battery>=DRONE_RETURN_BATTERY*2&&u.o.hitpoints>=unitInfo[COMBAT_DRONE].o.hitpoints*.3&&d.members.slice(0,survivors).some(m=>m.grenades>0);
+}
+/**
+ * Место звена в очереди на площадку: 0 — садится (или уже стоит) на площадке. Порядок — звено на площадке,
+ * затем по кадру начала возврата, затем по номеру; одинаков у всех клиентов сетевой игры.
+ */
+function dockRank(u:Unit):number{
+  const home=u.drone!.home;
+  const line=G.unitFind.filter(o=>o.o.type===COMBAT_DRONE&&o.o.flags.used&&o.o.hitpoints>0&&o.drone&&o.drone.home===home&&(o.drone.phase==='return'||o.drone.phase==='dock'))
+    .sort((a,b)=>(a.drone!.phase==='dock'?0:1)-(b.drone!.phase==='dock'?0:1)||(a.drone!.queuedAt??0)-(b.drone!.queuedAt??0)||a.o.index-b.o.index);
+  return Math.max(0,line.indexOf(u));
+}
+/** Места ожидания вокруг площадки (целые смещения — одинаково у всех клиентов). */
+const WAITING=[[640,64],[-640,64],[0,-576],[0,704],[512,-448],[-512,-448],[512,576],[-512,576]];
+function waitingSpot(pad:Tile32,rank:number):Tile32{
+  // первое по порядку место без здания (садятся на землю, не на крыши); порядок одинаков у всех клиентов
+  for(let k=0;k<WAITING.length*2;k++){
+    const i=rank-1+k,[dx,dy]=WAITING[i%WAITING.length],ring=1+Math.floor(i/WAITING.length)*0.5;
+    const p={x:pad.x+Math.round(dx*ring),y:pad.y+Math.round(dy*ring)},tile=packTile(p);
+    if(tile>=0&&tile<4096&&!structureGetByPackedTile(tile)&&mapGetLandscapeType(tile)!==LST.WALL)return p;
+  }
+  const [dx,dy]=WAITING[(rank-1)%WAITING.length];
+  return{x:pad.x+dx,y:pad.y+dy};
+}
+/** Без дела 2 с на месте — звено садится на землю (любую) и не тратит заряд; взлетает при цели или приказе. */
+function settleDrone(u:Unit,arrived:boolean):void{
+  const d=u.drone!;
+  if(!arrived){d.idleSince=undefined;d.landed=false;return;}
+  d.idleSince??=G.timerGame;
+  if(G.timerGame-d.idleSince>=120)d.landed=true;
 }
 
 /** One controllable wing represents three drones, with surviving members tied to hitpoints. */
@@ -120,24 +156,34 @@ export function tickDrone(u:Unit):boolean{
   const home=droneHome(u),powered=!!home&&G.houses[u.o.houseID].powerProduction>=G.houses[u.o.houseID].powerUsage;
   const homePos=clampDronePoint(u,{x:d.homePosition.x,y:d.homePosition.y+64});
   if(!home)d.phase='orphan';
-  else if(d.phase!=='dock')d.battery=Math.max(0,d.battery-.025*dt);
+  else if(d.phase!=='dock'&&!d.landed)d.battery=Math.max(0,d.battery-.025*dt);
   if(home&&d.battery<=0){unitDamage(u,u.o.hitpoints,0);return true;}
   const survivors=Math.max(1,Math.ceil(u.o.hitpoints/(unitInfo[COMBAT_DRONE].o.hitpoints/3)));
-  if(home&&(d.battery<DRONE_RETURN_BATTERY||u.o.hitpoints<unitInfo[COMBAT_DRONE].o.hitpoints*.3||!powered||u.actionID===ACTION.RETURN||d.members.slice(0,survivors).every(m=>m.grenades===0)))d.phase='return';
+  if(home&&(d.battery<DRONE_RETURN_BATTERY||u.o.hitpoints<unitInfo[COMBAT_DRONE].o.hitpoints*.3||!powered||u.actionID===ACTION.RETURN||d.members.slice(0,survivors).every(m=>m.grenades===0))){
+    if(d.phase!=='return'&&d.phase!=='dock'){d.queuedAt=G.timerGame;d.landed=false;}
+    d.phase='return';
+  }
   if(d.phase==='return'||d.phase==='dock'){
     u.targetAttack=0;u.targetMove=0;
+    const rank=home?dockRank(u):0;
+    if(rank>0&&d.phase!=='dock'){
+      // площадка занята: ждать своей очереди на земле рядом, не тратя заряд
+      d.landed=moveDrone(u,waitingSpot(d.homePosition,rank),dt);
+      return true;
+    }
+    d.landed=false;
     if(moveDrone(u,homePos,dt)){
       d.phase='dock';u.speed=0;
       if(powered){d.battery=Math.min(100,d.battery+.25*dt);u.o.hitpoints=Math.min(unitInfo[COMBAT_DRONE].o.hitpoints,u.o.hitpoints+.08*dt);}
       if(powered&&G.timerGame>=d.restockAt){for(const m of d.members)m.grenades=Math.min(5,m.grenades+1);d.restockAt=G.timerGame+30;}
-      if(d.battery>=99&&u.o.hitpoints>=unitInfo[COMBAT_DRONE].o.hitpoints&&powered&&d.members.every(m=>m.grenades===5)){d.phase='guard';u.actionID=ACTION.GUARD;d.guardPosition={...homePos};d.launchAfter=G.timerGame+60;}
+      if(d.battery>=99&&u.o.hitpoints>=unitInfo[COMBAT_DRONE].o.hitpoints&&powered&&d.members.every(m=>m.grenades===5)){d.phase='guard';u.actionID=ACTION.GUARD;d.guardPosition=clampDronePoint(u,waitingSpot(d.homePosition,1+u.o.index%WAITING.length));d.launchAfter=G.timerGame+60;}
     }
     return true;
   }
   if(G.timerGame<d.launchAfter)return true;
-  if(u.actionID===ACTION.STOP){u.targetAttack=0;u.targetMove=0;moveDrone(u,{...u.o.position},dt);return true;}
+  if(u.actionID===ACTION.STOP){u.targetAttack=0;u.targetMove=0;settleDrone(u,moveDrone(u,{...u.o.position},dt));return true;}
   if(u.actionID===ACTION.MOVE&&!u.patrolActive&&u.targetMove){
-    u.targetAttack=0;
+    u.targetAttack=0;d.landed=false;d.idleSince=undefined;
     if(moveDrone(u,indexGetTile(u.targetMove),dt)){d.guardPosition={...u.o.position};u.targetMove=0;u.currentDestination={x:0,y:0};u.actionID=ACTION.GUARD;}
     return true;
   }
@@ -148,7 +194,7 @@ export function tickDrone(u:Unit):boolean{
   }
   if(u.targetAttack){
     const position=indexGetTile(u.targetAttack);
-    d.phase=home?'attack':'orphan';
+    d.phase=home?'attack':'orphan';d.landed=false;d.idleSince=undefined;
     if(distance(u.o.position,position)>unitInfo[COMBAT_DRONE].fireDistance*256*.8)moveDrone(u,position,dt);
     else{
       moveDrone(u,{...u.o.position},dt);
@@ -170,7 +216,8 @@ export function tickDrone(u:Unit):boolean{
       goal=u.patrolToEnd?u.patrolEnd:u.patrolStart;
       if(distance(u.o.position,clampDronePoint(u,goal))<48)u.patrolToEnd=!u.patrolToEnd;
     }
-    moveDrone(u,goal,dt);
+    const arrived=moveDrone(u,goal,dt);
+    settleDrone(u,arrived&&!u.patrolActive);
   }
   return true;
   }finally{updateDroneMembers(u,dt);}

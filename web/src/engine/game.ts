@@ -17,7 +17,7 @@ import { objectGetByPackedTile, objectScriptVariable4Clear } from "./object.ts";
 import { loadEmc, scriptLoad } from "./script.ts";
 import { scriptFunctionsStructure, scriptFunctionsTeam, scriptFunctionsUnit, structureDeployProducedUnit } from "./scriptfns.ts";
 import { msg } from "./strings.ts";
-import {initializeDrone,clampDronePoint,droneTargetAllowed} from './advanced-units.ts';
+import {initializeDrone,clampDronePoint,droneTargetAllowed,droneCanLaunch} from './advanced-units.ts';
 import {
   gameLoopStructure, setUnitCreateWrapper, structureCancelBuild, structureActivateSpecial, structureBuildObject, structureCreate, structureFree,
   structureGetBuildable, structureGetByPackedTile, structureGetStructuresBuilt, structureIsUpgradable, structureIsValidBuildLocation, structurePlacementDetail, structurePlayerPlace,
@@ -490,7 +490,8 @@ export class Game {
     if(u.o.type===UNIT.COMBAT_DRONE){
       if(!u.drone)initializeDrone(u);
       if(action===ACTION.MOVE||action===ACTION.PATROL)packed=packTile(clampDronePoint(u,tileCenter(unpackTile(packed))));
-      if(u.drone&&action!==ACTION.RETURN&&u.drone.phase!=='dock')u.drone.phase='guard';
+      // приказ выпускает звено и с площадки, если заряда, гранат и прочности хватит на вылет
+      if(u.drone&&action!==ACTION.RETURN&&(u.drone.phase!=='dock'||droneCanLaunch(u))){u.drone.phase='guard';u.drone.launchAfter=0;u.drone.landed=false;u.drone.idleSince=undefined;}
     }
     if (action === ACTION.PATROL) {
       const actions = unitInfo[u.o.type].o.actionsPlayer;

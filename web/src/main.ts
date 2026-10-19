@@ -859,7 +859,8 @@ async function startGame(rom: DuneRom): Promise<void> {
   /** Рамка: выбрать все свои юниты внутри. */
   view.onBox = (r) => {
     if (paused) return;
-    const inside = world.units.filter((u) => u.house === world.player && !u.air && u.x >= r.x0 && u.x <= r.x1 && u.y >= r.y0 && u.y <= r.y1);
+    // летающих рамка не берёт, кроме звеньев дронов — ими управляют как наземными
+    const inside = world.units.filter((u) => u.house === world.player && (!u.air || u.type === UNIT.COMBAT_DRONE) && u.x >= r.x0 && u.x <= r.x1 && u.y >= r.y0 && u.y <= r.y1);
     if (!inside.length) return;
     selectUnits(inside);
     updateHud();

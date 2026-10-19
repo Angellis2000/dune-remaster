@@ -34,10 +34,13 @@ export function drawCustomVehicle(ctx:CanvasRenderingContext2D,u:Unit,tick:numbe
     const fallback=[[-5,-3.5],[5,-3.5],[0,5]];
     for(let i=0;i<count;i++){
       const member=state?.members[i],dx=member?(member.x-u.ref.o.position.x)/8:fallback[i][0],dy=member?(member.y-u.ref.o.position.y)/8:fallback[i][1];
-      const docked=state?.phase==='dock'||state?.phase==='guard'&&Math.hypot(u.ref.o.position.x-state.homePosition.x,u.ref.o.position.y-state.homePosition.y-64)<24,altitude=docked?.5:4;
+      const docked=!!state?.landed||state?.phase==='dock'||state?.phase==='guard'&&Math.hypot(u.ref.o.position.x-state.homePosition.x,u.ref.o.position.y-state.homePosition.y-64)<24,altitude=docked?.5:4;
       const x=u.x+dx,y=u.y+dy;
-      ctx.save();ctx.translate(x,y);ctx.rotate(u.orientation*Math.PI/128);
-      ctx.fillStyle=docked?'#00000025':'#00000032';ctx.beginPath();ctx.ellipse(1,1,3.7,2.4,0,0,TAU);ctx.fill();
+      ctx.save();ctx.translate(x,y);
+      // тень: смещение «от солнца» постоянное и растёт с высотой; поворачивается только её форма, а не точка
+      ctx.save();ctx.translate(.6+altitude*.35,.8+altitude*.55);ctx.rotate(u.orientation*Math.PI/128);
+      ctx.fillStyle=docked?'#00000030':'#00000028';ctx.beginPath();ctx.ellipse(0,0,docked?3.7:3.3,docked?2.4:2.1,0,0,TAU);ctx.fill();ctx.restore();
+      ctx.rotate(u.orientation*Math.PI/128);
       ctx.translate(0,-altitude);
       const bank=member?Math.max(-.1,Math.min(.1,member.vx*.012)):0;ctx.transform(1,bank,-bank*.5,1,0,0);
       ctx.drawImage(art[2],-3.9,-3.55,7.8,7.1);

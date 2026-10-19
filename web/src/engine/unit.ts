@@ -194,7 +194,8 @@ export function gameLoopUnit(): void {
     G.scriptCurrentUnit = u;
     G.scriptCurrentTeam = null;
     if (u.o.flags.isNotOnMap) continue;
-    unitPrioritizeBlockingWall(u);
+    // Стена на линии огня — препятствие: выстрел упирается в неё и разрушает её, цель юнита при этом не меняется
+    // (решение владельца). Перенацеливание на стену (unitPrioritizeBlockingWall) больше не вызывается.
     tickCarryallFlight(u);
     if(tickDrone(u))continue;
     tickLaser(u);
@@ -727,6 +728,7 @@ export function unitStartMovement(unit: Unit | null): boolean {
   return true;
 }
 
+/** Не вызывается: стены разрушаются естественно, как препятствие (см. gameLoopUnit). Оставлено для истории. */
 export function unitPrioritizeBlockingWall(unit:Unit):void {
   if(!unitInfo[unit.o.type].o.actionsPlayer.includes(ACTION.ATTACK)||unit.o.type===UNIT.SANDWORM)return;
   let saved=unit.blockedAttack;
