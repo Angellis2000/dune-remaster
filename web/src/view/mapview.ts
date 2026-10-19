@@ -25,6 +25,7 @@ import { VehicleTracks } from "../gfx/vehicle-tracks.ts";
 import type { InfantryArt } from "../gfx/infantry-art.ts";
 import {drawRefineryActivity} from '../gfx/refinery-activity.ts';
 import {drawBuildingActivity,drawBuildingNightLights} from '../gfx/building-activity.ts';
+import {drawStructureLife} from '../gfx/structure-life.ts';
 import {WorldAtmosphere,desertLight} from '../gfx/world-atmosphere.ts';
 import {drawFactoryActivity} from '../gfx/factory-activity.ts';
 import {drawAdvancedWeapons,drawDroneRadius} from '../gfx/advanced-unit-effects.ts';
@@ -525,6 +526,7 @@ export class MapView {
         else {
           const house=G.houses[st.house],powered=st.type===9||!house||house.powerProduction>=house.powerUsage;
           drawBuildingActivity(ctx,st,img,G.timerGame,powered);
+          drawStructureLife(ctx,st,G.timerGame,powered);
           drawFactoryActivity(ctx,st,this.vehicles,G.timerGame,powered);
           drawRefineryActivity(ctx,st,this.vehicles,G.timerGame);
         }
@@ -680,7 +682,7 @@ export class MapView {
         const x=(s.x*CELL_PX+img.ox+img.canvas.width/2)*z-ox;
         const y=(s.y*CELL_PX+img.oy+img.canvas.height/2)*z-oy;
         if(!map.inBounds(s.x,s.y)||(this.veiledIcon&&map.overlay[(s.y<<6)|s.x]===this.veiledIcon))continue;
-        drawStatusIcon(ctx,kind,x,y,14*z,G.timerGame,s.ref.o.index);continue;
+        drawStatusIcon(ctx,kind,x,y,18*z,G.timerGame,s.ref.o.index);continue;
       }
       ctx.drawImage(img.canvas, Math.round((s.x * CELL_PX + img.ox) * z) - ox, Math.round((s.y * CELL_PX + img.oy) * z) - oy, img.canvas.width * z, img.canvas.height * z);
     }

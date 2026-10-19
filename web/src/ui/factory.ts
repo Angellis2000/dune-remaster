@@ -94,6 +94,57 @@ const STARPORT_LIGHTS: Light[] = [
 ];
 const rnd = (min: number, max: number) => min + Math.floor(Math.random() * (max - min + 1));
 
+/**
+ * Огоньки оригинала на HD-корпусе (координаты окна 320×224 — места ламп на картинке корпуса).
+ * Кадры как в таблицах ROM: полоса $007FCC — две секции (0 — обе горят, 1 — левая тусклая, 2 — правая, 3 — обе),
+ * лампы $008048 (зелёная) и $008088 (красная) — 0 горит, 1 тускнеет.
+ */
+function drawConsoleLights(g: CanvasRenderingContext2D, [bar, green, red]: number[]): void {
+  const segment = (x0: number, x1: number, on: boolean) => {
+    g.save();
+    if (on) {
+      g.globalCompositeOperation = "lighter";
+      g.shadowColor = "#ff3b28"; g.shadowBlur = 4;
+      g.fillStyle = "rgba(255,70,45,.55)"; g.fillRect(x0, 12.9, x1 - x0, 2.2);
+      g.fillStyle = "rgba(255,190,160,.45)"; g.fillRect(x0 + 1, 13.6, x1 - x0 - 2, .6);
+    } else {
+      g.fillStyle = "rgba(20,0,0,.55)"; g.fillRect(x0, 12.8, x1 - x0, 2.4);
+    }
+    g.restore();
+  };
+  segment(126, 152.5, bar === 0 || bar === 2);
+  segment(158, 181, bar === 0 || bar === 1);
+  const lamp = (x: number, y: number, r: number, rgb: string, on: boolean) => {
+    g.save();
+    if (on) {
+      g.globalCompositeOperation = "lighter";
+      const glow = g.createRadialGradient(x, y, 0, x, y, r * 3.2);
+      glow.addColorStop(0, `rgba(${rgb},.6)`); glow.addColorStop(1, `rgba(${rgb},0)`);
+      g.fillStyle = glow; g.fillRect(x - r * 3.2, y - r * 3.2, r * 6.4, r * 6.4);
+      g.fillStyle = "rgba(255,255,255,.55)"; g.beginPath(); g.arc(x - r * .3, y - r * .3, r * .45, 0, Math.PI * 2); g.fill();
+    } else {
+      g.fillStyle = "rgba(0,0,0,.5)"; g.beginPath(); g.arc(x, y, r * 1.05, 0, Math.PI * 2); g.fill();
+    }
+    g.restore();
+  };
+  if (green >= 0) lamp(181.5, 24.2, 2, "90,255,120", green === 0);
+  if (red >= 0) lamp(276.6, 58.3, 2.1, "255,70,50", red === 0);
+}
+
+/** Экранчик слева вверху у окна здания: по кругу ходит луч (у космопорта там точка по пути $008B0C). */
+function drawConsoleScope(g: CanvasRenderingContext2D, frame: number): void {
+  const cx = 96, cy = 31.5, r = 9.5, a = frame / 40;
+  g.save();
+  g.beginPath(); g.ellipse(cx, cy, r * 1.25, r * .75, 0, 0, Math.PI * 2); g.clip();
+  g.globalCompositeOperation = "lighter";
+  for (let i = 0; i < 10; i++) {
+    const b = a - i * .07;
+    g.strokeStyle = `rgba(110,255,120,${.5 * (1 - i / 10)})`; g.lineWidth = .7;
+    g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(b) * r * 1.3, cy + Math.sin(b) * r * .8); g.stroke();
+  }
+  g.restore();
+}
+
 /** Путь точки на экранчике космопорта ($008B0C): $B4 пар (y, x), центр спрайта; описание $04A70C — смещение −4. */
 const BLIP_PATH = 0x008b0c;
 const BLIP_LAST = 0xb3;
@@ -350,10 +401,14 @@ export class FactoryWindow {
     const hardware=gfx.art.get('productionConsole');
     if(hardware){
       g.drawImage(hardware,0,0,SCREEN_W,SCREEN_H);
-      for(const [x,y,color]of [[181,24,'#70ff80'],[277,58,'#ff5b35']]as const){
-        g.save();g.globalAlpha=.1+.12*Math.sin(this.frame/22)**2;g.fillStyle=color;g.shadowColor=color;g.shadowBlur=2;
-        g.beginPath();g.arc(x,y,2,0,Math.PI*2);g.fill();g.restore();
-      }
+      // огоньки рамки оригинала ($007F90): те же таблица кадров и случайные паузы, но на лампах HD-корпуса
+      const frames=FACTORY_LIGHTS.map((l,i)=>{
+        const st=(this.lights[i]??={timer:0,frame:-1});
+        if(--st.timer<0){st.timer=rnd(l.min,l.max);st.frame=rnd(0,l.frames-1);}
+        return st.frame;
+      });
+      drawConsoleLights(g,frames);
+      if(!this.starport)drawConsoleScope(g,this.frame);
     }else g.drawImage(this.starport?gfx.starportBackground():gfx.factoryBackground(),0,0,SCREEN_W,SCREEN_H);
     const lights=this.starport?STARPORT_LIGHTS:FACTORY_LIGHTS;
     if(!hardware)lights.forEach((l,i)=>{
@@ -412,7 +467,7 @@ export class FactoryWindow {
     const texts=['Стоимость',kind==='unit'?'Урон':'Энергия','Прочность'];
     values.forEach((value,i)=>{
       const slot=HD_STAT_SLOTS[i];
-      if(i===1&&kind==='structure')drawStatusIcon(g,'power',slot.iconX,slot.iconY,10,this.frame);
+      if(i===1&&kind==='structure')drawStatusIcon(g,'energy',slot.iconX,slot.iconY,10,this.frame);
       else drawConsoleSymbol(g,i===0?'credits':i===1?'damage':'armour',slot.iconX,slot.iconY,11);
       menuText(g,texts[i],194,slot.valueY,{size:3.6,baseline:'middle',maxWidth:31,color:'#d4c9b2',weight:'600'});
       menuText(g,String(value),NUMBERS_RIGHT,slot.valueY,{size:7.2,baseline:'middle',align:'right',maxWidth:26,color:'#fff0c3',weight:'700'});
