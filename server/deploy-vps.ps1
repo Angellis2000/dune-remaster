@@ -1,4 +1,4 @@
-# Выкладка сервера сетевой игры Dune на общий VPS такси (hoster.kz), по правилам docs/SHARED_SERVER_MONACO.md
+﻿# Выкладка сервера сетевой игры Dune на общий VPS такси (hoster.kz), по правилам docs/SHARED_SERVER_MONACO.md
 # проекта такси: свой compose-проект /opt/dune в сети vector_default, свой блок сайта в Caddyfile такси.
 # Доступ к VPS — те же локальные файлы, что у deploy-hoster.ps1 такси (ключ, known_hosts, адрес).
 param(
