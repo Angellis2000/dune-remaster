@@ -703,7 +703,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   /** Готовый заказ строительного двора выбирается по зданию или его значку «ОК». */
   const readyYardAt = (wx: number, wy: number, includeBuilding = false): WorldStructure | null => {
     const ready = (s: WorldStructure | null | undefined) =>
-      s && s.type === STRUCTURE.CONSTRUCTION_YARD && s.house === world.player && world.game.production(s.ref)?.ready ? s : null;
+      s && s.type === STRUCTURE.CONSTRUCTION_YARD && s.house === world.player && (world.game.readyBuildings(s.ref).length>0||world.game.production(s.ref)?.ready) ? s : null;
     if (includeBuilding) {
       const s = ready(world.structureAtCell(Math.floor(wx / CELL_PX), Math.floor(wy / CELL_PX)));
       if (s) return s;
@@ -729,7 +729,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       if (world.game.place(packed)) {
         view.placement = null;
         const source = sourceYard?.ref;
-        queuedPlacementYard = source && (source.prepaidBuildingCost !== undefined || (source.buildingQueue?.length ?? 0) > 0) ? source : null;
+        queuedPlacementYard = source && ((source.readyBuildings?.length??0)>0||source.prepaidBuildingCost !== undefined || (source.buildingQueue?.length ?? 0) > 0) ? source : null;
       }
       world.sync();
       updateHud();
@@ -890,12 +890,11 @@ async function startGame(rom: DuneRom): Promise<void> {
     if (!paused || netActive) {
       if (!netActive) world.step();
       world.sync();
-      const readyYard = completedConstructionYard;
+      const readyYard = completedConstructionYard ?? (queuedPlacementYard?.readyBuildings?.length?queuedPlacementYard:null);
       completedConstructionYard = null;
-      const queuedPlacementReady = readyYard !== null && queuedPlacementYard === readyYard && readyYard.prepaidBuildingCost !== undefined;
-      if (readyYard && queuedPlacementYard === readyYard && !queuedPlacementReady) queuedPlacementYard = null;
+      const queuedPlacementReady = readyYard !== null && queuedPlacementYard === readyYard && (readyYard.readyBuildings?.length??0)>0;
       const hoveredReadyYard = readyYard !== null && readyYardAt(view.cursorX, view.cursorY, true)?.ref === readyYard;
-      if (readyYard && G.selectionType !== SELECTION.PLACE && (queuedPlacementReady || hoveredReadyYard)) {
+      if (readyYard && G.selectionType !== SELECTION.PLACE && (queuedPlacementReady || hoveredReadyYard || view.selectedStructure?.ref===readyYard)) {
         const yard = world.structures.find((s) => s.ref === readyYard);
         if (yard && world.game.placeIt(readyYard)) {
           selectStructure(yard, false);
@@ -921,7 +920,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       if (s.type === STRUCTURE.CONSTRUCTION_YARD) {
         // Keep the completed order in its yard until the player requests placement.
         const prod = world.game.production(s.ref);
-        const ok = !!prod?.ready;
+        const ok = world.game.readyBuildings(s.ref).length>0||!!prod?.ready;
         if (ok) icon(s, fromTable(ROM.statusIcons.ok, 3), 6);
         else if (s.ref.o.flags.repairing) icon(s, fromTable(ROM.statusIcons.repair, si.layout), 7);
       } else if (s.type === STRUCTURE.PALACE) {

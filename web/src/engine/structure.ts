@@ -26,6 +26,8 @@ import {
 import { unitCreate, unitGetByPackedTile, unitGetHouseID, unitLaunchHouseMissile, unitRemove, unitSetAction } from "./unit.ts";
 
 const ticks = { degrade: 0, structure: 0, script: 0, palace: 0 };
+let releaseProducedUnit: (s: Structure, u: Unit) => boolean = () => false;
+export function setStructureReleaseUnit(fn: typeof releaseProducedUnit): void { releaseProducedUnit = fn; }
 
 export function structureResetTimers(): void {
   for (const k of Object.keys(ticks) as (keyof typeof ticks)[]) ticks[k] = 0;
@@ -208,6 +210,24 @@ export function gameLoopStructure(): void {
       }
     }
 
+    // Finished orders wait separately from the production slot. Deployment or
+    // manual placement must never prevent the next prepaid order from starting.
+    if (isHuman(s.o.houseID) && s.state === STATE.READY && s.countDown === 0 && s.o.linkedID !== 0xff) {
+      if (s.o.type === STRUCTURE.CONSTRUCTION_YARD) {
+        const built = G.structures[s.o.linkedID];
+        (s.readyBuildings ??= []).push({ type: built.o.type, cost: s.prepaidBuildingCost ?? s.spent });
+        structureFree(built);
+        s.prepaidBuildingCost = undefined;
+        s.o.linkedID = 0xff;
+        structureSetState(s, STATE.IDLE);
+      } else if (structureCanQueueUnits(s)) {
+        (s.readyUnits ??= []).push(s.o.linkedID);
+        s.prepaidUnitCost = undefined;
+        s.o.linkedID = 0xff;
+        structureSetState(s, STATE.IDLE);
+      }
+    }
+    if (s.readyUnits?.length && releaseProducedUnit(s, G.units[s.readyUnits[0]])) s.readyUnits.shift();
     structureStartNextUnit(s);
     if(s.o.type===STRUCTURE.CONSTRUCTION_YARD)structureStartNextBuilding(s);
     if (tickScript) {
@@ -237,7 +257,7 @@ export function structureCreate(index: number, typeID: number, houseID: number, 
   s.o.flags.isNotOnMap = true;
   s.o.position = { x: 0, y: 0 };
   s.o.linkedID = 0xff;
-  s.unitQueue=[];s.buildingQueue=[];s.prepaidUnitCost=undefined;s.prepaidBuildingCost=undefined;
+  s.unitQueue=[];s.buildingQueue=[];s.readyBuildings=[];s.readyUnits=[];s.prepaidUnitCost=undefined;s.prepaidBuildingCost=undefined;
   s.state = STATE.JUSTBUILT;
   if (typeID === STRUCTURE.TURRET || typeID === STRUCTURE.ROCKET_TURRET) s.rotationSpriteDiff = G.iconGroups[si.iconGroup][1];
   s.o.hitpoints = si.o.hitpoints;
@@ -624,10 +644,12 @@ export function structureActivateSpecial(s: Structure | null): void {
         const orientation = randomRange(0, 3);
         const unitType = orientation === 1 ? UNIT.TROOPER : UNIT.TROOPERS;
         G.validateStrictIfZero++;
-        const u = unitCreate(INDEX_INVALID, unitType, HOUSE.FREMEN, position, orientation);
+        // Reinforcements belong to the summoning player. A separate Fremen
+        // house cannot be commanded and may belong to an opponent online.
+        const u = unitCreate(INDEX_INVALID, unitType, s.o.houseID, position, orientation);
         G.validateStrictIfZero--;
         if (!u) continue;
-        unitSetAction(u, ACTION.HUNT);
+        unitSetAction(u, isHuman(s.o.houseID) ? ACTION.GUARD : ACTION.HUNT);
       }
       s.countDown = houseInfo[s.o.houseID].specialCountDown;
       s.specialWait = 180; // $02301C
@@ -643,7 +665,7 @@ export function structureActivateSpecial(s: Structure | null): void {
       const u = unitCreate(INDEX_INVALID, UNIT.SABOTEUR, s.o.houseID, unpackTile(position), random256());
       G.validateStrictIfZero--;
       if (!u) return;
-      unitSetAction(u, ACTION.SABOTAGE);
+      unitSetAction(u, isHuman(s.o.houseID) ? ACTION.GUARD : ACTION.SABOTAGE);
       s.countDown = houseInfo[s.o.houseID].specialCountDown;
       s.specialWait = 240; // $0230B4
       break;
@@ -1023,7 +1045,7 @@ export function structureCanQueueUnits(s:Structure):boolean{
 export function structureEnqueueUnit(s:Structure,type:number):boolean{
   if(!s.o.flags.allocated||!structureCanQueueUnits(s)||type<0||type>=UNIT.MAX||!(structureGetBuildable(s)&(1<<type)))return false;
   const queue=s.unitQueue??=[],cost=unitInfo[type].o.buildCredits,h=G.houses[s.o.houseID];
-  if(queue.length+(s.o.linkedID!==0xff?1:0)>=20||h.credits<cost)return false;
+  if(queue.length+(s.readyUnits?.length??0)+(s.o.linkedID!==0xff?1:0)>=20||h.credits<cost)return false;
   h.credits-=cost;queue.push({type,cost});s.unitQueue=queue;structureStartNextUnit(s);return true;
 }
 function structureStartNextUnit(s:Structure):void{
@@ -1038,7 +1060,7 @@ export function structureCancelQueuedUnit(s:Structure,index:number):boolean{
   const [item]=s.unitQueue.splice(index,1);G.houses[s.o.houseID].credits+=item.cost;return true;
 }
 
-/** Заказать здание: полная цена резервируется сразу, следующие позиции ждут размещения предыдущего. */
+/** Full price is reserved immediately; completed buildings wait outside production. */
 export function structureEnqueueBuilding(s:Structure,type:number):boolean{
   if(!s.o.flags.allocated||s.o.type!==STRUCTURE.CONSTRUCTION_YARD||type<0||type>=STRUCTURE.MAX)return false;
   const queue=s.buildingQueue??[],active=s.o.linkedID!==0xff;
@@ -1048,10 +1070,10 @@ export function structureEnqueueBuilding(s:Structure,type:number):boolean{
   // включая стройку и очереди у других строительных дворов.
   if(type===STRUCTURE.PALACE||type===STRUCTURE.STARPORT){
     const reserved=G.structures.some(st=>st.o.flags.used&&st.o.houseID===s.o.houseID&&st.o.type===type)||
-      G.structures.some(yard=>yard.o.flags.used&&yard.o.houseID===s.o.houseID&&yard.o.type===STRUCTURE.CONSTRUCTION_YARD&&yard.buildingQueue?.some(item=>item.type===type));
+      G.structures.some(yard=>yard.o.flags.used&&yard.o.houseID===s.o.houseID&&yard.o.type===STRUCTURE.CONSTRUCTION_YARD&&(yard.buildingQueue?.some(item=>item.type===type)||yard.readyBuildings?.some(item=>item.type===type)));
     if(reserved||queue.some(item=>item.type===type))return false;
   }
-  if(queue.length+(active?1:0)>=20)return false;
+  if(queue.length+(s.readyBuildings?.length??0)+(active?1:0)>=20)return false;
   const cost=structureInfo[type].o.buildCredits,h=G.houses[s.o.houseID];
   if(h.credits<cost)return false;
   h.credits-=cost;queue.push({type,cost});s.buildingQueue=queue;
@@ -1060,7 +1082,7 @@ export function structureEnqueueBuilding(s:Structure,type:number):boolean{
 }
 
 export function structureStartNextBuilding(s:Structure):void{
-  if(!s.o.flags.allocated||s.o.type!==STRUCTURE.CONSTRUCTION_YARD||s.o.linkedID!==0xff||G.structureActiveType!==0xffff)return;
+  if(!s.o.flags.allocated||s.o.type!==STRUCTURE.CONSTRUCTION_YARD||s.o.linkedID!==0xff)return;
   if(s.o.flags.onHold||s.o.flags.repairing)return;
   const queue=s.buildingQueue??[],item=queue[0];
   if(!item){s.prepaidBuildingCost=undefined;return;}
@@ -1370,9 +1392,8 @@ function structurePlayerPlaceAs(position: number, houseID: number): boolean {
   G.structureActiveType = 0xffff;
   G.structureActive = null;
   if(cy){
-    cy.prepaidBuildingCost=undefined;
     if(cy.buildingQueue?.length)structureStartNextBuilding(cy);
-    else if((structureGetBuildable(cy)&(1<<cy.objectType))===0)structureBuildObject(cy,0xfffe);
+    else if(cy.o.linkedID===0xff&&(structureGetBuildable(cy)&(1<<cy.objectType))===0)structureBuildObject(cy,0xfffe);
   }
   houseUpdateRadarState(h);
   if (local && h.powerProduction < h.powerUsage && (h.structuresBuilt & (1 << STRUCTURE.OUTPOST)) !== 0) G.onMessage(msg.notEnoughPowerForRadar, 3);

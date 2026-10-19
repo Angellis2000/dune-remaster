@@ -10,7 +10,7 @@ import { actionInfo, houseInfo, unitInfo } from "../engine/tables.ts";
 import { unitGetHouseID } from "../engine/unit.ts";
 
 const OVERRIDDEN = [
-  "order", "unitCommand", "activateSelf", "targetClick", "cancelTarget", "build", "starportBuy", "cancelQueuedUnit", "cancelQueuedBuilding",
+  "order", "unitCommand", "activateSelf", "targetClick", "cancelTarget", "build", "starportBuy", "cancelQueuedUnit", "cancelQueuedBuilding", "cancelReadyBuilding",
   "placeIt", "canPlaceAt", "placementDetail", "place", "cancelPlace", "toggleRepair", "upgrade", "holdOrResume", "cancelBuild", "stopAll",
   "startRepair", "palaceSpecial",
 ] as const;
@@ -93,11 +93,17 @@ export function installNetControls(game: Game, send: (c: NetCommand) => void, ho
       send({ k: "unqueueB", s: s.o.index, i: index });
       return true;
     },
-    placeIt(cy: Structure): boolean {
-      if (!own(cy) || cy.o.type !== STRUCTURE.CONSTRUCTION_YARD || cy.o.linkedID === 0xff || cy.countDown !== 0) return false;
+    cancelReadyBuilding(s:Structure,type:number):boolean{
+      if(!own(s)||!game.readyBuildings(s).some(item=>item.type===type))return false;
+      send({k:"unreadyB",s:s.o.index,t:type});return true;
+    },
+    placeIt(cy: Structure, _announce=true, type?:number): boolean {
+      if (!own(cy) || cy.o.type !== STRUCTURE.CONSTRUCTION_YARD) return false;
+      const ready=game.readyBuildings(cy).find(item=>type===undefined||item.type===type);
+      if(!ready&&(cy.o.linkedID===0xff||cy.countDown!==0||(type!==undefined&&cy.objectType!==type)))return false;
       placingYard = cy.o.index;
       G.structureActive = null;
-      G.structureActiveType = cy.objectType;
+      G.structureActiveType = ready?.type??cy.objectType;
       G.structureActivePosition = packTile(cy.o.position);
       G.selectionType = SELECTION.PLACE;
       return true;
@@ -116,7 +122,7 @@ export function installNetControls(game: Game, send: (c: NetCommand) => void, ho
         G.onSound(47);
         return false;
       }
-      send({ k: "place", s: placingYard, p: packed });
+      send({ k: "place", s: placingYard, p: packed, t:G.structureActiveType });
       placingYard = -1;
       G.structureActiveType = 0xffff;
       G.structureActive = null;

@@ -220,6 +220,8 @@ export interface Structure {
   specialWait: number;
   unitQueue?: {type:number;cost:number}[];
   buildingQueue?: {type:number;cost:number}[];
+  readyBuildings?: {type:number;cost:number}[];
+  readyUnits?: number[];
   prepaidUnitCost?: number;
   prepaidBuildingCost?: number;
 }
@@ -738,7 +740,7 @@ function resetUnit(u: Unit): void {
 }
 
 function resetStructure(s: Structure): void {
-  s.unitQueue=[];s.buildingQueue=[];s.prepaidUnitCost=undefined;s.prepaidBuildingCost=undefined;
+  s.unitQueue=[];s.buildingQueue=[];s.readyBuildings=[];s.readyUnits=[];s.prepaidUnitCost=undefined;s.prepaidBuildingCost=undefined;
   const n = newStructure();
   Object.assign(s.o, n.o);
   const { o: _o, ...rest } = n;
@@ -805,6 +807,8 @@ export function structureAllocate(index: number, type: number): Structure | null
 }
 
 export function structureFree(s: Structure): void {
+  s.readyBuildings = [];
+  for (const index of s.readyUnits?.splice(0) ?? []) unitFree(G.units[index]);
   // Pending orders have not been manufactured; return their reserved funds once.
   if(s.unitQueue?.length){G.houses[s.o.houseID].credits+=s.unitQueue.reduce((sum,item)=>sum+item.cost,0);s.unitQueue=[];}
   if(s.buildingQueue?.length){G.houses[s.o.houseID].credits+=s.buildingQueue.reduce((sum,item)=>sum+item.cost,0);s.buildingQueue=[];}

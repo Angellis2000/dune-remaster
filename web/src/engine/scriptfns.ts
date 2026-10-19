@@ -284,7 +284,8 @@ const unitPickup: ScriptFunction = (script) => {
   switch (indexGetType(u.targetMove)) {
     case IT.STRUCTURE: {
       const s = indexGetStructure(u.targetMove)!;
-      if (s.state !== STATE.READY) {
+      const stored = (s.readyUnits?.length ?? 0) > 0;
+      if (!stored && (s.state !== STATE.READY || s.o.linkedID === 0xff)) {
         objectScriptVariable4Clear(u.o);
         u.targetMove = 0;
         return 0;
@@ -292,11 +293,11 @@ const unitPickup: ScriptFunction = (script) => {
       u.o.flags.inTransport = true;
       objectScriptVariable4Clear(u.o);
       u.targetMove = 0;
-      const u2 = G.units[s.o.linkedID];
+      const u2 = G.units[stored ? s.readyUnits!.shift()! : s.o.linkedID];
       u.o.linkedID = u2.o.index & 0xff;
-      s.o.linkedID = u2.o.linkedID;
+      if (!stored) s.o.linkedID = u2.o.linkedID;
       u2.o.linkedID = 0xff;
-      if (s.o.linkedID === 0xff) structureSetState(s, STATE.IDLE);
+      if (!stored && s.o.linkedID === 0xff) structureSetState(s, STATE.IDLE);
       if (u2.targetLast.x !== 0 || u2.targetLast.y !== 0) {
         u.targetMove = indexEncode(packTile(u2.targetLast), IT.TILE);
       } else if (u2.o.type === UNIT.HARVESTER && !isHuman(unitGetHouseID(u2))) {
@@ -1247,22 +1248,25 @@ function structureGroundExit(s:Structure,u:Unit,checkForSpice:boolean):number{
   return structureFindFreePosition(s,checkForSpice);
 }
 
-const structureUnknown0C5A: ScriptFunction = () => {
-  const s = curS();
-  if (s.o.linkedID === 0xff) return 0;
-  const u = G.units[s.o.linkedID];
+export function structureDeployProducedUnit(s: Structure, u: Unit, stored = true): number {
   if (unitInfo[u.o.type].movementType === MOVEMENT.WINGER && unitSetPosition(u, s.o.position)) {
     if(u.o.type===UNIT.COMBAT_DRONE)initializeDrone(u,s);
-    s.o.linkedID = u.o.linkedID;
+    if (!stored) s.o.linkedID = u.o.linkedID;
     u.o.linkedID = 0xff;
-    if (s.o.linkedID === 0xff) structureSetState(s, STATE.IDLE);
-    objectScriptVariable4Clear(s.o);
+    if (!stored && s.o.linkedID === 0xff) structureSetState(s, STATE.IDLE);
+    if (!stored) objectScriptVariable4Clear(s.o);
     // MD $0233c4: готовый юнит игрока — голос 1 ("Unit ready", GEMS seq 64)
     if (isLocal(s.o.houseID)) G.onFeedback(1);
     return 1;
   }
   const position = structureGroundExit(s,u,u.o.type===UNIT.HARVESTER);
-  if (position === 0) return 0;
+  if (position === 0) {
+    if(stored&&s.o.script.variables[4]===0){
+      const carryall=unitCallUnitByType(UNIT.CARRYALL,s.o.houseID,indexEncode(s.o.index,IT.STRUCTURE),true);
+      if(carryall)objectScriptVariable4Set(s.o,indexEncode(carryall.o.index,IT.UNIT));
+    }
+    return 0;
+  }
   u.o.seenByHouses |= s.o.seenByHouses;
   const t = tileCenter(unpackTile(position));
   if (!unitSetPosition(u, t)) return 0;
@@ -1276,18 +1280,23 @@ const structureUnknown0C5A: ScriptFunction = () => {
       unitSetDestination(u,indexEncode(field,IT.TILE));
     }
   }
-  s.o.linkedID = u.o.linkedID;
+  if (!stored) s.o.linkedID = u.o.linkedID;
   u.o.linkedID = 0xff;
   unitSetOrientation(u, tileGetDirection(s.o.position, u.o.position) & 0xe0, true, 0);
   unitSetOrientation(u, u.orientation[0].current, true, 1);
   if (isLocal(u.o.houseID) && u.o.type === UNIT.HARVESTER) G.onMessage(msg.searchSpice, 1);
-  if (s.o.linkedID === 0xff) structureSetState(s, STATE.IDLE);
+  if (!stored && s.o.linkedID === 0xff) structureSetState(s, STATE.IDLE);
   objectScriptVariable4Clear(s.o);
   if (!isLocal(s.o.houseID)) return 1;
   if (s.o.type === STRUCTURE.REPAIR) return 1;
   // MD $0233c4: готовый юнит игрока — голос 1 ("Unit ready", GEMS seq 64)
   G.onFeedback(1);
   return 1;
+}
+
+const structureUnknown0C5A: ScriptFunction = () => {
+  const s = curS();
+  return s.o.linkedID === 0xff ? 0 : structureDeployProducedUnit(s, G.units[s.o.linkedID], false);
 };
 
 const structureFindTargetUnit: ScriptFunction = (script) => {

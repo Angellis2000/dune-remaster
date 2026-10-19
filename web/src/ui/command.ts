@@ -321,13 +321,15 @@ export class CommandPanel {
       // список заказов стоит на месте (как сетка иконок в окне оригинала): то, что строится,
       // показывает ход стройки; пауза и отмена — ниже, чтобы повторный щелчок не попадал в них
       const options=game.buildOptions(s);
+      if(isYard)for(const item of game.readyBuildings(s))if(!options.some(opt=>opt.type===item.type))options.push({type:item.type,available:1,cost:item.cost,time:0});
       if(isYard&&prod&&!options.some(opt=>opt.type===prod.type))options.push({type:prod.type,available:1,cost:structureInfo[prod.type]?.o.buildCredits??0,time:structureInfo[prod.type]?.o.buildTime??0});
-      options.sort((a,b)=>structureInfo[b.type].o.sortPriority-structureInfo[a.type].o.sortPriority);
+      options.sort((a,b)=>(isYard?structureInfo:unitInfo)[b.type].o.sortPriority-(isYard?structureInfo:unitInfo)[a.type].o.sortPriority);
       for (const opt of options) {
-        const building = !!prod && prod.type === opt.type;
+        const building = !!prod && !prod.ready && prod.type === opt.type;
+        const ready = isYard?game.readyBuildings(s).filter(item=>item.type===opt.type).length:game.readyUnits(s).filter(unit=>unit.o.type===opt.type).length;
         const orders=isYard?game.buildingQueue(s):game.unitQueue(s);
         const queued=orders.filter(item=>item.type===opt.type).length;
-        const quantity=queued+(building?1:0);
+        const quantity=queued+ready+(building?1:0);
         const uniqueStructure=isYard&&(opt.type===STRUCTURE.PALACE||opt.type===STRUCTURE.STARPORT);
         const uniqueAllocated=uniqueStructure&&G.structures.some(st=>st.o.flags.used&&st.o.houseID===s.o.houseID&&st.o.type===opt.type);
         const uniqueQueuedElsewhere=uniqueStructure&&G.structures.some(yard=>yard!==s&&yard.o.flags.used&&yard.o.houseID===s.o.houseID&&yard.o.type===STRUCTURE.CONSTRUCTION_YARD&&yard.buildingQueue?.some(item=>item.type===opt.type));
@@ -338,21 +340,21 @@ export class CommandPanel {
             if(isYard)game.cancelQueuedBuilding(s,i);else game.cancelQueuedUnit(s,i);
             this.done();return;
           }
-        }:undefined;
-        const yardNote=isYard
+        }:isYard&&ready?()=>{game.cancelReadyBuilding(s,opt.type);this.done();}:building?()=>{game.cancelBuild(s);this.done();}:undefined;
+        const yardNote=isYard&&ready?`готово ${ready}${building?` · ${Math.floor((prod?.progress??0)*100)}%`:''}${queued?` · очередь ${queued}`:''}`:isYard
           ?building?(prod?.ready?`готово${queued?` · ×${quantity}`:''}`:prod?.onHold?`пауза ${Math.floor((prod?.progress??0)*100)}%${queued?` · ×${quantity}`:''}`:`${Math.floor((prod?.progress??0)*100)}%${quantity?` · ×${quantity}`:''}`)
             :`${opt.cost}${queued?` · ×${quantity} в очереди`:''}`
           :`${opt.cost} · +1${building?' · '+Math.floor((prod?.progress??0)*100)+'%':''}${quantity?` · ×${quantity}`:''}`;
         this.items.push({
           label: nameOf(opt.type),
-          note: opt.available < 0 ? "после улучшения" : yardNote,
+          note: opt.available < 0&&!ready ? "после улучшения" : yardNote,
           picture: this.picture(isYard ? "structure" : "unit", opt.type),
-          disabled: opt.available < 0||(!isYard&&h.credits<opt.cost&&quantity===0),
-          active: building,
+          disabled: opt.available < 0&&!ready||(!isYard&&h.credits<opt.cost&&quantity===0),
+          active: building||ready>0,
           quantity:quantity||undefined,
           cancel:cancelQueued,
           run: () => {
-            if(building&&isYard&&prod.ready&&game.placeIt(s)){this.focused=false;this.done();return;}
+            if(isYard&&ready&&game.placeIt(s,true,opt.type)){this.focused=false;this.done();return;}
             if(uniqueStructure&&(queued>0||uniqueBlocked))return;
             if(!game.build(s,opt.type)){this.host.sfx?.(0x2f);return;}
             this.done();

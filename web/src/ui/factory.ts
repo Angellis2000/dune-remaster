@@ -189,6 +189,10 @@ export class FactoryWindow {
       return;
     }
     const orders: Order[] = s && structureInfo[s.o.type].o.flags.factory ? this.host.game().buildOptions(s) : [];
+    if(s&&s.o.type===STRUCTURE.CONSTRUCTION_YARD)for(const item of this.host.game().readyBuildings(s)){
+      const order=orders.find(order=>order.type===item.type);
+      if(order)order.available=1;else orders.push({type:item.type,available:1,cost:item.cost});
+    }
     // в окне оригинала порядок обратный правому меню: по возрастанию приоритета (плиты, затем ветряк)
     this.orders = orders.reverse();
     // улучшение сортируется с приоритетом $7F ($028E44) — последним
@@ -277,6 +281,9 @@ export class FactoryWindow {
     // $0288BC: хайтек не заказывает авиацию, если для неё нет места ($FFC728), — звук ошибки 0x2F
     if (s.o.type === STRUCTURE.HIGH_TECH && (order.type === UNIT.CARRYALL || order.type === UNIT.ORNITHOPTER) && !unitAirSlotFree()) return fail();
     const prod = game.production(s);
+    if(!this.units&&game.readyBuildings(s).some(item=>item.type===order.type)&&game.placeIt(s,true,order.type)){
+      this.close();this.host.placing();return;
+    }
     if(s.o.type!==STRUCTURE.CONSTRUCTION_YARD||(prod&&prod.type===order.type))ok();
     if (prod && prod.type === order.type) {
       // готовое здание — сразу постановка; заказ в работе — просто назад на карту
@@ -314,9 +321,10 @@ export class FactoryWindow {
 
   private removeQueued():void{
     const s=this.s,order=this.orders[this.cursor];if(!s||!order||order.type<0)return;
-    const game=this.host.game(),queue=game.unitQueue(s);let index=-1;
+    const game=this.host.game(),queue=s.o.type===STRUCTURE.CONSTRUCTION_YARD?game.buildingQueue(s):game.unitQueue(s);let index=-1;
     for(let i=queue.length-1;i>=0;i--)if(queue[i].type===order.type){index=i;break;}
-    if(index>=0)game.cancelQueuedUnit(s,index);
+    if(index>=0){if(s.o.type===STRUCTURE.CONSTRUCTION_YARD)game.cancelQueuedBuilding(s,index);else game.cancelQueuedUnit(s,index);}
+    else if(game.readyBuildings(s).some(item=>item.type===order.type))game.cancelReadyBuilding(s,order.type);
     else if(game.production(s)?.type===order.type)game.cancelBuild(s);
     else return;
     this.host.sfx?.(0x26);this.draw();
@@ -381,7 +389,13 @@ export class FactoryWindow {
       g.strokeStyle=this.cursor===i?'#ffe082':'#899398';g.lineWidth=this.cursor===i?1:.35;g.strokeRect(x+1.5,y+1.5,CELL_W-3,HD_ROW_H-3);
       if(o.available<0){g.fillStyle='#081015a8';g.fillRect(x+1,y+1,CELL_W-2,HD_ROW_H-2);}
       if(prod&&prod.type===o.type){g.fillStyle=prod.ready?'#b9e5a0':prod.onHold?'#efad52':'#f2d067';g.fillRect(x+2,y+HD_ROW_H-2,(CELL_W-4)*prod.progress,1);}
-      if(game.canQueueUnits(s)){const count=game.unitQueue(s).filter(item=>item.type===o.type).length+(prod?.type===o.type?1:0);if(count){g.fillStyle='#111820ed';g.fillRect(x+20,y+2,10,7);menuText(g,String(count),x+25,y+5.5,{size:4.4,align:'center',baseline:'middle',color:'#ffe082'});}}
+      if(game.canQueueUnits(s)||s.o.type===STRUCTURE.CONSTRUCTION_YARD){
+        const yard=s.o.type===STRUCTURE.CONSTRUCTION_YARD;
+        const queued=(yard?game.buildingQueue(s):game.unitQueue(s)).filter(item=>item.type===o.type).length;
+        const ready=yard?game.readyBuildings(s).filter(item=>item.type===o.type).length:game.readyUnits(s).filter(unit=>unit.o.type===o.type).length;
+        const count=queued+ready+(prod?.type===o.type&&!prod.ready?1:0);
+        if(count){g.fillStyle='#111820ed';g.fillRect(x+20,y+2,10,7);menuText(g,String(count),x+25,y+5.5,{size:4.4,align:'center',baseline:'middle',color:ready?'#b9e5a0':'#ffe082'});}
+      }
     });
     const cx=this.cursor<0?GRID_X+(this.cursor+3)*CELL_W:GRID_X+this.cursor%COLUMNS*CELL_W;
     const cy=this.cursor<0?TAB_Y:GRID_Y+(Math.floor(this.cursor/COLUMNS)-firstRow)*HD_ROW_H;

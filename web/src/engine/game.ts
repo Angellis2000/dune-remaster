@@ -15,14 +15,14 @@ import { gameLoopHouse, houseCalculatePowerAndCredit, houseResetTimers, houseUpd
 import { mapBloomExplodeSpice, mapGetLandscapeType, mapIsValidPosition, mapUnveilTile } from "./map.ts";
 import { objectGetByPackedTile, objectScriptVariable4Clear } from "./object.ts";
 import { loadEmc, scriptLoad } from "./script.ts";
-import { scriptFunctionsStructure, scriptFunctionsTeam, scriptFunctionsUnit } from "./scriptfns.ts";
+import { scriptFunctionsStructure, scriptFunctionsTeam, scriptFunctionsUnit, structureDeployProducedUnit } from "./scriptfns.ts";
 import { msg } from "./strings.ts";
 import {initializeDrone,clampDronePoint,droneTargetAllowed} from './advanced-units.ts';
 import {
   gameLoopStructure, setUnitCreateWrapper, structureCancelBuild, structureActivateSpecial, structureBuildObject, structureCreate, structureFree,
   structureGetBuildable, structureGetByPackedTile, structureGetStructuresBuilt, structureIsUpgradable, structureIsValidBuildLocation, structurePlacementDetail, structurePlayerPlace,
   structureRemoveFog, structureResetTimers, structureSetRepairingState, structureSetState, structureSetUpgradingState,
-  structureStarportBuy,structureCanQueueUnits,structureEnqueueUnit,structureCancelQueuedUnit,structureEnqueueBuilding,structureCancelQueuedBuilding,structureStartNextBuilding,
+  structureStarportBuy,structureCanQueueUnits,structureEnqueueUnit,structureCancelQueuedUnit,structureEnqueueBuilding,structureCancelQueuedBuilding,structureStartNextBuilding,setStructureReleaseUnit,
 } from "./structure.ts";
 import { actionInfo, applyRomTables, landscapeInfo, structureInfo, unitInfo } from "./tables.ts";
 import { gameLoopTeam, teamCreate, teamResetTimers } from "./team.ts";
@@ -75,8 +75,9 @@ export type NetCommand =
   | { k: "upgrade"; s: number }
   | { k: "unqueue"; s: number; i: number }
   | { k: "unqueueB"; s: number; i: number }
+  | { k: "unreadyB"; s: number; t: number }
   | { k: "starport"; s: number; t: number }
-  | { k: "place"; s: number; p: number }
+  | { k: "place"; s: number; p: number; t?: number }
   | { k: "palace"; s: number; p: number }
   | { k: "left" };
 
@@ -153,6 +154,7 @@ export class Game {
     G.scriptStructure = loadEmc(rom.bytes, SCRIPT_BUILD, scriptFunctionsStructure);
     G.scriptTeam = loadEmc(rom.bytes, SCRIPT_TEAM, scriptFunctionsTeam);
     setUnitCreateWrapper(unitCreateWrapper);
+    setStructureReleaseUnit((s, u) => structureDeployProducedUnit(s, u) !== 0);
   }
 
   get player(): House {
@@ -679,12 +681,22 @@ export class Game {
   canQueueUnits(s:Structure):boolean{return structureCanQueueUnits(s);}
   unitQueue(s:Structure):readonly {type:number;cost:number}[]{return s.unitQueue??[];}
   buildingQueue(s:Structure):readonly {type:number;cost:number}[]{return s.buildingQueue??[];}
+  readyBuildings(s:Structure):readonly {type:number;cost:number}[]{return s.readyBuildings??[];}
+  readyUnits(s:Structure):readonly Unit[]{return (s.readyUnits??[]).map(index=>G.units[index]);}
+  cancelReadyBuilding(s:Structure,type:number):boolean{
+    const index=s.readyBuildings?.findIndex(item=>item.type===type)??-1;
+    if(index<0)return false;
+    const [item]=s.readyBuildings!.splice(index,1);G.houses[s.o.houseID].credits+=item.cost;return true;
+  }
   cancelQueuedUnit(s:Structure,index:number):boolean{return structureCancelQueuedUnit(s,index);}
   cancelQueuedBuilding(s:Structure,index:number):boolean{return structureCancelQueuedBuilding(s,index);}
 
   /** Состояние производства для меню. */
   production(s: Structure): { type: number; progress: number; ready: boolean; onHold: boolean } | null {
-    if (s.o.linkedID === 0xff || s.objectType === 0xffff) return null;
+    if (s.o.linkedID === 0xff || s.objectType === 0xffff) {
+      const ready=s.readyBuildings?.[0];
+      return ready?{type:ready.type,progress:1,ready:true,onHold:false}:null;
+    }
     const oi = s.o.type === STRUCTURE.CONSTRUCTION_YARD ? structureInfo[s.objectType]?.o : unitInfo[s.objectType]?.o;
     if (!oi) return null;
     const total = oi.buildTime << 8;
@@ -692,8 +704,26 @@ export class Game {
   }
 
   /** STR_PLACE_IT: готовое здание со Строительного двора — в режим постановки. */
-  placeIt(cy: Structure, _announce=true): boolean {
-    if (cy.o.type !== STRUCTURE.CONSTRUCTION_YARD || cy.o.linkedID === 0xff || cy.countDown !== 0) return false;
+  placeIt(cy: Structure, _announce=true, type?:number): boolean {
+    if (cy.o.type !== STRUCTURE.CONSTRUCTION_YARD) return false;
+    const index=cy.readyBuildings?.findIndex(item=>type===undefined||item.type===type)??-1;
+    if(index>=0){
+      const item=cy.readyBuildings![index];
+      const built=structureCreate(INDEX_INVALID,item.type,cy.o.houseID,INDEX_INVALID);
+      if(!built)return false;
+      built.spent=item.cost;
+      // Slabs and walls share singleton pool entries in the original ROM. A
+      // separate ghost lets their next order build while this one is on cursor.
+      const singleton=item.type===STRUCTURE.SLAB_1x1||item.type===STRUCTURE.SLAB_2x2||item.type===STRUCTURE.WALL;
+      G.structureActive=singleton?structuredClone(built):built;
+      if(singleton)structureFree(built);
+      G.structureActiveType=item.type;
+      cy.readyBuildings!.splice(index,1);
+      G.structureActivePosition=packTile(cy.o.position);
+      G.selectionType=SELECTION.PLACE;
+      return true;
+    }
+    if(cy.o.linkedID===0xff||cy.countDown!==0||(type!==undefined&&type!==cy.objectType))return false;
     G.structureActive = G.structures[cy.o.linkedID];
     G.structureActiveType = cy.objectType;
     G.structureActivePosition = packTile(cy.o.position);
@@ -722,8 +752,8 @@ export class Game {
     if (G.structureActiveType === 0xffff) return;
     const s = structureGetByPackedTile(G.structureActivePosition);
     const s2 = G.structureActive;
-    if (s && s2) s.o.linkedID = s2.o.index & 0xff;
-    else if (s2) structureFree(s2);
+    if(s&&s2)(s.readyBuildings??=[]).unshift({type:s2.o.type,cost:s2.spent});
+    if(s2)structureFree(s2);
     G.structureActive = null;
     G.structureActiveType = 0xffff;
     G.selectionType = SELECTION.STRUCTURE;
@@ -744,6 +774,7 @@ export class Game {
 
   /** Отменить производство: деньги за непостроенную часть возвращаются (Structure_CancelBuild). */
   cancelBuild(s: Structure): void {
+    if(s.o.linkedID===0xff&&s.readyBuildings?.length){Game.prototype.cancelReadyBuilding.call(this,s,s.readyBuildings[0].type);return;}
     structureCancelBuild(s);
     structureSetState(s, STATE.IDLE);
     if(s.o.type===STRUCTURE.CONSTRUCTION_YARD)structureStartNextBuilding(s);
@@ -757,6 +788,7 @@ export class Game {
     const h = G.houses[s.o.houseID];
     while(s.unitQueue?.length)structureCancelQueuedUnit(s,s.unitQueue.length-1);
     while(s.buildingQueue?.length)structureCancelQueuedBuilding(s,s.buildingQueue.length-1);
+    while(s.readyBuildings?.length)Game.prototype.cancelReadyBuilding.call(this,s,s.readyBuildings[0].type);
     if (s.o.linkedID !== 0xff) {
       // $0103AA: заказ убирается, дому возвращается ровно потраченное ($5A)
       const before = h.credits;
@@ -1106,6 +1138,7 @@ export class Game {
       }
       case "unqueue": { const s = structure(c.s); if (s) Game.prototype.cancelQueuedUnit.call(this, s, c.i); return; }
       case "unqueueB": { const s = structure(c.s); if (s) Game.prototype.cancelQueuedBuilding.call(this, s, c.i); return; }
+      case "unreadyB": { const s = structure(c.s); if(s)Game.prototype.cancelReadyBuilding.call(this,s,c.t);return; }
       case "starport": {
         const s = structure(c.s);
         if (!s || s.o.type !== STRUCTURE.STARPORT || NET_FORBIDDEN_UNITS.has(c.t) || !unitInfo[c.t]) return;
@@ -1114,13 +1147,8 @@ export class Game {
       }
       case "place": {
         const cy = structure(c.s);
-        if (!cy || !cell(c.p) || cy.o.type !== STRUCTURE.CONSTRUCTION_YARD || cy.o.linkedID === 0xff || cy.countDown !== 0) return;
-        const linked = cy.o.linkedID;
-        G.structureActive = G.structures[linked];
-        G.structureActiveType = cy.objectType;
-        G.structureActivePosition = packTile(cy.o.position);
-        cy.o.linkedID = 0xff;
-        if (!structurePlayerPlace(c.p, house)) cy.o.linkedID = linked;
+        if (!cy || !cell(c.p) || !Game.prototype.placeIt.call(this,cy,true,c.t))return;
+        if (!structurePlayerPlace(c.p, house)) Game.prototype.cancelPlace.call(this);
         return;
       }
       case "palace": {
@@ -1172,6 +1200,8 @@ export class Game {
     for (const s of G.structures) {
       if (!s.o.flags.used) continue;
       mix(s.o.index); mix(s.o.type); mix(s.o.houseID); mix(s.o.hitpoints); mix(s.state); mix(s.countDown);
+      for(const queue of [s.buildingQueue??[],s.unitQueue??[],s.readyBuildings??[]]){mix(queue.length);for(const item of queue){mix(item.type);mix(item.cost);}}
+      mix(s.readyUnits?.length??0);for(const index of s.readyUnits??[])mix(index);
     }
     for (const hh of G.houses) if (hh.flags.used) { mix(hh.index); mix(hh.credits); }
     return h;
