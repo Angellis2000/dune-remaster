@@ -17,7 +17,8 @@ import type { ContinuousTerrain } from "../gfx/continuous-terrain.ts";
 import { visualHash } from "../gfx/terrain-masks.ts";
 import type { VehicleArt } from "../gfx/vehicle-art.ts";
 import type { ImpactParticles } from "../gfx/impact-particles.ts";
-import { G } from "../engine/core.ts";
+import { G, type Unit as EUnit } from "../engine/core.ts";
+import { drawTargetLines, unitTargetLine } from "../gfx/target-lines.ts";
 import { drawWall } from "../gfx/wall-art.ts";
 import { drawStatusIcon, type StatusKind } from "../gfx/status-icons.ts";
 import { VehicleTracks } from "../gfx/vehicle-tracks.ts";
@@ -76,6 +77,11 @@ export class MapView {
   cursorY = 0;
   cursorKind: CursorKind = "select";
   selectedUnits = new Set<Unit>();
+  /**
+   * Юниты, получившие приказ: первые 2,4 с (как в OpenRA) линия видна в любом случае, дальше — пока цель та же
+   * (key — targetAttack:targetMove), то есть до новой цели или места, уничтожения цели или прибытия.
+   */
+  private orderLines = new Map<EUnit, { until: number; key?: string }>();
   selectedStructure: Structure | null = null;
   onChange: () => void = () => {};
   /** A: щелчок левой или кнопка 1 — мировые координаты точки */
@@ -138,6 +144,12 @@ export class MapView {
     if (s.sw > 32) this.ctx.imageSmoothingEnabled = true;
     this.ctx.drawImage(s.image, s.sx, s.sy, s.sw, s.sh, x, y, size, size);
     this.ctx.imageSmoothingEnabled = smooth;
+  }
+
+  /** Показать линии до цели у юнитов, которым только что отдан приказ (даже если выбор потом снят). */
+  flashOrders(units: Iterable<EUnit>): void {
+    const until = performance.now() + 2400;
+    for (const u of units) this.orderLines.set(u, { until });
   }
 
   setWorld(world: World, focusX: number, focusY: number): void {
@@ -672,6 +684,24 @@ export class MapView {
       }
       ctx.drawImage(img.canvas, Math.round((s.x * CELL_PX + img.ox) * z) - ox, Math.round((s.y * CELL_PX + img.oy) * z) - oy, img.canvas.width * z, img.canvas.height * z);
     }
+
+    // линии до цели (как в Red Alert): у выбранных своих — всё время, у получивших приказ — ещё 2,4 с
+    const lined = new Set<Unit>();
+    for (const u of this.selectedUnits) if (u.house === G.playerHouseID) lined.add(u);
+    if (this.orderLines.size && this.world) {
+      const now = performance.now();
+      for (const [ref, line] of this.orderLines) {
+        if (!ref.o.flags.used) { this.orderLines.delete(ref); continue; }
+        if (line.until >= now) continue;
+        const key = `${ref.targetAttack}:${ref.targetMove}`;
+        if (line.key === undefined) {
+          if (!unitTargetLine(ref)) this.orderLines.delete(ref);
+          else line.key = key;
+        } else if (line.key !== key || !unitTargetLine(ref)) this.orderLines.delete(ref);
+      }
+      for (const u of this.world.units) if (this.orderLines.has(u.ref)) lined.add(u);
+    }
+    drawTargetLines(ctx, lined, z, ox, oy, (x, y) => !!map.unveiled[((y & 63) << 6) | (x & 63)]);
 
     // выделение — уголки рамки, как у курсора оригинала
     const s = this.selectedStructure;

@@ -268,6 +268,7 @@ const unitTransportDeliver: ScriptFunction = (script) => {
       unitSetDestination(u2, indexEncode(field, IT.TILE));
     }
   }
+  if (u.o.type === UNIT.CARRYALL && u2.o.type === UNIT.HARVESTER && !houseHasRefinery(unitGetHouseID(u))) u.carryallLeaving = true;
   if (u.o.linkedID !== 0xff) return 1;
   u.o.flags.inTransport = false;
   objectScriptVariable4Clear(u.o);
@@ -942,8 +943,18 @@ const unitMoveToStructure: ScriptFunction = (script) => {
 const unitGetAmount: ScriptFunction = () => {
   const u = cur();
   if (u.o.linkedID === 0xff) return u.amount;
-  return G.units[u.o.linkedID].amount;
+  const cargo = G.units[u.o.linkedID];
+  // Ремейк (просьба владельца): скрипт ROM ($1838) везёт харвестер со спайсом к заводу очистки и кружит, пока
+  // завода нет, — бесконечно. Если у дома не осталось ни одного завода, отвечаем «пуст»: скрипт сбрасывает
+  // харвестер на месте ($1859), а перевозчик потом улетает (Unit.carryallLeaving).
+  if (u.o.type === UNIT.CARRYALL && cargo.o.type === UNIT.HARVESTER && !houseHasRefinery(unitGetHouseID(u))) return 0;
+  return cargo.amount;
 };
+
+/** Есть ли у дома хоть один завод очистки. */
+function houseHasRefinery(houseID: number): boolean {
+  return structureFind(findAll(houseID, STRUCTURE.REFINERY)) !== null;
+}
 
 const unitIsInTransport: ScriptFunction = () => (cur().o.flags.inTransport ? 1 : 0);
 

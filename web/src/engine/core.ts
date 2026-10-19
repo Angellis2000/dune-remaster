@@ -159,6 +159,8 @@ export interface Dir24 {
 export interface Unit {
   o: GObject;
   carryallFlight?: {height:number; serviceKey:string; serviceSince:number; lastTick:number; settling?:boolean};
+  /** ремейк: перевозчик сбросил харвестер, потому что у дома нет заводов очистки, и улетает за край карты */
+  carryallLeaving?: boolean;
   currentDestination: Tile32;
   originEncoded: number;
   /** MD $5A при ремонте: начальное время ремонта, максимум полосы HUD ($048926). */

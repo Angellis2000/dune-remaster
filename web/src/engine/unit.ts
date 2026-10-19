@@ -9,7 +9,7 @@ import {
   tileGetDirection, tileGetDistance, tileGetDistanceRoundedUp, tileIsValid, tileMoveByDirection, tileMoveByOrientation,
   tileMoveByRandom, u16, u8, unitAllocate, unitFind, unitFree, unpackTile, type Structure, type Team, type Tile32, type Unit,
 } from "./core.ts";
-import { humanHouses, humanMask, isHuman, isLocal } from "./core.ts";
+import { MAP_INFOS, humanHouses, humanMask, isHuman, isLocal } from "./core.ts";
 import { houseAlliedToHuman, houseAreAllied } from "./house.ts";
 import {refineryDock} from './refinery-dock.ts';
 import {tickCarryallFlight,carryallMovementScale,carryallDestination} from './carryall-flight.ts';
@@ -272,6 +272,12 @@ export function gameLoopUnit(): void {
       }
     }
 
+    // ремейк: перевозчик, сбросивший харвестер без заводов очистки, больше не слушает скрипт и улетает с карты
+    if (u.carryallLeaving) {
+      unitCarryallLeaveTick(u);
+      continue;
+    }
+
     if (tickScript) {
       if (u.patrolActive) unitPatrolTick(u);
       if (u.o.script.delay === 0) {
@@ -304,6 +310,7 @@ export function unitCreate(index: number, typeID: number, houseID: number, posit
   if (!u) return null;
   u.o.houseID = houseID;
   u.carryallFlight=undefined;
+  u.carryallLeaving=undefined;
   unitSetOrientation(u, orientation, true, 0);
   unitSetOrientation(u, orientation, true, 1);
   unitSetSpeed(u, 0);
@@ -1557,4 +1564,24 @@ function scriptPlayerHouse(u: Unit): number {
   const mask = humanMask();
   for (let h = 0; h < 8; h++) if ((mask >> h) & 1 && !houseAreAllied(h, own)) return h;
   return own;
+}
+
+/** Перевозчик улетает к ближайшему краю карты и исчезает там (см. Unit.carryallLeaving). */
+function unitCarryallLeaveTick(u: Unit): void {
+  const mi = MAP_INFOS[G.mapScale];
+  const x = u.o.position.x >> 8, y = u.o.position.y >> 8;
+  const left = x - mi.minX, right = mi.minX + mi.sizeX - 1 - x, top = y - mi.minY, bottom = mi.minY + mi.sizeY - 1 - y;
+  const nearest = Math.min(left, right, top, bottom);
+  if (nearest <= 0) {
+    unitRemove(u);
+    return;
+  }
+  const edge =
+    nearest === left ? { x: mi.minX, y } : nearest === right ? { x: mi.minX + mi.sizeX - 1, y } : nearest === top ? { x, y: mi.minY } : { x, y: mi.minY + mi.sizeY - 1 };
+  const target = { x: (edge.x << 8) | 0x80, y: (edge.y << 8) | 0x80 };
+  u.targetMove = 0;
+  u.targetAttack = 0;
+  u.currentDestination = target;
+  unitSetOrientation(u, tileGetDirection(u.o.position, target), false, 0);
+  if (u.speed === 0) unitSetSpeed(u, 255);
 }

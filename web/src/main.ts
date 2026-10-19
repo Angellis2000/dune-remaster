@@ -742,8 +742,10 @@ async function startGame(rom: DuneRom): Promise<void> {
     if (G.selectionType === SELECTION.TARGET) {
       const action = G.activeAction;
       const others = commandable().filter((u) => u !== G.unitActive);
+      const active = G.unitActive;
       world.game.targetClick(packed);
       for (const u of others) world.game.order(u, action, packed);
+      view.flashOrders(active ? [active, ...others] : others);
       updateHud();
       return;
     }
@@ -761,6 +763,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       else selectUnits([unit]);
     } else if (mine.length) {
       for (const u of mine) world.game.order(u, world.game.defaultAction(u, packed), packed);
+      view.flashOrders(mine);
     } else if (unit) {
       selectUnits([unit]);
     } else {
@@ -814,6 +817,7 @@ async function startGame(rom: DuneRom): Promise<void> {
         selectUnits([unit]);
       } else {
         for (const u of mine) world.game.order(u, world.game.defaultAction(u, packed), packed);
+        view.flashOrders(mine);
         clearSelection();
       }
     } else if (unit && unit.house === world.player && !unit.air) {
