@@ -83,13 +83,10 @@ export type NetCommand =
   | { k: "palace"; s: number; p: number }
   | { k: "left" };
 
-/** Юниты и здания ремейка, которых нет в оригинале: их код использует sin/cos/hypot, а в сети нужна одинаковая арифметика. */
-const NET_FORBIDDEN_UNITS = new Set<number>([UNIT.LASER_TANK, UNIT.COMBAT_DRONE]);
-const NET_FORBIDDEN_STRUCTURES = new Set<number>([STRUCTURE.DRONE_PAD]);
 /** Космопорт сетевого матча: что и сколько можно купить (общий запас CHOAM). */
 const NET_STARPORT_STOCK: [number, number][] = [
   [UNIT.CARRYALL, 2], [UNIT.ORNITHOPTER, 2], [UNIT.TRIKE, 5], [UNIT.QUAD, 5], [UNIT.TANK, 4], [UNIT.LAUNCHER, 3],
-  [UNIT.SIEGE_TANK, 3], [UNIT.HARVESTER, 3], [UNIT.MCV, 2],
+  [UNIT.SIEGE_TANK, 3], [UNIT.HARVESTER, 3], [UNIT.MCV, 2], [UNIT.LASER_TANK, 2], [UNIT.COMBAT_DRONE, 2],
 ];
 
 let tablesReady = false;
@@ -489,6 +486,7 @@ export class Game {
   /** Приказ юниту с целью на клетке (щелчок в режиме цели, gui/viewport.c). */
   order(u: Unit, action: number, packed: number, house = G.playerHouseID): void {
     if (unitGetHouseID(u) !== house) return;
+    u.blockedAttack=undefined;
     if(u.o.type===UNIT.COMBAT_DRONE){
       if(!u.drone)initializeDrone(u);
       if(action===ACTION.MOVE||action===ACTION.PATROL)packed=packTile(clampDronePoint(u,tileCenter(unpackTile(packed))));
@@ -1060,7 +1058,7 @@ export class Game {
 
   /** Можно ли заказывать тип в сетевом матче. */
   private netAllowed(s: Structure, type: number): boolean {
-    return s.o.type === STRUCTURE.CONSTRUCTION_YARD ? !NET_FORBIDDEN_STRUCTURES.has(type) : !NET_FORBIDDEN_UNITS.has(type);
+    return Number.isInteger(type)&&type>=0&&type<(s.o.type===STRUCTURE.CONSTRUCTION_YARD?STRUCTURE.MAX:UNIT.MAX);
   }
 
   /** Вызов из интерфейса без следа в игре: таблицы доступности общие для всех домов и пишутся при подсчёте. */
@@ -1145,7 +1143,7 @@ export class Game {
       case "unreadyB": { const s = structure(c.s); if(s)Game.prototype.cancelReadyBuilding.call(this,s,c.t);return; }
       case "starport": {
         const s = structure(c.s);
-        if (!s || s.o.type !== STRUCTURE.STARPORT || NET_FORBIDDEN_UNITS.has(c.t) || !unitInfo[c.t]) return;
+        if (!s || s.o.type !== STRUCTURE.STARPORT || !unitInfo[c.t]) return;
         Game.prototype.starportBuy.call(this, s, c.t, this.netStarportPrice(c.t));
         return;
       }
@@ -1172,6 +1170,7 @@ export class Game {
     const ai = actionInfo[action];
     if (!ai || ai.selectionType === SELECTION.TARGET || action === ACTION.PATROL) return;
     if (!unitInfo[u.o.type].o.actionsPlayer.includes(action)) return;
+    u.blockedAttack=undefined;
     u.patrolActive = false;
     u.patrolEngaging = false;
     u.harvesterDefense = undefined;
@@ -1200,6 +1199,14 @@ export class Game {
     for (const u of G.units) {
       if (!u.o.flags.used) continue;
       mix(u.o.index); mix(u.o.type); mix(u.o.houseID); mix(u.o.position.x); mix(u.o.position.y); mix(u.o.hitpoints); mix(u.actionID); mix(u.targetAttack);
+      if(u.blockedAttack){mix(u.blockedAttack.target);mix(u.blockedAttack.wall);}
+      if(u.laser){const l=u.laser;mix(l.target);mix(l.chargeStart);mix(l.chargeUntil);mix(l.cooldownUntil);mix(l.firedAt);}
+      if(u.drone){
+        const d=u.drone;mix(d.home);mix(d.homePosition.x);mix(d.homePosition.y);mix(d.guardPosition?.x??0);mix(d.guardPosition?.y??0);mix(d.lastAction??0);
+        mix(['guard','attack','return','dock','orphan'].indexOf(d.phase));mix(Math.round(d.battery*1000));mix(d.nextFire);mix(d.lastTick);mix(d.launchAfter);mix(d.restockAt);
+        mix(Math.round(d.vx*256));mix(Math.round(d.vy*256));mix(u.targetMove);mix(Math.round(u.o.hitpoints*1000));
+        for(const m of d.members){mix(m.x);mix(m.y);mix(Math.round(m.vx*256));mix(Math.round(m.vy*256));mix(m.grenades);}
+      }
     }
     for (const s of G.structures) {
       if (!s.o.flags.used) continue;
@@ -1208,6 +1215,7 @@ export class Game {
       mix(s.readyUnits?.length??0);for(const index of s.readyUnits??[])mix(index);
     }
     for (const hh of G.houses) if (hh.flags.used) { mix(hh.index); mix(hh.credits); }
+    for(const p of G.droneGrenades){mix(p.from.x);mix(p.from.y);mix(p.to.x);mix(p.to.y);mix(p.released);mix(p.impact);mix(p.damage);mix(p.origin);mix(p.house);}
     return h;
   }
 }

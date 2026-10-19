@@ -15,6 +15,7 @@ import {refineryDock} from './refinery-dock.ts';
 import {tickCarryallFlight,carryallMovementScale,carryallDestination} from './carryall-flight.ts';
 import {tickDrone,tickLaser,tickDroneGrenades} from './advanced-units.ts';
 import {COMBAT_SFX} from '../sound/combat-sfx.ts';
+import {blockingWall} from './combat-obstacles.ts';
 import {
   mapBloomExplodeSpice, mapDeviateArea, mapFillCircleWithSpice, mapFindLocationTile, mapGetLandscapeType, mapIsPositionInViewport,
   mapIsPositionUnveiled, mapIsValidPosition, mapMakeExplosion, mapSearchSpice, mapUnveilTile, mapUpdateAround, tileRemoveFogInRadius,
@@ -193,6 +194,7 @@ export function gameLoopUnit(): void {
     G.scriptCurrentUnit = u;
     G.scriptCurrentTeam = null;
     if (u.o.flags.isNotOnMap) continue;
+    unitPrioritizeBlockingWall(u);
     tickCarryallFlight(u);
     if(tickDrone(u))continue;
     tickLaser(u);
@@ -718,6 +720,29 @@ export function unitStartMovement(unit: Unit | null): boolean {
   return true;
 }
 
+export function unitPrioritizeBlockingWall(unit:Unit):void {
+  if(!unitInfo[unit.o.type].o.actionsPlayer.includes(ACTION.ATTACK)||unit.o.type===UNIT.SANDWORM)return;
+  let saved=unit.blockedAttack;
+  if(saved&&unit.targetAttack!==indexEncode(saved.wall,IT.TILE)){unit.blockedAttack=undefined;saved=undefined;}
+  const target=saved?.target??unit.targetAttack;
+  if(!target||!indexIsValid(target)){
+    if(saved){unit.blockedAttack=undefined;unit.targetAttack=0;}
+    return;
+  }
+  const wall=blockingWall(unit,target);
+  if(wall===null){
+    if(saved){unit.blockedAttack=undefined;unitSetTarget(unit,target);}
+    return;
+  }
+  if(houseAreAllied(unitGetHouseID(unit),G.map[wall].houseID)){
+    if(saved){unit.blockedAttack=undefined;unitSetTarget(unit,target);}
+    return;
+  }
+  if(target===indexEncode(wall,IT.TILE))return;
+  unit.blockedAttack={target,wall};
+  unitSetTarget(unit,indexEncode(wall,IT.TILE));
+}
+
 export function unitSetTarget(unit: Unit | null, encoded: number): void {
   if (!unit || !indexIsValid(encoded)) return;
   if (unit.targetAttack === encoded) return;
@@ -842,7 +867,11 @@ export function unitMove(unit: Unit | null, distance: number): boolean {
     } else {
       const s = structureGetByPackedTile(packed);
       if (s) structureDamage(s, damage, 0);
-      else if (mapGetLandscapeType(packed) === LST.WALL && structureInfo[STRUCTURE.WALL].o.hitpoints > damage) random256();
+      else if (mapGetLandscapeType(packed) === LST.WALL) {
+        mapMakeExplosion(EXPLOSION.IMPACT_SMALL,newPosition,damage,unit.originEncoded);
+        unitRemove(unit);
+        return true;
+      }
     }
     if (unit.o.hitpoints < idiv(ui.damage, 2)) unit.o.flags.bulletIsBig = true;
     unit.o.hitpoints = u16(unit.o.hitpoints - 1);

@@ -454,7 +454,9 @@ function friendlyStructureOnRay(from: Tile32, to: Tile32, houseID: number): bool
     if (twice >= dy) { error += dy; x += sx; }
     if (twice <= dx) { error += dx; y += sy; }
     if (x === endX && y === endY) break;
-    const structure = structureGetByPackedTile(packXY(x, y));
+    const packed=packXY(x,y);
+    if(mapGetLandscapeType(packed)===LST.WALL&&houseAreAllied(G.map[packed].houseID,houseID))return true;
+    const structure = structureGetByPackedTile(packed);
     if (structure && houseAreAllied(structure.o.houseID, houseID)) return true;
   }
   return false;
@@ -490,6 +492,8 @@ const unitFire: ScriptFunction = (script) => {
   const u = cur();
   const target = u.targetAttack;
   if (target === 0 || !indexIsValid(target)) return 0;
+  const targetTile=indexGetPackedTile(target);
+  if(mapGetLandscapeType(targetTile)===LST.WALL&&houseAreAllied(G.map[targetTile].houseID,unitGetHouseID(u)))return 0;
   if (u.o.type !== UNIT.SANDWORM && target === indexEncode(packTile(u.o.position), IT.TILE)) u.targetAttack = 0;
   if (u.targetAttack !== target) {
     unitSetTarget(u, target);

@@ -312,12 +312,12 @@ function installCustomUnits():void{
   const longestVehicleRange=Math.max(...unitInfo.slice(0,18).filter(unit=>unit.o.actionsPlayer.includes(0)).map(unit=>unit.fireDistance));
   tank.movingSpeedFactor=Math.round(tank.movingSpeedFactor*.8);tank.fireDistance=Math.max(tank.fireDistance+1,longestVehicleRange+2);
   tank.turningSpeed=Math.max(8,tank.turningSpeed*2);
-  tank.damage=Math.round(tank.damage*3.2);tank.fireDelay=60;
+  tank.damage=Math.round(tank.damage*4);tank.fireDelay=60;
   unitInfo[LASER_TANK]=tank;
   const drone=structuredClone(unitInfo[1]);
   Object.assign(drone.o,{name:'Drone Wing',buildCredits:450,buildTime:Math.max(25,Math.round(tank.o.buildTime*.7)),
     hitpoints:120,availableCampaign:8,upgradeLevelRequired:0,availableHouse:0x3f,structuresRequired:1<<DRONE_PAD,
-    actionsPlayer:[0,1,6,3],sortPriority:31,fogUncoverRadius:3});
+    actionsPlayer:[0,1,6,3,7],sortPriority:31,fogUncoverRadius:3});
   Object.assign(drone.o.flags,{hasShadow:1,canBePickedUp:0,targetAir:0,hasTurret:0,scriptNoSlowdown:1});
   Object.assign(drone.flags,{canWobble:0,isTracked:0,isGroundUnit:0,isNotDeviatable:1,isNormalUnit:1,explodeOnDeath:1});
   Object.assign(drone,{indexStart:22,indexEnd:101,fireDistance:1,damage:12,fireDelay:15,turningSpeed:8});

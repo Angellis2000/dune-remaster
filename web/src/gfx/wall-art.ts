@@ -1,6 +1,15 @@
 /** Connected concrete-and-steel defensive walls, drawn in screen resolution. N/E/S/W bits. */
 export function drawWall(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, connections: number, texture?: CanvasImageSource): void {
   ctx.save(); ctx.translate(x, y); ctx.scale(size / 32, size / 32);
+  // The same visible concrete foundation used beneath base structures.
+  ctx.fillStyle='#514e45';ctx.fillRect(0,2,32,30);
+  const base=ctx.createLinearGradient(0,0,28,32);
+  base.addColorStop(0,'#b4ad96');base.addColorStop(.5,'#928b78');base.addColorStop(1,'#746e60');
+  ctx.fillStyle=base;ctx.fillRect(0,0,32,30);
+  if(texture){ctx.save();ctx.globalAlpha=.22;ctx.drawImage(texture,0,0,32,30);ctx.restore();}
+  ctx.strokeStyle='#ded7bd88';ctx.lineWidth=.6;ctx.strokeRect(.5,.5,31,29);
+  ctx.strokeStyle='#5e594c66';ctx.lineWidth=.35;
+  for(const cut of [8,24]){ctx.beginPath();ctx.moveTo(cut,0);ctx.lineTo(cut,30);ctx.stroke();}
   const footprint = () => {
     ctx.beginPath(); ctx.rect(9, 9, 14, 14);
     if (connections & 1) ctx.rect(10, 0, 12, 16);

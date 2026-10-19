@@ -197,8 +197,9 @@ export interface Unit {
   patrolEngaging: boolean;
   /** Temporary reaction to attacking infantry; separate from the player's work order. */
   harvesterDefense?: { target:number; spice:Tile32; start:Tile32; expires:number };
+  blockedAttack?: {target:number;wall:number};
   laser?: {target:number;chargeStart:number;chargeUntil:number;cooldownUntil:number;firedAt:number;from:Tile32;to:Tile32};
-  drone?: {home:number;homePosition:Tile32;phase:'guard'|'attack'|'return'|'dock'|'orphan';battery:number;nextFire:number;lastTick:number;launchAfter:number;vx:number;vy:number;restockAt:number;
+  drone?: {home:number;homePosition:Tile32;guardPosition?:Tile32;lastAction?:number;phase:'guard'|'attack'|'return'|'dock'|'orphan';battery:number;nextFire:number;lastTick:number;launchAfter:number;vx:number;vy:number;restockAt:number;
     members:{x:number;y:number;vx:number;vy:number;grenades:number}[]};
 }
 

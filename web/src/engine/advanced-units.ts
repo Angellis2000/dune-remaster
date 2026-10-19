@@ -6,8 +6,17 @@ import {structureGetByPackedTile,structureDamage} from './structure.ts';
 import {unitDamage,unitUpdateMap,unitSetAction,unitSetTarget,unitSetOrientation} from './unit.ts';
 import {COMBAT_DRONE,LASER_TANK,DRONE_RADIUS,DRONE_RETURN_BATTERY} from './custom-unit-defs.ts';
 import {COMBAT_SFX} from '../sound/combat-sfx.ts';
+import {tileGetDirection,tileMoveByDirection} from './core.ts';
+import {fixed256,fixedLength,fixedSqrt,integerPower} from './lockstep-math.ts';
 
-const distance=(a:Tile32,b:Tile32)=>Math.hypot(a.x-b.x,a.y-b.y);
+const length=(x:number,y:number)=>G.net?fixedLength(x,y):Math.hypot(x,y);
+const distance=(a:Tile32,b:Tile32)=>length(a.x-b.x,a.y-b.y);
+const velocity=(value:number)=>G.net?fixed256(value):value;
+function sineCosine(orientation:number):{sin:number;cos:number}{
+  if(!G.net){const a=orientation*Math.PI/128;return{sin:Math.sin(a),cos:Math.cos(a)};}
+  const p=tileMoveByDirection({x:32768,y:32768},Math.round(orientation),128);
+  return{sin:(p.x-32768)/127,cos:(32768-p.y)/127};
+}
 const center=(s:Structure):Tile32=>{
   const size=layoutSize[structureInfo[s.o.type].layout];
   return{x:s.o.position.x+size.width*128,y:s.o.position.y+size.height*128};
@@ -26,13 +35,13 @@ export function initializeDrone(u:Unit,home?:Structure):void{
   // A starport (or another factory) is only a launch point, never the drone's charging home.
   // Preserve that exit position so the squad visibly flies toward its nearest drone pad.
   if(deployedFromPad)u.o.position={x:position.x,y:position.y+64};
-  u.drone={home:base?indexEncode(base.o.index,IT.STRUCTURE):0,homePosition:position,phase:base?'guard':'orphan',battery:100,nextFire:0,lastTick:G.timerGame,launchAfter:0,vx:0,vy:0,restockAt:0,
+  u.drone={home:base?indexEncode(base.o.index,IT.STRUCTURE):0,homePosition:position,guardPosition:{...u.o.position},lastAction:ACTION.GUARD,phase:base?'guard':'orphan',battery:100,nextFire:0,lastTick:G.timerGame,launchAfter:0,vx:0,vy:0,restockAt:0,
     members:[[-56,-56],[48,-56],[0,24]].map(([x,y])=>({x:u.o.position.x+x,y:u.o.position.y+y,vx:0,vy:0,grenades:5}))};
   u.targetAttack=0;u.targetMove=0;u.actionID=ACTION.GUARD;
 }
 export function clampDronePoint(u:Unit,p:Tile32):Tile32{
   const home=u.drone?.homePosition;if(!home)return{...p};
-  const dx=p.x-home.x,dy=p.y-home.y,d=Math.hypot(dx,dy),r=DRONE_RADIUS-64;
+  const dx=p.x-home.x,dy=p.y-home.y,d=length(dx,dy),r=DRONE_RADIUS-64;
   const k=d>r?r/d:1;
   const b=G.mapScale===0?{minX:1,minY:1,sizeX:62,sizeY:62}:G.mapScale===1?{minX:16,minY:16,sizeX:32,sizeY:32}:{minX:21,minY:21,sizeX:21,sizeY:21};
   return{x:Math.round(Math.max(b.minX*256+32,Math.min((b.minX+b.sizeX)*256-32,home.x+dx*k))),
@@ -44,7 +53,7 @@ function visibleEnemy(u:Unit,target:number):boolean{
   if(!o||!o.flags.used||o.flags.isNotOnMap||o.hitpoints<=0||houseAreAllied(u.o.houseID,o.houseID))return false;
   if(unit&&unitInfo[unit.o.type].movementType===MOVEMENT.WINGER)return false;
   if(s&&s.o.type===STRUCTURE.WALL)return false;
-  return G.revealAll||(o.seenByHouses&(1<<u.o.houseID))!==0;
+  return !G.net&&G.revealAll||(o.seenByHouses&(1<<u.o.houseID))!==0;
 }
 export function droneTargetAllowed(u:Unit,target:number):boolean{
   return !!u.drone&&visibleEnemy(u,target)&&distance(indexGetTile(target),u.drone.homePosition)<=DRONE_RADIUS;
@@ -54,6 +63,8 @@ function findDroneTarget(u:Unit):number{
   for(const enemy of G.unitFind){
     const id=indexEncode(enemy.o.index,IT.UNIT);
     if(!droneTargetAllowed(u,id))continue;
+    const range=u.patrolActive?5*256:unitInfo[COMBAT_DRONE].fireDistance*256;
+    if(distance(u.o.position,enemy.o.position)>range)continue;
     // Local protection favors nearby infantry/harvesters rather than remote base structures.
     const score=distance(u.o.position,enemy.o.position)*(unitInfo[enemy.o.type].movementType===MOVEMENT.FOOT?.75:1);
     if(score<bestScore){best=id;bestScore=score;}
@@ -61,13 +72,13 @@ function findDroneTarget(u:Unit):number{
   return best;
 }
 function moveDrone(u:Unit,goal:Tile32,dt:number):boolean{
-  const target=clampDronePoint(u,goal),dx=target.x-u.o.position.x,dy=target.y-u.o.position.y,d=Math.hypot(dx,dy);
-  const state=u.drone!,speed=Math.min(18,Math.sqrt(d*1.1));
+  const target=clampDronePoint(u,goal),dx=target.x-u.o.position.x,dy=target.y-u.o.position.y,d=length(dx,dy);
+  const state=u.drone!,speed=Math.min(18,G.net?fixedSqrt(d*1.1):Math.sqrt(d*1.1));
   const desiredX=d>1?dx/d*speed:0,desiredY=d>1?dy/d*speed:0;
-  const ax=desiredX-state.vx,ay=desiredY-state.vy,change=Math.hypot(ax,ay),a=Math.min(1,.55*dt/Math.max(.001,change));
-  state.vx+=ax*a;state.vy+=ay*a;
-  if(d<8&&Math.hypot(state.vx,state.vy)<1){state.vx=state.vy=0;u.speed=0;return true;}
-  const heading=(Math.atan2(state.vx,-state.vy)*128/Math.PI+256)%256;
+  const ax=desiredX-state.vx,ay=desiredY-state.vy,change=length(ax,ay),a=Math.min(1,.55*dt/Math.max(.001,change));
+  state.vx=velocity(state.vx+ax*a);state.vy=velocity(state.vy+ay*a);
+  if(d<8&&length(state.vx,state.vy)<1){state.vx=state.vy=0;u.speed=0;return true;}
+  const heading=G.net?(tileGetDirection({x:0,y:0},{x:Math.round(state.vx*256),y:Math.round(state.vy*256)})&255):(Math.atan2(state.vx,-state.vy)*128/Math.PI+256)%256;
   const delta=((heading-u.orientation[0].current+384)%256)-128;
   u.orientation[0].current=(u.orientation[0].current+Math.max(-7*dt,Math.min(7*dt,delta))+256)%256;
   u.orientation[1].current=u.orientation[0].current;u.speed=255;
@@ -78,13 +89,13 @@ function moveDrone(u:Unit,goal:Tile32,dt:number):boolean{
 }
 
 function updateDroneMembers(u:Unit,dt:number):void{
-  const d=u.drone!,parked=d.phase==='dock'||d.phase==='guard'&&Math.hypot(u.o.position.x-d.homePosition.x,u.o.position.y-d.homePosition.y-64)<24;
-  const offsets=parked?[[-56,-56],[48,-56],[0,24]]:[[-40,-28],[40,-28],[0,40]],a=parked?0:u.orientation[0].current*Math.PI/128;
+  const d=u.drone!,parked=d.phase==='dock'||d.phase==='guard'&&length(u.o.position.x-d.homePosition.x,u.o.position.y-d.homePosition.y-64)<24;
+  const offsets=parked?[[-56,-56],[48,-56],[0,24]]:[[-40,-28],[40,-28],[0,40]],a=sineCosine(parked?0:u.orientation[0].current);
   for(let i=0;i<d.members.length;i++){
-    const m=d.members[i],offset=offsets[i],goal=clampDronePoint(u,{x:u.o.position.x+offset[0]*Math.cos(a)-offset[1]*Math.sin(a),y:u.o.position.y+offset[0]*Math.sin(a)+offset[1]*Math.cos(a)});
+    const m=d.members[i],offset=offsets[i],goal=clampDronePoint(u,{x:u.o.position.x+offset[0]*a.cos-offset[1]*a.sin,y:u.o.position.y+offset[0]*a.sin+offset[1]*a.cos});
     // Damped spring follows the formation; different damping prevents rigid synchronized turns.
     m.vx+=(goal.x-m.x)*.035*dt;m.vy+=(goal.y-m.y)*.035*dt;
-    const damping=Math.pow(.74+i*.025,dt);m.vx*=damping;m.vy*=damping;
+    const damping=G.net?integerPower(.74+i*.025,dt):Math.pow(.74+i*.025,dt);m.vx=velocity(m.vx*damping);m.vy=velocity(m.vy*damping);
     const next=clampDronePoint(u,{x:m.x+m.vx*dt,y:m.y+m.vy*dt});m.x=next.x;m.y=next.y;
   }
 }
@@ -101,6 +112,10 @@ export function tickDrone(u:Unit):boolean{
   if(!u.drone)initializeDrone(u);
   const d=u.drone!,dt=Math.min(6,Math.max(0,G.timerGame-d.lastTick));d.lastTick=G.timerGame;
   if(!dt)return true;
+  if(d.lastAction!==u.actionID){
+    if(u.actionID===ACTION.GUARD||u.actionID===ACTION.STOP)d.guardPosition={...u.o.position};
+    d.lastAction=u.actionID;
+  }
   try{
   const home=droneHome(u),powered=!!home&&G.houses[u.o.houseID].powerProduction>=G.houses[u.o.houseID].powerUsage;
   const homePos=clampDronePoint(u,{x:d.homePosition.x,y:d.homePosition.y+64});
@@ -115,15 +130,21 @@ export function tickDrone(u:Unit):boolean{
       d.phase='dock';u.speed=0;
       if(powered){d.battery=Math.min(100,d.battery+.25*dt);u.o.hitpoints=Math.min(unitInfo[COMBAT_DRONE].o.hitpoints,u.o.hitpoints+.08*dt);}
       if(powered&&G.timerGame>=d.restockAt){for(const m of d.members)m.grenades=Math.min(5,m.grenades+1);d.restockAt=G.timerGame+30;}
-      if(d.battery>=99&&u.o.hitpoints>=unitInfo[COMBAT_DRONE].o.hitpoints&&powered&&d.members.every(m=>m.grenades===5)){d.phase='guard';u.actionID=ACTION.GUARD;d.launchAfter=G.timerGame+60;}
+      if(d.battery>=99&&u.o.hitpoints>=unitInfo[COMBAT_DRONE].o.hitpoints&&powered&&d.members.every(m=>m.grenades===5)){d.phase='guard';u.actionID=ACTION.GUARD;d.guardPosition={...homePos};d.launchAfter=G.timerGame+60;}
     }
     return true;
   }
   if(G.timerGame<d.launchAfter)return true;
   if(u.actionID===ACTION.STOP){u.targetAttack=0;u.targetMove=0;moveDrone(u,{...u.o.position},dt);return true;}
+  if(u.actionID===ACTION.MOVE&&!u.patrolActive&&u.targetMove){
+    u.targetAttack=0;
+    if(moveDrone(u,indexGetTile(u.targetMove),dt)){d.guardPosition={...u.o.position};u.targetMove=0;u.currentDestination={x:0,y:0};u.actionID=ACTION.GUARD;}
+    return true;
+  }
   if(!droneTargetAllowed(u,u.targetAttack)){
     if(u.targetMove===u.targetAttack)u.targetMove=0;
     u.targetAttack=findDroneTarget(u);
+    if(!u.targetAttack&&u.actionID===ACTION.ATTACK){d.guardPosition={...u.o.position};u.actionID=ACTION.GUARD;}
   }
   if(u.targetAttack){
     const position=indexGetTile(u.targetAttack);
@@ -144,7 +165,7 @@ export function tickDrone(u:Unit):boolean{
     }
   }else{
     d.phase=home?'guard':'orphan';
-    let goal=u.targetMove?indexGetTile(u.targetMove):homePos;
+    let goal=u.targetMove?indexGetTile(u.targetMove):(d.guardPosition??homePos);
     if(u.patrolActive){
       goal=u.patrolToEnd?u.patrolEnd:u.patrolStart;
       if(distance(u.o.position,clampDronePoint(u,goal))<48)u.patrolToEnd=!u.patrolToEnd;
@@ -156,7 +177,7 @@ export function tickDrone(u:Unit):boolean{
 }
 
 /** Finds the first structure or solid ridge on a direct shot, including intervening obstacles. */
-export function laserImpact(u:Unit,target:number):{position:Tile32;blocked:boolean}{
+export function laserImpact(u:Unit,target:number):{position:Tile32;blocked:boolean;wall?:number}{
   const from=u.o.position,to=indexGetTile(target),steps=Math.max(1,Math.ceil(distance(from,to)/48));
   const air=indexGetUnit(target);
   if(air&&unitInfo[air.o.type].movementType===MOVEMENT.WINGER)return{position:to,blocked:false};
@@ -167,14 +188,15 @@ export function laserImpact(u:Unit,target:number):{position:Tile32;blocked:boole
     const s=structureGetByPackedTile(tile);
     if(s)return{position:tileCenter(unpackTile(tile)),blocked:houseAreAllied(u.o.houseID,s.o.houseID)};
     const kind=mapGetLandscapeType(tile);
-    if(kind===LST.ENTIRELY_MOUNTAIN||kind===LST.PARTIAL_MOUNTAIN||kind===LST.WALL)return{position:tileCenter(unpackTile(tile)),blocked:true};
+    if(kind===LST.WALL)return{position:tileCenter(unpackTile(tile)),blocked:houseAreAllied(u.o.houseID,G.map[tile].houseID),wall:tile};
+    if(kind===LST.ENTIRELY_MOUNTAIN||kind===LST.PARTIAL_MOUNTAIN)return{position:tileCenter(unpackTile(tile)),blocked:true};
   }
   return{position:to,blocked:false};
 }
 export function tickLaser(u:Unit):void{
   if(u.o.type!==LASER_TANK)return;
   if(u.targetAttack&&indexIsValid(u.targetAttack)){
-    const target=indexGetTile(u.targetAttack),a=Math.atan2(target.x-u.o.position.x,u.o.position.y-target.y)*128/Math.PI;
+    const target=indexGetTile(u.targetAttack),a=G.net?tileGetDirection(u.o.position,target):Math.atan2(target.x-u.o.position.x,u.o.position.y-target.y)*128/Math.PI;
     unitSetOrientation(u,a,false,1);
   }
   if(!u.laser?.chargeUntil)return;
@@ -189,18 +211,18 @@ export function fireLaser(u:Unit,target:number):number{
   if(now<l.cooldownUntil)return 0;
   if(l.target!==target||l.chargeUntil===0){l.target=target;l.chargeStart=now;l.chargeUntil=now+48;return 0;}
   if(now<l.chargeUntil)return 0;
-  const angle=u.orientation[1].current*Math.PI/128;
-  l.from={x:u.o.position.x+Math.sin(angle)*136,y:u.o.position.y-32-Math.cos(angle)*136};
+  const angle=sineCosine(u.orientation[1].current);
+  l.from={x:u.o.position.x+angle.sin*136,y:u.o.position.y-32-angle.cos*136};
   const victim=indexGetUnit(target),air=!!victim&&unitInfo[victim.o.type].movementType===MOVEMENT.WINGER;
   l.to={x:hit.position.x,y:hit.position.y-(air?48:0)};l.firedAt=now;l.chargeUntil=0;l.cooldownUntil=now+180;
   const structure=air?null:structureGetByPackedTile(packTile(hit.position));
-  if(structure){structureDamage(structure,Math.round(unitInfo[LASER_TANK].damage*.4),0);alertNearbyBaseDefenders(structure,indexEncode(u.o.index,IT.UNIT));}
-  else if(victim){
+  if(structure){structureDamage(structure,unitInfo[LASER_TANK].damage,0);alertNearbyBaseDefenders(structure,indexEncode(u.o.index,IT.UNIT));}
+  else if(victim&&hit.wall===undefined){
     unitDamage(victim,laserDamageAgainst(victim.o.type),0);
     if(victim.o.hitpoints>0&&unitInfo[victim.o.type].o.actionsPlayer.includes(ACTION.ATTACK)&&victim.targetAttack===0){unitSetAction(victim,ACTION.ATTACK);unitSetTarget(victim,indexEncode(u.o.index,IT.UNIT));}
   }
   if(air)G.onVisualExplosion(EXPLOSION.IMPACT_SMALL,l.to);
-  else mapMakeExplosion(EXPLOSION.IMPACT_MEDIUM,hit.position,0,indexEncode(u.o.index,IT.UNIT));
+  else mapMakeExplosion(EXPLOSION.IMPACT_MEDIUM,hit.position,hit.wall===undefined?0:unitInfo[LASER_TANK].damage,indexEncode(u.o.index,IT.UNIT));
   G.onSound(COMBAT_SFX.LASER_FIRE,u.o.position);
   u.fireDelay=60;return 1;
 }
