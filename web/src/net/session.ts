@@ -35,6 +35,7 @@ export interface RoomState extends RoomInfo {
   members: RoomMember[];
 }
 export interface MatchStart {
+  matchId?: string;
   seed: number;
   config: RoomConfig;
   /** house — номер дома движка */
@@ -60,6 +61,14 @@ export function defaultEndpoint(): string {
 export class NetSession {
   private ws: WebSocket | null = null;
   private keepAlive = 0;
+  private endpoint = '';
+  private playerName = '';
+  private ticket: { id: string; token: string } | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retrySince = 0;
+  private retryAttempt = 0;
+  private awaitingCatchup = false;
+  private catchupTarget = 0;
   onRooms: (rooms: RoomInfo[]) => void = () => {};
   onRoom: (room: RoomState, you: number | null) => void = () => {};
   onStart: (start: MatchStart) => void = () => {};
@@ -90,18 +99,67 @@ export class NetSession {
   get match(): MatchStart | null {
     return this.start;
   }
+  /** Historical ticks must not play their old sounds or accept new orders. */
+  get replaying(): boolean { return this.awaitingCatchup || this.frame < this.catchupTarget; }
+
+  private readTicket(url: string): { id: string; token: string } | null {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(`dune-network-resume:${url}`) ?? 'null');
+      return typeof saved?.id === 'string' && /^[a-f0-9]{64}$/.test(saved.token) ? saved : null;
+    } catch { return null; }
+  }
+  private saveTicket(ticket: { id: string; token: string } | null): void {
+    this.ticket = ticket;
+    try {
+      const key = `dune-network-resume:${this.endpoint}`;
+      if (ticket) sessionStorage.setItem(key, JSON.stringify(ticket));
+      else sessionStorage.removeItem(key);
+    } catch { /* Private browsing may disable session storage. */ }
+  }
+  private cancelRetry(): void {
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.retrySince = this.retryAttempt = 0;
+  }
+  private retry(): void {
+    if (!this.ticket || this.retryTimer !== null) return;
+    this.retrySince ||= Date.now();
+    if (Date.now() - this.retrySince >= 120000) {
+      this.saveTicket(null);
+      this.onStatus('Не удалось восстановить связь. Выйдите в лобби.');
+      this.onClosed();
+      return;
+    }
+    this.onStatus('Связь потеряна. Восстанавливаем подключение…');
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.openSocket().catch(() => {});
+    }, Math.min(1000 * 2 ** this.retryAttempt++, 5000));
+  }
   /** насколько ходы впереди игры, в кадрах (больше нуля — есть запас) */
   get buffered(): number {
     return (this.lastTurn + 1) * (this.start?.framesPerTurn ?? 6) - this.frame;
   }
 
   connect(url: string, name: string): Promise<void> {
+    const saved = this.readTicket(url);
     this.close();
+    this.endpoint = url;
+    this.playerName = name;
+    this.ticket = saved;
     this.onStatus("Подключение к серверу…");
+    return this.openSocket();
+  }
+  /** A reload in the same tab can restore its room without storing the password. */
+  restore(url: string): Promise<void> {
+    return this.readTicket(url) ? this.connect(url, 'Командир') : Promise.resolve();
+  }
+
+  private openSocket(): Promise<void> {
     return new Promise((resolve, reject) => {
       let ws: WebSocket;
       try {
-        ws = new WebSocket(url);
+        ws = new WebSocket(this.endpoint);
       } catch (error) {
         this.onStatus("Неверный адрес сервера");
         reject(error);
@@ -114,12 +172,17 @@ export class NetSession {
         reject(new Error("timeout"));
       }, 8000);
       ws.onopen = () => {
+        if (this.ws !== ws) return;
         clearTimeout(timer);
         // пинг держит соединение живым на прокси и NAT во время долгого матча
         clearInterval(this.keepAlive);
         this.keepAlive = window.setInterval(() => this.send({ t: "ping", at: Date.now() }), 15000);
-        this.send({ t: "hello", name });
-        this.onStatus("Сервер подключён");
+        this.send({ t: "hello", name: this.playerName, protocol: 2 });
+        if (this.ticket) {
+          this.awaitingCatchup = true;
+          this.send({ t: 'resume', ...this.ticket, matchId: this.start?.matchId, from: Math.ceil(this.frame / (this.start?.framesPerTurn ?? 6)) });
+          this.onStatus('Восстановление матча…');
+        } else this.onStatus("Сервер подключён");
         resolve();
       };
       ws.onerror = () => {
@@ -127,14 +190,21 @@ export class NetSession {
         this.onStatus("Не удалось подключиться к серверу");
         reject(new Error("connect"));
       };
-      ws.onclose = () => {
+      ws.onclose = (event) => {
+        clearTimeout(timer);
         if (this.ws !== ws) return;
         clearInterval(this.keepAlive);
         this.ws = null;
-        this.onStatus("Соединение с сервером потеряно");
-        this.onClosed();
+        if (event.code === 4001) {
+          this.saveTicket(null);
+          this.onStatus('Матч открыт в другом подключении. Выйдите в лобби.');
+          this.onClosed();
+        } else if (this.ticket) { this.awaitingCatchup = true; this.retry(); }
+        else { this.onStatus("Соединение с сервером потеряно"); this.onClosed(); }
+        reject(new Error('closed'));
       };
       ws.onmessage = (event) => {
+        if (this.ws !== ws) return;
         let msg: any;
         try {
           msg = JSON.parse(String(event.data));
@@ -147,6 +217,9 @@ export class NetSession {
   }
 
   close(): void {
+    if (this.ticket) this.send({ t: 'leave' });
+    this.cancelRetry();
+    this.saveTicket(null);
     clearInterval(this.keepAlive);
     const ws = this.ws;
     this.ws = null;
@@ -168,6 +241,8 @@ export class NetSession {
   }
   leave(): void {
     this.send({ t: "leave" });
+    this.cancelRetry();
+    this.saveTicket(null);
     this.endMatch();
   }
   setOwn(change: { house?: string; team?: number }): void {
@@ -180,12 +255,13 @@ export class NetSession {
     this.send({ t: "start" });
   }
   reportOver(result: "won" | "lost"): void {
+    if (this.replaying) return;
     this.send({ t: "over", result });
   }
 
   /** Команда своего игрока. Приказы одной цели за один вызов кода склеиваются в одну команду. */
   command(c: NetCommand): void {
-    if (!this.start || this.start.you === null) return;
+    if (!this.start || this.start.you === null || !this.connected || this.replaying) return;
     if (c.k === "order") {
       const key = `${c.a}:${c.p}`;
       const pending = this.pendingOrders.get(key);
@@ -201,7 +277,7 @@ export class NetSession {
     this.send({ t: "cmd", c });
   }
   private flushOrders(): void {
-    for (const c of this.pendingOrders.values()) this.send({ t: "cmd", c });
+    if (!this.replaying) for (const c of this.pendingOrders.values()) this.send({ t: "cmd", c });
     this.pendingOrders.clear();
   }
 
@@ -210,11 +286,28 @@ export class NetSession {
       case "rooms":
         return this.onRooms(msg.rooms);
       case "room":
+        if (!this.start) { this.awaitingCatchup = false; this.cancelRetry(); }
         return this.onRoom(msg.room, msg.you);
+      case 'session':
+        this.saveTicket({ id: String(msg.id), token: String(msg.token) });
+        this.cancelRetry();
+        return;
       case "error":
+        if (msg.code === 'resume') {
+          this.cancelRetry(); this.saveTicket(null);
+          this.onStatus(String(msg.text));
+          this.onClosed();
+        }
         return this.onError(String(msg.text ?? "Ошибка сервера"));
       case "start":
+        if (msg.catchup && this.start?.matchId && this.start.matchId === msg.matchId) {
+          this.awaitingCatchup = true;
+          this.start = msg as MatchStart;
+          return;
+        }
         this.start = msg as MatchStart;
+        this.awaitingCatchup = !!msg.catchup;
+        this.catchupTarget = 0;
         this.turns.clear();
         this.lastTurn = -1;
         this.frame = 0;
@@ -222,7 +315,11 @@ export class NetSession {
         return this.onStart(this.start);
       case "catchup":
         for (const [n, c] of msg.log as [number, Turn][]) this.turns.set(n, c);
+        if (msg.final === false) return;
         this.lastTurn = Math.max(this.lastTurn, (msg.turn as number) - 1);
+        this.catchupTarget = msg.turn * (this.start?.framesPerTurn ?? 6);
+        this.awaitingCatchup = false;
+        this.onStatus('Синхронизация матча…');
         return;
       case "turn":
         if (!this.start) return;
@@ -235,6 +332,7 @@ export class NetSession {
       case "desync":
         return this.onDesync(msg.turn);
       case "closed":
+        this.cancelRetry(); this.saveTicket(null);
         this.endMatch();
         this.onStatus("Матч завершён");
         return;
@@ -253,13 +351,15 @@ export class NetSession {
     this.turns.clear();
     this.lastTurn = -1;
     this.frame = 0;
+    this.awaitingCatchup = false;
+    this.catchupTarget = 0;
     this.pendingOrders.clear();
   }
 
   /** Продвинуть игру на прошедшее время (мс). Возвращает число выполненных тактов. */
   advance(dtMs: number): number {
     const start = this.start;
-    if (!start) return 0;
+    if (!start || this.awaitingCatchup) return 0;
     const fpt = start.framesPerTurn;
     const available = this.buffered;
     this.acc = Math.min(this.acc + (dtMs * 60) / 1000, 4);
@@ -269,6 +369,10 @@ export class NetSession {
     budget = Math.min(budget, available, 600);
     this.acc = Math.max(0, this.acc - budget);
     for (let i = 0; i < budget; i++) this.runFrame(fpt);
+    if (this.catchupTarget > 0 && this.frame >= this.catchupTarget) {
+      this.catchupTarget = 0;
+      this.onStatus('Синхронизация завершена');
+    }
     return budget;
   }
 

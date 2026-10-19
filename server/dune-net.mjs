@@ -5,10 +5,11 @@ import { createServer } from "node:http";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
 
-export const PROTOCOL = 1;
+export const PROTOCOL = 2;
 export const TURN_MS = 100;
 /** кадров движка (60 Гц) в одном ходе */
 export const FRAMES_PER_TURN = 6;
+export const RECONNECT_MS = 120000;
 /** дома движка: буква → номер (0 Харконнены, 1 Атрейдесы, 2 Ордосы, 3 Фримены, 4 Сардаукары, 5 Наёмники) */
 export const HOUSES = { H: 0, A: 1, O: 2, F: 3, S: 4, M: 5 };
 const MAX_ROOMS = 64;
@@ -19,9 +20,10 @@ const MAX_MESSAGES_PER_SECOND = 80;
 const clean = (s, max) => String(s ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max);
 const hashPassword = (password, salt) => scryptSync(password, salt, 32);
 
-export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, turnMs = TURN_MS } = {}) {
+export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, turnMs = TURN_MS, reconnectMs = RECONNECT_MS } = {}) {
   const rooms = new Map();
   const clients = new Set();
+  let closing = false;
 
   const http = createServer((req, res) => {
     if (req.url === "/health" || req.url === "/dune/health") {
@@ -83,35 +85,53 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
     return { map, teamSize, credits };
   };
 
+  function maybeCloseRoom(room) {
+    if (![...room.players.values()].some((p) => p.connected || [...room.sessions.values()].some((s) => s.player === p))) closeRoom(room);
+  }
+
+  function removePlayer(room, p) {
+    if (room.state === "waiting") {
+      for (const [id, player] of room.players) if (player === p) room.players.delete(id);
+      if (room.hostSlot === p.slot) room.hostSlot = [...room.players.values()].sort((a,b) => a.slot-b.slot)[0]?.slot ?? -1;
+    } else if (room.state === "playing") room.pending.push([p.slot, { k: "left" }]);
+  }
+
   function leaveRoom(client, reason = "leave") {
     const room = client.room;
     if (!room) return;
     client.room = null;
-    if (room.observers.delete(client)) {
-      broadcastRoom(room);
-      return;
-    }
+    const session = room.sessions.get(client.resumeToken);
+    const token = client.resumeToken;
+    client.resumeToken = null;
+    room.observers.delete(client);
     const p = room.players.get(client.id);
-    if (!p) return;
-    if (room.state === "waiting") {
-      room.players.delete(client.id);
-      if (room.hostSlot === p.slot) {
-        const next = [...room.players.values()].sort((a, b) => a.slot - b.slot)[0];
-        room.hostSlot = next ? next.slot : -1;
-      }
-    } else {
+    if (p) {
       p.connected = false;
       p.client = null;
-      if (room.state === "playing") room.pending.push([p.slot, { k: "left" }]);
     }
-    log(`комната ${room.id}: ${p.name} вышел (${reason})`);
-    if (![...room.players.values()].some((x) => x.connected)) closeRoom(room);
-    else broadcastRoom(room);
+    if (session && reason === "обрыв" && !closing) {
+      session.client = null;
+      session.timer = setTimeout(() => {
+        room.sessions.delete(token);
+        if (p) removePlayer(room, p);
+        maybeCloseRoom(room);
+        if (rooms.has(room.id)) broadcastRoom(room);
+      }, reconnectMs);
+    } else {
+      if (session) clearTimeout(session.timer);
+      room.sessions.delete(token);
+      if (p) removePlayer(room, p);
+    }
+    if (p) log(`комната ${room.id}: ${p.name} отключился (${reason})`);
+    maybeCloseRoom(room);
+    if (rooms.has(room.id)) broadcastRoom(room);
   }
 
   function closeRoom(room) {
+    if (!rooms.delete(room.id)) return;
     clearInterval(room.timer);
-    rooms.delete(room.id);
+    for (const session of room.sessions.values()) clearTimeout(session.timer);
+    room.sessions.clear();
     for (const o of room.observers) {
       o.room = null;
       send(o, { t: "closed" });
@@ -119,12 +139,29 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
     log(`комната ${room.id} закрыта`);
   }
 
+  function saveSession(client, room, player = null) {
+    const token = randomBytes(32).toString("hex");
+    room.sessions.set(token, { player, client, timer: null });
+    client.resumeToken = token;
+    send(client, { t: "session", id: room.id, token });
+  }
+
+  function replay(client, room, you, from = 0) {
+    send(client, { ...room.start, you, catchup: true });
+    const entries = room.log.filter(([n]) => n >= from);
+    if (client.protocol < 2) return send(client, { t: 'catchup', turn: room.turn, log: entries, final: true });
+    for (let i = 0; i < Math.max(1, entries.length); i += 128)
+      send(client, { t: "catchup", turn: room.turn, log: entries.slice(i, i + 128), final: i + 128 >= entries.length });
+  }
+
   function joinAsPlayer(client, room, wantedHouse, wantedTeam) {
     const slot = freeSlot(room, wantedTeam);
     const house = freeHouse(room, wantedHouse);
     if (slot === null || house === null) return send(client, { t: "error", code: "full", text: "В комнате нет мест" });
-    room.players.set(client.id, { slot, name: client.name, house, team: Math.floor(slot / room.config.teamSize), connected: true, client });
+    const player = { slot, name: client.name, house, team: Math.floor(slot / room.config.teamSize), connected: true, client };
+    room.players.set(client.id, player);
     client.room = room;
+    saveSession(client, room, player);
     if (room.hostSlot < 0) room.hostSlot = slot;
     broadcastRoom(room);
   }
@@ -139,6 +176,7 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
     room.desynced = false;
     room.start = {
       t: "start",
+      matchId: randomUUID(),
       seed: room.seed,
       config: room.config,
       players: [...room.players.values()].sort((a, b) => a.slot - b.slot).map((p) => ({ slot: p.slot, name: p.name, house: HOUSES[p.house], team: p.team })),
@@ -178,7 +216,35 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
     switch (msg.t) {
       case "hello":
         client.name = clean(msg.name, 24) || "Командир";
+        client.protocol = Number(msg.protocol) || 1;
         return send(client, { t: "welcome", id: client.id, protocol: PROTOCOL });
+      case "resume": {
+        const r = rooms.get(String(msg.id)), session = r?.sessions.get(String(msg.token));
+        if (!r || !session || (!session.player && r.state !== "playing"))
+          return send(client, { t: "error", code: "resume", text: "Время возврата истекло или матч завершён" });
+        if (session.client === client) return broadcastRoom(r);
+        if (room) leaveRoom(client);
+        clearTimeout(session.timer);
+        const old = session.client;
+        if (old) { old.room = null; old.resumeToken = null; r.observers.delete(old); old.ws.close(4001, "reconnected"); }
+        session.client = client;
+        session.timer = null;
+        client.room = r;
+        client.resumeToken = String(msg.token);
+        const p = session.player;
+        if (p) {
+          for (const [id, player] of r.players) if (player === p) r.players.delete(id);
+          p.client = client; p.connected = true; client.name = p.name;
+          r.players.set(client.id, p);
+        } else r.observers.add(client);
+        send(client, { t: "session", id: r.id, token: client.resumeToken });
+        if (r.state !== "waiting") {
+          const from = msg.matchId === r.start.matchId && Number.isSafeInteger(msg.from) && msg.from >= 0 && msg.from <= r.turn ? msg.from : 0;
+          replay(client, r, p?.slot ?? null, from);
+        }
+        broadcastRoom(r);
+        return;
+      }
       case "rooms":
         return send(client, { t: "rooms", rooms: [...rooms.values()].map(roomInfo) });
       case "create": {
@@ -197,6 +263,7 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
           state: "waiting",
           players: new Map(),
           observers: new Set(),
+          sessions: new Map(),
           hostSlot: -1,
           pending: [],
           log: [],
@@ -217,8 +284,8 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
           if (r.state !== "playing") return send(client, { t: "error", code: "state", text: "Наблюдать можно только идущий матч" });
           r.observers.add(client);
           client.room = r;
-          send(client, { ...r.start, you: null });
-          send(client, { t: "catchup", turn: r.turn, log: r.log });
+          saveSession(client, r);
+          replay(client, r, null);
           return broadcastRoom(r);
         }
         if (r.state !== "waiting") return send(client, { t: "error", code: "state", text: "Матч уже идёт" });
@@ -258,6 +325,7 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
         if (!room || !p || room.state !== "waiting" || p.slot !== room.hostSlot) return;
         const teams = new Set([...room.players.values()].map((x) => x.team));
         if (room.players.size < 2 || teams.size < 2) return send(client, { t: "error", code: "players", text: "Нужны игроки в обеих командах" });
+        if ([...room.players.values()].some((x) => !x.connected)) return send(client, { t: "error", code: "players", text: "Дождитесь подключения всех игроков" });
         return startMatch(room);
       }
       case "cmd": {
@@ -272,7 +340,7 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
       case "hash":
         return onHash(client, msg);
       case "over": {
-        if (room && room.state === "playing" && msg.result === "won") {
+        if (room?.players.get(client.id)?.connected && room.state === "playing" && msg.result === "won") {
           room.state = "finished";
           broadcastRoom(room);
         }
@@ -284,8 +352,9 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
   }
 
   wss.on("connection", (ws) => {
-    const client = { id: randomUUID(), ws, name: "Командир", room: null, budget: MAX_MESSAGES_PER_SECOND, last: Date.now() };
+    const client = { id: randomUUID(), ws, name: "Командир", protocol: 1, room: null, resumeToken: null, alive: true, budget: MAX_MESSAGES_PER_SECOND, last: Date.now() };
     clients.add(client);
+    ws.on("pong", () => { client.alive = true; });
     ws.on("message", (data) => {
       const now = Date.now();
       client.budget = Math.min(MAX_MESSAGES_PER_SECOND, client.budget + ((now - client.last) / 1000) * MAX_MESSAGES_PER_SECOND);
@@ -304,6 +373,13 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
       clients.delete(client);
     });
   });
+  const heartbeat = setInterval(() => {
+    for (const c of clients) {
+      if (!c.alive) { c.ws.terminate(); continue; }
+      c.alive = false;
+      if (c.ws.readyState === 1) c.ws.ping();
+    }
+  }, 15000);
 
   return new Promise((resolve) => {
     http.listen(port, host, () => {
@@ -314,7 +390,9 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
         rooms,
         close: () =>
           new Promise((done) => {
-            for (const r of rooms.values()) clearInterval(r.timer);
+            closing = true;
+            clearInterval(heartbeat);
+            for (const r of [...rooms.values()]) closeRoom(r);
             for (const c of clients) c.ws.terminate();
             wss.close();
             http.close(() => done());

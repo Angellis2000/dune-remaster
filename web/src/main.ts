@@ -198,7 +198,9 @@ async function startGame(rom: DuneRom): Promise<void> {
   endBanner.hidden = true;
   stage.append(message, endBanner);
   let messageTimer = 0;
+  let networkReplaying = () => false;
   G.onMessage = (text: string) => {
+    if (networkReplaying()) return;
     message.textContent = text;
     message.hidden = false;
     messageTimer = 60 * 6;
@@ -228,12 +230,13 @@ async function startGame(rom: DuneRom): Promise<void> {
   window.addEventListener("touchend", unlock, { capture: true });
   window.addEventListener("wheel", unlock, { capture: true, passive: true });
   window.addEventListener("focus", unlock);
-  G.onSound = (id, _position, volume = 1) => sound.sfx(id, volume);
-  G.onFeedback = (id) => sound.feedback(id);
+  G.onSound = (id, _position, volume = 1) => { if (!networkReplaying()) sound.sfx(id, volume); };
+  G.onFeedback = (id) => { if (!networkReplaying()) sound.feedback(id); };
   // MD $0290A4/$0290AE: accepted order -> SFX $0D; $00C2D8 -> READY feedback 0.
   // Placement also uses SFX $0D ($028486); it must never replace READY feedback.
-  G.onConstructionStart = () => sound.sfx(0x0d);
+  G.onConstructionStart = () => { if (!networkReplaying()) sound.sfx(0x0d); };
   G.onConstructionComplete = (yard) => {
+    if (networkReplaying()) return;
     sound.feedback(0);
     if (yard) completedConstructionYard = yard;
   };
@@ -536,6 +539,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     return (romMapCache = list);
   };
   const net = new NetSession();
+  networkReplaying = () => net.replaying;
   let netRestore: (() => void) | null = null;
   let netClock = 0;
   const networkMenu=new NetworkMenu({
@@ -560,11 +564,11 @@ async function startGame(rom: DuneRom): Promise<void> {
     networkMenu.setStatus(text);
     if (net.inMatch) G.onMessage(text, 0);
   };
-  net.onStatus = (text) => networkMenu.setStatus(text);
-  net.onDesync = (turn) => G.onMessage(`Внимание: игра у игроков разошлась (ход ${turn}). Матч может идти по-разному.`, 0);
-  net.onClosed = () => {
-    if (net.inMatch) G.onMessage("Связь с сервером потеряна — матч остановлен. Start → «Начать сначала» — в лобби.", 0);
+  net.onStatus = (text) => {
+    networkMenu.setStatus(text);
+    if (net.inMatch) { message.textContent = text; message.hidden = false; messageTimer = 60 * 6; }
   };
+  net.onDesync = (turn) => G.onMessage(`Внимание: игра у игроков разошлась (ход ${turn}). Матч может идти по-разному.`, 0);
   /** Начать матч: у всех одинаковое зерно, карта и состав — дальше игра идёт по ходам сервера. */
   const startNetMatch = (start: MatchStart): void => {
     const local = start.you === null ? -1 : (start.players.find((p) => p.slot === start.you)?.house ?? -1);
@@ -611,7 +615,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     net.reportOver(result);
     endBanner.textContent = result === "won" ? "ПОБЕДА · Start → «Начать сначала» — выйти в лобби" : "ПОРАЖЕНИЕ · Start → «Начать сначала» — выйти в лобби";
     endBanner.hidden = false;
-    sound.playMusic((result === "won" ? MUSIC.WIN : MUSIC.LOSE)[world.player] ?? 0);
+    if (!net.replaying) sound.playMusic((result === "won" ? MUSIC.WIN : MUSIC.LOSE)[world.player] ?? 0);
   };
   /** Выйти из сетевого матча (без перехода куда-либо). */
   const endNetMatch = (): void => {
@@ -1121,8 +1125,9 @@ async function startGame(rom: DuneRom): Promise<void> {
     else frontend.openIntro();
   }
   canvas.focus();
+  void net.restore(defaultEndpoint()).catch(() => {});
   // ?debug открывает мир и вид из консоли
-  if (q.has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat, endPicture, scoreScreen, frontend, sound, tutorial, finale } });
+  if (q.has("debug")) Object.assign(window, { dune: { world, view, G, sprites, mentat, endPicture, scoreScreen, frontend, sound, tutorial, finale, net } });
 }
 
 showRomScreen();
