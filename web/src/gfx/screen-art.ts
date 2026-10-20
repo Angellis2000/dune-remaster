@@ -5,7 +5,7 @@ import password from "./assets/frontend/password-wide.png?url";
 import houses from "./assets/frontend/house-crests-modern.png?url";
 import sega from "./assets/frontend/sega.png?url";
 import publishers from "./assets/frontend/publishers.png?url";
-import ships from "./assets/frontend/intro-ships.png?url";
+import ships from "./assets/frontend/intro-ships-angles-v2.png?url";
 import victory from "./assets/frontend/victory-hd.png?url";
 import defeat from "./assets/frontend/defeat-hd.png?url";
 import mentatAtreides from "./assets/frontend/mentat-atreides-hd.png?url";

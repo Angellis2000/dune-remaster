@@ -16,6 +16,8 @@ import { blitTile, cramToRGBA, readU16, readU32 } from "../rom/md.ts";
 import { drawObjSprite, objectDef, type ObjSprite } from "./endgame.ts";
 import { loadTileList } from "./tutorial.ts";
 import { menuText } from "../gfx/menu-canvas.ts";
+import {PlanetBackdrop} from './planet-backdrop.ts';
+import { ShipFlight, type ShipPose } from './ship-flight.ts';
 
 type Step = Generator<void, void, void>;
 
@@ -54,6 +56,7 @@ export class Intro {
   private readonly target = -704 * 0x10000;
   /** корабль сценки: координаты экрана и спрайты кадра */
   private ship: { x: number; y: number; sprites: ObjSprite[]; house: number } | null = null;
+  private shipFlight: ShipFlight | null = null;
   private vram: Uint8Array;
   private original = document.createElement("canvas");
   private animationFrame = 0;
@@ -62,6 +65,7 @@ export class Intro {
   private starStamps: { x: number; y: number; canvas: HTMLCanvasElement; size: number; phase: number }[] | null = null;
   private shipBounds = new Map<string, { x: number; y: number; w: number; h: number }>();
   private segaVideo: HTMLVideoElement | null = null;
+  private planet=new PlanetBackdrop();
 
   private getSegaVideo(): HTMLVideoElement | null {
     if (typeof document === "undefined") return null;
@@ -84,6 +88,7 @@ export class Intro {
       this.segaVideo.currentTime = 0;
     }
   }
+  pauseBackdrop():void {this.planet.pause();}
 
   constructor(
     private gfx: ScreenGfx,
@@ -112,6 +117,9 @@ export class Intro {
 
   start(): void {
     this.stopVideo();
+    this.planet.reset();
+    const ships = this.gfx.art.get('ships');
+    if (ships) ShipFlight.preload(ships);
     this.cram.fill(0);
     this.mode = "black";
     this.hsA = this.hsB = 0;
@@ -121,6 +129,7 @@ export class Intro {
     this.speed = 0x8000;
     this.loopOn = this.loopAgain = true;
     this.ship = null;
+    this.shipFlight = null;
     this.vram = this.title.vram.slice();
     this.gen = this.run();
   }
@@ -158,6 +167,20 @@ export class Intro {
   private *cutscene(n: number): Step {
     const b = this.gfx.romBytes;
     const frames = readU32(b, 0x01957a + n * 4);
+    // Read ahead for smooth HD interpolation; the generator below keeps ROM timing intact.
+    const poses: ShipPose[] = [];
+    let spriteFrame = 0, sprites = objectDef(b, readU32(b, frames));
+    for (let p = readU32(b, 0x01963a + n * 4); ; ) {
+      const cmd = readU16(b, p); p += 2;
+      if (cmd === 1) {
+        const bounds = this.visibleShipBounds(sprites);
+        poses.push({ ...bounds, x: ((readU16(b, p) << 16) >> 16) + bounds.x,
+          y: ((readU16(b, p + 2) << 16) >> 16) + bounds.y });
+        p += 4;
+      } else if (cmd === 2) sprites = objectDef(b, readU32(b, frames + ++spriteFrame * 4));
+      else break;
+    }
+    this.shipFlight = new ShipFlight(poses, n, this.animationFrame);
     let frame = 0;
     this.ship = { x: 0, y: 0, sprites: objectDef(b, readU32(b, frames)), house: n };
     for (let p = readU32(b, 0x01963a + n * 4); ; ) {
@@ -174,6 +197,7 @@ export class Intro {
       } else break;
     }
     this.ship = null;
+    this.shipFlight = null;
   }
 
   /** $017C36: шаг прокрутки звёзд. */
@@ -184,6 +208,10 @@ export class Intro {
         this.loopOn = false;
         this.braking = true;
         this.speed = 0x58800;
+        // Count the untouched ROM scroll steps; fit the approach video into exactly that cue.
+        let position=this.pos,speed=this.speed,frames=0;
+        do{speed-=0x800;position-=Math.max(0x8000,Math.min(0x30000,speed));frames++;}while(position>this.target);
+        this.planet.begin(this.animationFrame,frames);
       }
     }
     this.hsB = this.pos >> 16;
@@ -325,6 +353,11 @@ export class Intro {
   drawBackdrop(ctx: CanvasRenderingContext2D, frame: number, scroll = -704): boolean {
     const art = this.gfx.art;
     if (!art.get("arrakis")) return false;
+    if(this.braking||scroll===-704){
+      const settled=scroll===-704;
+      if(this.planet.alpha(frame,settled)<1)art.background(ctx,'arrakis',704+scroll);
+      if(this.planet.draw(ctx,frame,settled))return true;
+    }
     ctx.save();
     art.background(ctx, "arrakis", 704 + scroll);
     const image = art.get("arrakis");
@@ -454,10 +487,7 @@ export class Intro {
     const ship = this.ship;
     const ships = art.get("ships");
     if (ship && ships) {
-      const { x, y, w, h } = this.visibleShipBounds(ship.sprites);
-      // Корпус занимает всю ширину ячейки и 55% её высоты, начиная с 22.5%.
-      ctx.drawImage(ships, ship.house * ships.width / 3, ships.height * 0.225,
-        ships.width / 3, ships.height * 0.55, ship.x + x, ship.y + y, w, h);
+      this.shipFlight?.draw(ctx, ships, this.animationFrame);
     }
     ctx.restore();
     return true;

@@ -110,6 +110,7 @@ export class FrontEnd {
   }
 
   openHouse(): void {
+    this.intro.pauseBackdrop();
     this.mode = "house";
     this.house = 0;
     this.slide = 0;
@@ -126,6 +127,7 @@ export class FrontEnd {
 
   close(): void {
     this.intro.stopVideo();
+    this.intro.pauseBackdrop();
     this.root.hidden = true;
     cancelAnimationFrame(this.raf);
   }
