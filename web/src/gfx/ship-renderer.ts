@@ -165,7 +165,33 @@ void main(){
   gl_FragColor=vec4(c,a*clamp(thrust*1.4,0.,1.));
 }`;
 
-type Buffers = { body: WebGLBuffer; bodyCount: number; flame: WebGLBuffer; flameCount: number; radius: number; texture: WebGLTexture | null };
+// огни: точка с ореолом; kind — 0 ровный, 1 маячок (пульсирует), 2 стробоскоп (двойная вспышка)
+const LIGHT_VERTEX = `
+attribute vec3 position;attribute vec3 color;attribute vec2 info;
+uniform mat4 rotation;uniform mat4 projection;uniform float distance,pixels;uniform highp float time;
+varying vec3 vColor;varying float vBright;
+void main(){
+  vec4 p=rotation*vec4(position,1.);vec3 view=p.xyz-vec3(0.,0.,distance);
+  float kind=info.x,phase=info.y,b;
+  if(kind<.5)b=.82+.18*sin(time*2.+phase);
+  else if(kind<1.5)b=.12+.88*pow(.5+.5*sin(time*3.6+phase),3.);
+  else{float f=fract(time*.8+phase);b=step(f,.045)+step(.11,f)*step(f,.155);}
+  vBright=b;vColor=color;
+  gl_Position=projection*vec4(view,1.);
+  gl_PointSize=max(4.,2.6*pixels/max(.1,-view.z)*(.5+.5*b));
+}`;
+const LIGHT_FRAGMENT = `
+precision mediump float;
+varying vec3 vColor;varying float vBright;
+void main(){
+  float d=length(gl_PointCoord-.5)*2.;
+  if(d>1.)discard;
+  float core=smoothstep(.2,0.,d),glow=exp(-d*d*7.)*.7+exp(-d*d*2.)*.15;
+  vec3 c=mix(vColor*1.4+.1,vec3(1.),core*.8);
+  gl_FragColor=vec4(c,(core+glow)*vBright);
+}`;
+
+type Buffers = { body: WebGLBuffer; bodyCount: number; flame: WebGLBuffer; flameCount: number; lights: WebGLBuffer; lightCount: number; radius: number; texture: WebGLTexture | null };
 
 export class ShipRenderer {
   readonly canvas = document.createElement("canvas");
@@ -173,6 +199,7 @@ export class ShipRenderer {
   private program: WebGLProgram | null = null;
   private depthProgram: WebGLProgram | null = null;
   private flameProgram: WebGLProgram | null = null;
+  private lightProgram: WebGLProgram | null = null;
   private shadowTexture: WebGLTexture | null = null;
   private shadowFrame: WebGLFramebuffer | null = null;
   private cache = new Map<ShipModel, Buffers>();
@@ -184,6 +211,7 @@ export class ShipRenderer {
     this.program = this.link(gl, VERTEX, FRAGMENT);
     this.depthProgram = this.link(gl, DEPTH_VERTEX, DEPTH_FRAGMENT);
     this.flameProgram = this.link(gl, FLAME_VERTEX, FLAME_FRAGMENT);
+    this.lightProgram = this.link(gl, LIGHT_VERTEX, LIGHT_FRAGMENT);
     // карта теней: глубина, упакованная в RGBA
     this.shadowTexture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.shadowTexture);
@@ -297,7 +325,12 @@ export class ShipRenderer {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     }
-    const b = { body: bodyBuffer, bodyCount: body.length / 14, flame: flameBuffer, flameCount: flame.length / 14, radius, texture };
+    const lightData: number[] = [];
+    for (const l of model.lights ?? []) lightData.push(...l.at, ...l.color, l.kind === "steady" ? 0 : l.kind === "beacon" ? 1 : 2, l.phase);
+    const lightBuffer = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, lightBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lightData.length ? lightData : [0]), gl.STATIC_DRAW);
+    const b = { body: bodyBuffer, bodyCount: body.length / 14, flame: flameBuffer, flameCount: flame.length / 14, lights: lightBuffer, lightCount: lightData.length / 8, radius, texture };
     this.cache.set(model, b);
     return b;
   }
@@ -340,6 +373,7 @@ export class ShipRenderer {
       gl.uniform3fv(u("lightDir"), dir);
       gl.uniform3fv(u("key"), KEY);
       gl.uniform1f(u("texel"), 1 / SHADOW_SIZE);
+      gl.uniform1f(u("pixels"), (h / 2) * f);
     };
     const attrs = (prog: WebGLProgram, stride: number, list: [string, number][]) => {
       let offset = 0;
@@ -400,6 +434,21 @@ export class ShipRenderer {
       gl.depthMask(true);
       gl.disable(gl.BLEND);
       off(flameProgram, ["center", "ring", "t", "dims", "info", "color"]);
+    }
+    // 4) мигающие огни: поверх по яркости, корпус загораживает
+    const lightProgram = this.lightProgram;
+    if (lightProgram && b.lightCount) {
+      gl.useProgram(lightProgram);
+      gl.bindBuffer(gl.ARRAY_BUFFER, b.lights);
+      attrs(lightProgram, 8, [["position", 3], ["color", 3], ["info", 2]]);
+      uniforms(lightProgram);
+      gl.enable(gl.BLEND);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE, gl.ONE, gl.ONE);
+      gl.depthMask(false);
+      gl.drawArrays(gl.POINTS, 0, b.lightCount);
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+      off(lightProgram, ["position", "color", "info"]);
     }
     return this.canvas;
   }

@@ -30,6 +30,8 @@ export interface ShipModel {
    * прямоугольного, square — квадратность сечения (0 — круг, 1 — прямоугольник), color — цвет пламени.
    */
   nozzles: { at: Vec3; radius: number; size?: [number, number]; square?: number; color: Vec3 }[];
+  /** мигающие огни: ровные ходовые, пульсирующие маячки, стробоскопы (gfx/ship-nozzles.ts → findLights) */
+  lights?: { at: Vec3; color: Vec3; kind: "steady" | "beacon" | "strobe"; phase: number }[];
   /**
    * Модель с текстурой: треугольники подряд и UV к каждой вершине. Рендер берёт цвет из текстуры, а насыщенную
    * «краску» перекрашивает в paint (цвет дома); металл не трогает.

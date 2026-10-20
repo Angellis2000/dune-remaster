@@ -4,7 +4,7 @@
  * (текстура пака); их делает tools/sim/ship_import.ts. Рисует тот же gfx/ship-renderer.ts, что и самодельные модели.
  */
 import type { ShipModel, Vec3 } from "./ship-models.ts";
-import { findNozzles } from "./ship-nozzles.ts";
+import { findLights, findNozzles } from "./ship-nozzles.ts";
 import atreidesData from "./assets/ships/mothership-atreides.json?url";
 import atreidesTexture from "./assets/ships/mothership-atreides.png?url";
 import harkonnenData from "./assets/ships/mothership-harkonnen.json?url";
@@ -63,7 +63,7 @@ export async function loadImportedShip(spec: ImportedShipSpec): Promise<ShipMode
   const flame = hex(spec.flame);
   const nozzles = (spec.nozzles ?? findNozzles(data.positions)).map((n) => ({ ...n, color: flame }));
   return {
-    id: spec.id, name: spec.name, house: spec.house, parts: [], nozzles,
+    id: spec.id, name: spec.name, house: spec.house, parts: [], nozzles, lights: findLights(data.positions, hex(spec.paint)),
     mesh: { positions: new Float32Array(data.positions), uvs: new Float32Array(data.uvs), texture: image, paint: hex(spec.paint) },
   };
 }
