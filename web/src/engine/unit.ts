@@ -920,9 +920,11 @@ export function unitMove(unit: Unit | null, distance: number): boolean {
       if (ui.flags.isBullet) {
         if (unit.fireDelay === 0 || unit.o.type === UNIT.MISSILE_TURRET) {
           if (unit.o.type === UNIT.MISSILE_HOUSE) {
+            G.onHouseMissileImpact(newPosition);
             for (let i = 0; i < 17; i++) {
               const p = tile(newPosition.x + HOUSE_MISSILE_X[i], newPosition.y + HOUSE_MISSILE_Y[i]);
-              if (tileIsValid(p)) mapMakeExplosion(ui.explosionType, p, 200, 0);
+              // MD $0464FE: 17 impacts of 200. Stronger multiplayer strike requested by the owner.
+              if (tileIsValid(p)) mapMakeExplosion(ui.explosionType, p, G.net ? 400 : 200, 0);
             }
           } else if (ui.explosionType !== 0xffff) {
             const pp = packTile(unit.o.position);
@@ -991,9 +993,9 @@ export function unitDamage(unit: Unit | null, damage: number, range: number): bo
   if (unit.o.hitpoints === 0) {
     unitRemovePlayer(unit);
     if (unit.o.type === UNIT.HARVESTER) mapFillCircleWithSpice(packTile(unit.o.position), idiv(unit.amount, 32));
-    if (unit.o.type === UNIT.SABOTEUR) {
+    if ((!G.net || isLocal(houseID)) && unit.o.type === UNIT.SABOTEUR) {
       G.onFeedback(20);
-    } else if (!ui.o.flags.noMessageOnDeath && alive) {
+    } else if ((!G.net || isLocal(houseID)) && !ui.o.flags.noMessageOnDeath && alive) {
       G.onFeedback(isLocal(houseID) || G.campaignID > 3 ? houseID + 14 : 13);
     }
     unitSetAction(unit, ACTION.DIE);
@@ -1490,7 +1492,7 @@ export function unitLaunchHouseMissile(packed: number): void {
   G.houseMissileCountdown = 0;
   G.unitHouseMissile = null;
   if (isAI) {
-    G.onFeedback(39);
+    if (!G.net || !houseAreAllied(G.playerHouseID,m.o.houseID)) G.onFeedback(39);
     return;
   }
   G.selectionType = SELECTION.STRUCTURE;

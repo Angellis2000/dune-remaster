@@ -18,6 +18,7 @@ import { loadEmc, scriptLoad } from "./script.ts";
 import { scriptFunctionsStructure, scriptFunctionsTeam, scriptFunctionsUnit, structureDeployProducedUnit, unitsAssignAttackSpots } from "./scriptfns.ts";
 import { msg } from "./strings.ts";
 import { structureHasRally } from './rally.ts';
+import {DRONES_PER_PAD,padDroneLoad,houseHasDroneRoom} from './drone-capacity.ts';
 import {initializeDrone,clampDronePoint,droneTargetAllowed,droneCanLaunch} from './advanced-units.ts';
 import {
   gameLoopStructure, setUnitCreateWrapper, structureCancelBuild, structureActivateSpecial, structureBuildObject, structureCreate, structureFree,
@@ -790,6 +791,10 @@ export class Game {
   /** Купить юнит в космопорте: деньги списываются сразу, доставка — фрегатом. */
   starportBuy(s: Structure, type: number, price: number): boolean {
     const h = G.houses[s.o.houseID];
+    if(type===UNIT.COMBAT_DRONE&&!houseHasDroneRoom(s.o.houseID)){
+      if(isLocal(s.o.houseID))G.onMessage('Лимит дронов: 3 звена на площадку',0);
+      return false;
+    }
     if (G.starportAvailable[type] <= 0 || !this.canAfford(s,price)) return false;
     h.credits -= price;
     structureStarportBuy(s, [type]);
@@ -798,6 +803,10 @@ export class Game {
 
   /** Начать производство (или купить в космопорте). */
   build(s: Structure, type: number): boolean {
+    if(s.o.type===STRUCTURE.DRONE_PAD&&type===UNIT.COMBAT_DRONE&&(padDroneLoad(s)>=DRONES_PER_PAD||!houseHasDroneRoom(s.o.houseID))){
+      if(isLocal(s.o.houseID))G.onMessage('Лимит дронов: 3 звена на площадку',0);
+      return false;
+    }
     const resuming=!structureCanQueueUnits(s)&&s.o.flags.onHold&&s.objectType===type&&s.o.linkedID!==0xff;
     const cost=(s.o.type===STRUCTURE.CONSTRUCTION_YARD?structureInfo:unitInfo)[type]?.o.buildCredits;
     if(!resuming&&cost!==undefined&&!this.canAfford(s,cost))return false;
@@ -1171,13 +1180,26 @@ export class Game {
     this.levelEndTimer = G.timerGame + 300;
     let alive = 0;
     for (const s of G.structureFind) {
-      if (!s.o.flags.used) continue;
+      if (!s.o.flags.used || !s.o.flags.allocated || s.o.flags.isNotOnMap || s.o.hitpoints === 0) continue;
       const t = s.o.type;
       if (t === STRUCTURE.SLAB_1x1 || t === STRUCTURE.SLAB_2x2 || t === STRUCTURE.WALL) continue;
       alive |= 1 << s.o.houseID;
     }
+    const cargo = new Set<number>();
+    for (const carrier of G.unitFind) {
+      if (!carrier.o.flags.allocated || carrier.o.flags.isNotOnMap || carrier.o.hitpoints === 0 ||
+          (carrier.o.type !== UNIT.CARRYALL && carrier.o.type !== UNIT.FRIGATE)) continue;
+      let index=carrier.o.linkedID;
+      for(let n=0;index!==0xff&&n<G.units.length;n++){
+        const carried=G.units[index];
+        if(!carried?.o.flags.used||cargo.has(index))break;
+        cargo.add(index);index=carried.o.linkedID;
+      }
+    }
     for (const u of G.unitFind) {
-      if (!u.o.flags.used || u.o.flags.isNotOnMap || !unitInfo[u.o.type].flags.isNormalUnit) continue;
+      if (!u.o.flags.used || !u.o.flags.allocated || u.o.hitpoints === 0 || (u.o.flags.isNotOnMap&&!cargo.has(u.o.index)) || !unitInfo[u.o.type].flags.isNormalUnit) continue;
+      // Empty transports and harvesters cannot fight or rebuild a defeated base.
+      if (u.o.type !== UNIT.MCV && unitInfo[u.o.type].bulletType === UNIT.INVALID && u.o.type !== UNIT.SABOTEUR) continue;
       alive |= 1 << u.o.houseID;
     }
     this.netAlive = alive & this.netPlayersMask;
@@ -1248,7 +1270,7 @@ export class Game {
       list.slice(0, 64).map((i) => G.units[i]).filter((u): u is Unit => !!u && u.o.flags.used && u.o.flags.allocated && !u.o.flags.isNotOnMap && unitGetHouseID(u) === house);
     const structure = (i: number): Structure | null => {
       const s = G.structures[i];
-      return s && s.o.flags.used && s.o.houseID === house ? s : null;
+      return s && s.o.flags.used && s.o.flags.allocated && !s.o.flags.isNotOnMap && s.o.hitpoints > 0 && s.o.houseID === house ? s : null;
     };
     const cell = (p: number) => Number.isInteger(p) && p >= 0 && p < 4096;
     switch (c.k) {

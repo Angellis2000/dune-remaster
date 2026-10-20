@@ -8,6 +8,8 @@
 import { ACTION, G, SELECTION, STATE, STRUCTURE, UNIT, type Structure as EStructure, type Unit as EUnit } from "../engine/core.ts";
 import { houseInfo, structureInfo, unitInfo } from "../engine/tables.ts";
 import { HOUSE_NAMES } from "../game/tables.ts";
+import { playerRelation, RELATIONS } from './relations.ts';
+import {padDroneLoad,DRONES_PER_PAD} from '../engine/drone-capacity.ts';
 import { STRUCTURE_NAMES, UNIT_NAMES } from "../game/names.ts";
 import type {Portraits} from '../gfx/portraits.ts';
 import type { World } from "../game/world.ts";
@@ -189,12 +191,13 @@ export class CommandPanel {
       hp = s.o.hitpoints / Math.max(1, si.o.hitpoints);
       const h = G.houses[G.playerHouseID];
       sub = `Энергия ${h.powerProduction}/${h.powerUsage} · хранилища ${h.creditsStorage}`;
+      if(s.o.type===STRUCTURE.DRONE_PAD)sub=`Звенья дронов: ${padDroneLoad(s)} / ${DRONES_PER_PAD} · включая очередь`;
       this.structureItems(s);
     } else if (other) {
       title = (other.isUnit ? UNIT_NAMES[other.type] : STRUCTURE_NAMES[other.type]) ?? "?";
       pic = this.picture(other.isUnit ? "unit" : "structure", other.type);
       hp = other.hp / 256;
-      sub = HOUSE_NAMES[other.house] ?? "";
+      sub = (G.net ? RELATIONS[playerRelation(other.house)].label + ' · ' : '') + (HOUSE_NAMES[other.house] ?? "");
     }
     if (!title) {
       this.root.hidden = !this.focused;

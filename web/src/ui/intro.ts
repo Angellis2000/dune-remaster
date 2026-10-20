@@ -18,11 +18,20 @@ import { loadTileList } from "./tutorial.ts";
 import { menuText } from "../gfx/menu-canvas.ts";
 import {PlanetBackdrop} from './planet-backdrop.ts';
 import { ShipFlight, type ShipPose } from './ship-flight.ts';
+import { ShipCinematic, cinemaCamera, drawCinemaFilters, mothershipsReady, preloadMotherships } from './ship-cinematic.ts';
+import { spaceCamera, type PlanetView } from '../gfx/space-scene.ts';
 
 type Step = Generator<void, void, void>;
 
 /** время показа кораблей между гашением логотипов и торможением (в оригинале — их пролёт, замерено) */
 const SHIPS_FRAMES = 240;
+/**
+ * С 3D-кинопролётом сцены длиннее спрайтовых, поэтому звёзды после логотипов не ждут — сразу подлёт к планете
+ * (владелец 2026-10-20: «планета быстрее, сразу после движения звёзд; надписи должны успеть к голосу в музыке»).
+ * Меню выходит по часам самой музыки: голос «The Battle for Arrakis» в Opening.mp3 — с 31,7 с (gfx/screens.ts),
+ * к этому моменту палитра меню уже проявилась.
+ */
+const MENU_MUSIC_SECONDS = 30;
 
 function stepColor(c: number, target: number): number {
   let out = 0;
@@ -57,6 +66,14 @@ export class Intro {
   /** корабль сценки: координаты экрана и спрайты кадра */
   private ship: { x: number; y: number; sprites: ObjSprite[]; house: number } | null = null;
   private shipFlight: ShipFlight | null = null;
+  /** кинопролёт 3D-матки (ui/ship-cinematic.ts) вместо спрайтов ROM, когда модели загружены */
+  private cinematic: ShipCinematic | null = null;
+  /** кадры начала и конца кинопролёта (−1 — не было) и где планета была в последнем плане — от неё отъезд к меню */
+  private cinemaFrom = -1;
+  private cinemaTo = -1;
+  /** кадр, когда пошла музыка заставки (секвенция 0) */
+  private playFrame = -1;
+  private lastView: PlanetView | null = null;
   private vram: Uint8Array;
   private original = document.createElement("canvas");
   private animationFrame = 0;
@@ -118,6 +135,8 @@ export class Intro {
     private play: (seq: number) => void = () => {},
     private stop: (seq: number) => void = () => {},
     private openingTime: () => number = () => this.animationFrame / 60,
+    /** звук пролёта матки дома house длительностью seconds (sound/ship-flyby.ts) */
+    private flyby: (house: number, seconds: number) => void = () => {},
   ) {
     this.sega = gfx.segaData();
     this.title = gfx.titleData(false);
@@ -142,6 +161,7 @@ export class Intro {
     this.planet.reset();
     const ships = this.gfx.art.get('ships');
     if (ships) ShipFlight.preload(ships);
+    preloadMotherships();
     this.cram.fill(0);
     this.mode = "black";
     this.hsA = this.hsB = 0;
@@ -152,6 +172,9 @@ export class Intro {
     this.loopOn = this.loopAgain = true;
     this.ship = null;
     this.shipFlight = null;
+    this.cinematic = null;
+    this.cinemaFrom = this.cinemaTo = this.playFrame = -1;
+    this.lastView = null;
     this.vram = this.title.vram.slice();
     this.gen = this.run();
   }
@@ -187,6 +210,14 @@ export class Intro {
 
   /** $017DC8: сценка n — корабль по точкам. */
   private *cutscene(n: number): Step {
+    // 3D-матка с планом съёмки и своим звуком; порядок сцен и паузы — как в ROM
+    if (mothershipsReady()) {
+      this.cinematic = new ShipCinematic(n, this.animationFrame, this.animationFrame === this.cinemaFrom ? spaceCamera(1) : undefined);
+      this.flyby(n, this.cinematic.frames / 60);
+      yield* this.wait(this.cinematic.frames);
+      this.cinematic = null;
+      return;
+    }
     const b = this.gfx.romBytes;
     const frames = readU32(b, 0x01957a + n * 4);
     // Read ahead for smooth HD interpolation; the generator below keeps ROM timing intact.
@@ -286,6 +317,7 @@ export class Intro {
     yield* this.wait(3);
     this.scrolling = true;
     this.play(0);
+    this.playFrame = this.animationFrame;
     yield* this.wait(200);
     // логотипы: плоскость A с 0, строки 1–3 проявляются, 300 кадров, гаснут
     this.showA = true;
@@ -295,22 +327,27 @@ export class Intro {
     yield* this.wait(300);
     yield* this.fade(new Uint16Array(64));
     this.showA = false;
-    yield* this.wait(SHIPS_FRAMES);
+    yield* this.wait(mothershipsReady() ? 0 : SHIPS_FRAMES);
     // $017D48: звёзды больше не по кругу — тормозят к планете
     this.loopAgain = false;
     while (this.scrolling) yield;
     // $017636: сценки с кораблями
     // $0044C4(1, 0, $30, $0A6E98): строки 1–3 сразу из $0A6E98
     for (let i = 0; i < 48; i++) this.cram[16 + i] = readU16(b, 0x0a6e98 + i * 2);
-    yield* this.wait(61);
+    yield* this.wait(mothershipsReady() ? 20 : 61);
     loadTileList(b, this.vram, 0x017f2e, 0x6200);
+    if (mothershipsReady()) this.cinemaFrom = this.animationFrame;
     for (const n of [1, 0, 2]) {
-      this.play(10);
+      // у кинопролёта свой звук (sound/ship-flyby.ts), у спрайтов — секвенция 10 из ROM
+      const rom = !mothershipsReady();
+      if (rom) this.play(10);
       yield* this.cutscene(n);
-      this.stop(10);
+      if (rom) this.stop(10);
     }
+    if (this.cinemaFrom >= 0) this.cinemaTo = this.animationFrame;
     this.cram.fill(0, 16, 64);
-    yield* this.wait(180);
+    if (this.cinemaFrom < 0) yield* this.wait(180);
+    else for (let n = 0; n < 30 || (n < 240 && this.musicTime() < MENU_MUSIC_SECONDS); n++) yield;
     // $01777A: кадр 13 заново — тайлы меню поверх тайлов кораблей
     this.vram = this.title.vram.slice();
     // главное меню
@@ -371,11 +408,27 @@ export class Intro {
     ctx.restore();
   }
 
+  /** Сколько секунд играет музыка заставки: часы трека, а без него — кадры с её запуска. */
+  private musicTime(): number {
+    const frames = (this.animationFrame - this.playFrame) / 60, music = this.openingTime();
+    return music > 0 && Math.abs(music - frames) < 10 ? music : frames;
+  }
+
+  /** Планета на время кинопролёта: свой план у каждой сценки, после последней — плавный отъезд к виду меню. */
+  private planetView(): PlanetView | undefined {
+    if (this.cinematic) return (this.lastView = this.cinematic.planetView(this.animationFrame));
+    if (this.cinemaTo < 0 || !this.lastView) return undefined;
+    const k = Math.min(1, (this.animationFrame - this.cinemaTo) / 120), e = k * k * k * (k * (k * 6 - 15) + 10);
+    if (e >= 1) return undefined;
+    const end = spaceCamera(1), a = this.lastView;
+    return { x: a.x + (end.x - a.x) * e, y: a.y + (end.y - a.y) * e, radius: a.radius + (end.radius - a.radius) * e };
+  }
+
   /** Share the exact starfield with the title screen after the intro stops scrolling. */
-  drawBackdrop(ctx: CanvasRenderingContext2D, frame: number, scroll = -704): boolean {
+  drawBackdrop(ctx: CanvasRenderingContext2D, frame: number, scroll = -704, view?: PlanetView): boolean {
     const art = this.gfx.art;
     if (!art.get("arrakis")) return false;
-    if(this.planet.draw(ctx,frame,scroll===-704))return true;
+    if(this.planet.draw(ctx,frame,scroll===-704,view))return true;
     ctx.save();
     art.background(ctx, "arrakis", 704 + scroll);
     const image = art.get("arrakis");
@@ -478,7 +531,7 @@ export class Intro {
     }
     if (!art.get("arrakis") || (this.showA && !this.menu && !art.get("publishers")) || (this.ship && !art.get("ships"))) return false;
     ctx.save();
-    this.drawBackdrop(ctx, this.animationFrame, this.hsB);
+    this.drawBackdrop(ctx, this.animationFrame, this.hsB, this.planetView());
     if (this.showA) {
       let brightness = 0, full = 0;
       const target = this.menu ? this.titleMenu.palette : this.title.palette;
@@ -514,6 +567,8 @@ export class Intro {
     if (ship && ships) {
       this.shipFlight?.draw(ctx, ships, this.animationFrame);
     }
+    this.cinematic?.draw(ctx, this.animationFrame);
+    drawCinemaFilters(ctx, cinemaCamera(this.animationFrame, this.cinemaFrom, this.cinemaTo), this.animationFrame);
     ctx.restore();
     return true;
   }

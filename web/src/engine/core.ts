@@ -421,6 +421,8 @@ export const G = {
   /** Render notifications only; handlers must not change simulation state or consume RNG. */
   onUnitShot: (_unit: Unit, _bullet: Unit) => {},
   onVisualExplosion: (_type: number, _position: Tile32) => {},
+  /** Only the palace missile impact; explosion 11 is also used by vehicle deaths. */
+  onHouseMissileImpact: (_position: Tile32) => {},
   onConstructionStart: () => {},
   onConstructionComplete: (_yard?: Structure) => {},
   onFeedback: (_id: number) => {},

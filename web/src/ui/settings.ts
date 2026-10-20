@@ -7,6 +7,7 @@
 import { MENU_ROM, SCREEN_H, SCREEN_W, type ScreenGfx } from "../gfx/screens.ts";
 import type { Button } from "../input/pad.ts";
 import { menuArrow, menuPoint, menuText, prepareMenu } from "../gfx/menu-canvas.ts";
+import { desktopQuit } from './desktop.ts';
 
 export type HouseCode = "A" | "O" | "H";
 
@@ -42,8 +43,8 @@ const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const PASSWORD_LENGTH = 10;
 
 /** Строки пунктов (y на экране 320×224), как в оригинале; стрелка — x 12, на 4 выше строки. */
-const ROWS = [36, 51, 66, 81, 96, 111, 126, 145, 160, 175];
-const ITEM = { MUSIC: 0, SOUND: 1, RADAR: 2, TRACKS: 3, SFX: 4, CONTROLS: 5, DIFFICULTY: 6, PASSWORD: 7, RESTART: 8, HOUSE: 9 } as const;
+const ROWS = [36, 51, 66, 81, 96, 111, 126, 145, 160, 175, 193];
+const ITEM = { MUSIC: 0, SOUND: 1, RADAR: 2, TRACKS: 3, SFX: 4, CONTROLS: 5, DIFFICULTY: 6, PASSWORD: 7, RESTART: 8, HOUSE: 9, QUIT: 10, LEAVE:11 } as const;
 const VALUE_X = 176;
 
 /** Сетка букв экрана пароля: 10 в ряд, в последнем ряду ◄ ► и ↵. */
@@ -64,6 +65,7 @@ const HOUSES: { code: HouseCode; id: number }[] = [
 ];
 
 export interface SettingsHost {
+  network?():boolean;
   mouse?(): boolean;
   setMouse?(on: boolean): void;
   difficulty?():number;
@@ -164,12 +166,19 @@ export class SettingsMenu {
   }
 
   private menuPad(b: Button): void {
-    const n = ROWS.length;
-    if (b === "up") (this.index = (this.index + n - 1) % n), this.host.ui?.(0x19);
-    else if (b === "down") (this.index = (this.index + 1) % n), this.host.ui?.(0x19);
+    const items=this.visibleItems(),n=items.length,at=Math.max(0,items.indexOf(this.index));
+    if (b === "up") (this.index = items[(at + n - 1) % n]), this.host.ui?.(0x19);
+    else if (b === "down") (this.index = items[(at + 1) % n]), this.host.ui?.(0x19);
     else if (b === "start") this.close();
     else this.activate(b);
   }
+
+  private visibleItems():number[]{
+    const items:number[]=this.host.network?.()?[0,1,2,3,4,5,6,ITEM.LEAVE]:[0,1,2,3,4,5,6,7,8,9];
+    if(window.duneDesktop)items.push(ITEM.QUIT);
+    return items;
+  }
+  private itemY(item:number):number{return ROWS[this.visibleItems().indexOf(item)]??-100;}
 
   /** A/B/C и стрелки влево-вправо на пункте (в оригинале переключатели принимают все пять). */
   private activate(b: Button): void {
@@ -193,6 +202,8 @@ export class SettingsMenu {
         break;
       case ITEM.PASSWORD: if (press) this.openPassword(); break;
       case ITEM.RESTART: if (press) (this.close(), this.host.restart()); break;
+      case ITEM.LEAVE: if (press) (this.close(),this.host.restart());break;
+      case ITEM.QUIT: if (press) desktopQuit(); break;
       case ITEM.HOUSE:
         if (press) (this.close(), this.host.chooseHouse(HOUSES[this.house].code));
         else this.house = (this.house + step + HOUSES.length) % HOUSES.length;
@@ -330,8 +341,8 @@ export class SettingsMenu {
   private onClick(e: MouseEvent): void {
     const { x, y } = menuPoint(this.canvas, e);
     if (this.mode === "menu") {
-      const i = ROWS.findIndex((ry) => y >= ry - 4 && y < ry + 12);
-      if (i < 0) return;
+      const i = this.visibleItems().find(item=>y>=this.itemY(item)-4&&y<this.itemY(item)+12);
+      if (i === undefined) return;
       this.index = i;
       this.activate(x >= VALUE_X - 8 && (i === ITEM.TRACKS || i === ITEM.SFX || i === ITEM.HOUSE) ? "right" : "a");
     } else {
@@ -369,8 +380,8 @@ export class SettingsMenu {
         const labels = russian ? ["МУЗЫКА", "ЗВУКИ", "РАДАР", "ФОНОТЕКА", "СПЕЦЭФФЕКТЫ"]
           : ["MUSIC", "SOUND", "RADAR", "MUSIC PLAYER", "SOUND PLAYER"];
         labels.forEach((label, i) => text(label, 3, 32, ROWS[i], 140));
-        text(russian ? "ВВЕСТИ ПАРОЛЬ" : "ENTER PASSWORD", 3, 32, ROWS[ITEM.PASSWORD]);
-        menuText(g, russian ? 'НАЖМИТЕ «START» ДЛЯ ВЫХОДА' : 'PRESS START TO EXIT', 160, 200,
+        if(!this.host.network?.())text(russian ? "ВВЕСТИ ПАРОЛЬ" : "ENTER PASSWORD", 3, 32, this.itemY(ITEM.PASSWORD));
+        menuText(g, russian ? 'START / ESC — ПРОДОЛЖИТЬ' : 'START / ESC — RESUME', 160, 213,
           { size: 8, align: "center", maxWidth: 288 });
       }
       // значения — бирюзовые (строка палитры 2), команды внизу — белые (строка 3)
@@ -386,10 +397,14 @@ export class SettingsMenu {
       text(this.host.mouse?.()?(russian?'Мышь':'Mouse'):(russian?'Геймпад / клавиатура':'Gamepad / keyboard'),2,VALUE_X,ROWS[ITEM.CONTROLS]);
       text(russian?'СЛОЖНОСТЬ':'DIFFICULTY',3,32,ROWS[ITEM.DIFFICULTY],140);
       text((russian?['Легко','Нормально','Сложно']:['Easy','Normal','Hard'])[this.host.difficulty?.()??2],2,VALUE_X,ROWS[ITEM.DIFFICULTY]);
-      text(str.restart, 3, 32, ROWS[ITEM.RESTART]);
-      text(str.chooseHouse, 3, 32, ROWS[ITEM.HOUSE]);
-      if (this.index === ITEM.HOUSE) text(str.houses[HOUSES[this.house].id], 2, VALUE_X + 8, ROWS[ITEM.HOUSE] + 12);
-      menuArrow(g, 12, ROWS[this.index], this.frame);
+      if(this.host.network?.())text(russian?'ПОКИНУТЬ МАТЧ':'LEAVE MATCH',3,32,this.itemY(ITEM.LEAVE));
+      else{
+        text(str.restart, 3, 32, this.itemY(ITEM.RESTART));
+        text(str.chooseHouse, 3, 32, this.itemY(ITEM.HOUSE));
+        if (this.index === ITEM.HOUSE) text(str.houses[HOUSES[this.house].id], 2, VALUE_X + 8, this.itemY(ITEM.HOUSE));
+      }
+      if (window.duneDesktop) text(russian ? 'ВЫЙТИ ИЗ ИГРЫ' : 'QUIT GAME', 3, 32, this.itemY(ITEM.QUIT));
+      menuArrow(g, 12, this.itemY(this.index), this.frame);
       return;
     }
     if (!hd) g.drawImage(this.gfx.background("password"), 0, 0);

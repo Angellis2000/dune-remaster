@@ -331,6 +331,8 @@ export class ScreenGfx {
     const entryOffsets = [[-46, -16], [-18, 20], [20, -18], [46, 14]];
     const rotations = [-0.09, 0.06, -0.055, 0.085];
     const glowPulse = (1 + Math.sin(elapsed * 2.2)) / 2;
+    const duneAge = musicTime - 30.45;
+    const duneHit = duneAge < 0 ? 0 : Math.min(1,duneAge/.08)*Math.exp(-duneAge/.65);
     letters.forEach((letter, i) => {
       const width = widths[i];
       const centerX = targetX + width / 2;
@@ -341,12 +343,18 @@ export class ScreenGfx {
         ctx.save();
         ctx.globalAlpha = ease;
         ctx.shadowColor = `rgba(255, 213, 142, ${0.45 + glowPulse * 0.2})`;
-        ctx.shadowBlur = 12 + glowPulse * 6;
+        ctx.shadowBlur = 12 + glowPulse * 6 + duneHit * 25;
         ctx.translate(centerX + offsetX * (1 - ease), 82 + offsetY * (1 - ease));
         ctx.rotate(rotations[i] * (1 - ease));
-        ctx.scale(0.94 + 0.06 * ease, 0.94 + 0.06 * ease);
+        const voiceScale = 1 + duneHit * .055;
+        ctx.scale((0.94 + 0.06 * ease)*voiceScale, (0.94 + 0.06 * ease)*voiceScale);
         ctx.fillStyle = gradient;
         ctx.fillText(letter, 0, 0);
+        const sweep = Math.max(0,1-Math.abs(duneAge*3-i*.22-.15)/.3);
+        if(duneHit>.01||sweep>0){
+          ctx.globalCompositeOperation='lighter';ctx.shadowColor='#ffbb5c';ctx.shadowBlur=18*duneHit;
+          ctx.fillStyle=`rgba(255,225,164,${duneHit*.4+sweep*.32})`;ctx.fillText(letter,0,0);
+        }
         ctx.restore();
       }
       targetX += width + gap;
@@ -382,9 +390,8 @@ export class ScreenGfx {
     const titleClock = musicTime > 0 ? musicTime : elapsed;
     // Opening.mp3 vocal, word onsets measured from the track: “The Battle for Arrakis”.
     const wordCues = musicTime > 0 ? [31.7, 32.46, 32.78, 33.2] : [0, 0.48, 0.96, 1.44];
-    ctx.fillStyle = "#ff3430";
-    ctx.shadowColor = '#ff1b16';
-    ctx.shadowBlur = 2;
+    // Flat orange lettering; each spoken word retains its timed glow and pulse.
+    ctx.lineJoin = "round";
     titleWords.forEach((word, i) => {
       const start = wordCues[i];
       const age=titleClock-start;
@@ -392,19 +399,54 @@ export class ScreenGfx {
       if (progress > 0) {
         const voiceHit = age<0?0:Math.exp(-age/.48)*Math.min(1,age/.045);
         const width = ctx.measureText(word).width;
-        ctx.globalAlpha = progress*(age>=0?1:.75);
-        ctx.shadowBlur = 2 + voiceHit * 16;
-        ctx.fillStyle=voiceHit>.5?'#ffb3a4':'#ff3430';
+        ctx.globalAlpha = progress*(age>=0?1:.8);
         ctx.save();
         ctx.translate(cursor + width / 2, 126 - (1 - progress) * 3);
         const pop=.96+progress*.04+voiceHit*.045;
         ctx.scale(pop,pop);
-        ctx.fillText(word, -width / 2, 0);
+        const x = -width / 2;
+        ctx.shadowColor = `rgba(255,112,12,${0.25 + voiceHit * 0.75})`; ctx.shadowBlur = 2 + voiceHit * 20; ctx.shadowOffsetY = 0;
+        ctx.fillStyle = '#ff8c16';
+        ctx.fillText(word, x, 0);
+        if (voiceHit > 0.02) {
+          ctx.shadowBlur = 0; ctx.globalCompositeOperation = "lighter";
+          ctx.fillStyle = `rgba(255,190,120,${voiceHit * 0.55})`;
+          ctx.fillText(word, x, 0);
+        }
         ctx.restore();
       }
       cursor += ctx.measureText(word + " ").width;
     });
     ctx.restore();
+    // REMASTER (владелец 2026-10-20): золотая разрядка под надписью, с тонкими линиями по бокам — проявляется после неё
+    const remaster = Math.max(0, Math.min(1, (elapsed - 1.6) / 0.6));
+    if (remaster > 0) {
+      ctx.save();
+      ctx.globalAlpha = remaster;
+      ctx.font = '600 7px "Segoe UI", "Helvetica Neue", Arial, sans-serif';
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "center";
+      const letters = [..."REMASTER"], spacing = 3.2;
+      const widths = letters.map((l) => ctx.measureText(l).width);
+      const total = widths.reduce((s, w) => s + w, 0) + spacing * (letters.length - 1);
+      const y = 141, glow = (1 + Math.sin(elapsed * 2.2)) / 2;
+      const gold = ctx.createLinearGradient(0, y - 4, 0, y + 4);
+      gold.addColorStop(0, "#fff6da"); gold.addColorStop(0.5, "#e6c27a"); gold.addColorStop(1, "#b88a3e");
+      ctx.shadowColor = `rgba(255, 205, 130, ${0.5 + glow * 0.25})`;
+      ctx.shadowBlur = 4 + glow * 3;
+      ctx.fillStyle = gold;
+      let x = 160 - total / 2;
+      letters.forEach((l, i) => { ctx.fillText(l, x + widths[i] / 2, y); x += widths[i] + spacing; });
+      const reach = 34 * remaster;
+      for (const side of [-1, 1]) {
+        const from = 160 + side * (total / 2 + 6), to = from + side * reach;
+        const line = ctx.createLinearGradient(from, 0, to, 0);
+        line.addColorStop(0, "rgba(255, 226, 170, 0.9)"); line.addColorStop(1, "rgba(226, 186, 112, 0)");
+        ctx.strokeStyle = line; ctx.lineWidth = 0.6;
+        ctx.beginPath(); ctx.moveTo(from, y); ctx.lineTo(to, y); ctx.stroke();
+      }
+      ctx.restore();
+    }
     const original=this.titleStrings();
     const items=[original[0],'СЕТЕВАЯ ИГРА',original[1]];
     items.forEach((text, i) => menuText(ctx, text, 128, 160 + i * 8, { size: 8, maxWidth: 164 }));

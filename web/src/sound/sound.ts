@@ -16,6 +16,7 @@ import type { DuneRom } from "../rom/dune.ts";
 import { readU16 } from "../rom/md.ts";
 import {recordedMusic,isRecordedBattle} from './music-tracks.ts';
 import {combatSfxSamples,isCombatSfx} from './combat-sfx.ts';
+import { playFlyby } from './ship-flyby.ts';
 
 export const SOUND_ROM = {
   immediate: 0x02dd5c,
@@ -139,6 +140,12 @@ export class Sound {
     this.voiceDucking = active;
     for (const audio of this.customAudios.values()) audio.volume = this.musicVolume();
     this.node?.port.postMessage({ volume: active ? 0.55 : 2.5 });
+  }
+
+  /** Звук пролёта корабля-матки в заставке (sound/ship-flyby.ts): дом и длительность сценки, с. */
+  flyby(house: number, seconds: number): void {
+    if (!this.soundOn || !this.ctx) return;
+    try { playFlyby(this.ctx, this.ctx.destination, house, seconds, 0.9); } catch (e) { console.warn("звук пролёта", e); }
   }
 
   playCustomSfx(name: string): void {

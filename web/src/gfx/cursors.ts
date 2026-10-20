@@ -2,7 +2,7 @@
 import type {DuneRom} from '../rom/dune.ts';
 export type CursorKind='select'|'move'|'attack'|'confirm';
 
-export function drawSelection(ctx:CanvasRenderingContext2D,x:number,y:number,w:number,h:number,z:number,tick=0,strong=false):void {
+export function drawSelection(ctx:CanvasRenderingContext2D,x:number,y:number,w:number,h:number,z:number,tick=0,strong=false,color?:string):void {
   const n=Math.min(6*z,w*.22,h*.22),line=Math.max(1,z*(strong?1:.7));
   ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
   const path=()=>{ctx.beginPath();for(const [xx,yy,sx,sy]of [[x,y,1,1],[x+w,y,-1,1],[x,y+h,1,-1],[x+w,y+h,-1,-1]]){
@@ -10,7 +10,7 @@ export function drawSelection(ctx:CanvasRenderingContext2D,x:number,y:number,w:n
   }};
   path();ctx.strokeStyle=strong?'#07121af5':'#14242ecc';ctx.lineWidth=line+Math.max(1,z*(strong?.85:.45));ctx.stroke();
   if(strong){ctx.shadowColor='#b5f5ff';ctx.shadowBlur=2*z;}
-  path();ctx.strokeStyle=strong?'#efffff':`rgba(208,238,240,${.82+.12*Math.sin(tick/28)})`;ctx.lineWidth=line;ctx.stroke();ctx.restore();
+  path();ctx.strokeStyle=color??(strong?'#efffff':`rgba(208,238,240,${.82+.12*Math.sin(tick/28)})`);ctx.lineWidth=line;ctx.stroke();ctx.restore();
 }
 export function drawCursor(ctx:CanvasRenderingContext2D,kind:CursorKind,x:number,y:number,size:number,tick=0):void {
   if(kind==='select'){const side=size*.92;drawSelection(ctx,x-side/2,y-side/2,side,side,side/32,tick);return;}

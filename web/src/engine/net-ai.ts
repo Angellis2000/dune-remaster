@@ -96,7 +96,7 @@ export function netSetupAIHouse(house: number, credits: number, difficulty = 1):
 }
 
 const own = (house: number, type?: number): Structure[] =>
-  G.structureFind.filter((s) => s.o.flags.used && !s.o.flags.isNotOnMap && s.o.houseID === house && (type === undefined || s.o.type === type));
+  G.structureFind.filter((s) => s.o.flags.used && s.o.flags.allocated && s.o.hitpoints > 0 && !s.o.flags.isNotOnMap && s.o.houseID === house && (type === undefined || s.o.type === type));
 const isTurret = (type: number) => type === STRUCTURE.TURRET || type === STRUCTURE.ROCKET_TURRET;
 
 /** Сколько зданий типа есть или уже заказано (в списке двора). */

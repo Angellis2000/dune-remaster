@@ -3,8 +3,11 @@ import starsUrl from './assets/frontend/starfield-v3.png?url';
 const TAU=Math.PI*2;
 const ease=(x:number)=>{x=Math.max(0,Math.min(1,x));return x*x*x*(x*(x*6-15)+10);};
 export const ORBIT_SECONDS=120;
+/** Своя камера на планету (кинопролёт кораблей, ui/ship-cinematic.ts): центр и радиус диска на экране 320×224. */
+export type PlanetView={x:number;y:number;radius:number};
 export function spaceCamera(progress:number){const p=ease(progress);return {x:440-222*p,y:88+16*p,radius:3+72*p,opacity:ease(progress*3)};}
-const VERTEX=`attribute vec2 p;varying vec2 uv;void main(){uv=p*.5+.5;gl_Position=vec4(p,0.,1.);}`;
+// view — какой кусок диска рисовать (смещение и размер в долях): крупный план считается только в видимой части
+const VERTEX=`attribute vec2 p;uniform vec4 view;varying vec2 uv;void main(){uv=view.xy+(p*.5+.5)*view.zw;gl_Position=vec4(p,0.,1.);}`;
 const FRAGMENT=`precision highp float;
 varying vec2 uv;uniform sampler2D surface;uniform float angle,resolution,tintAmount;uniform vec3 tint;
 const float PI=3.14159265359;
@@ -63,11 +66,11 @@ export class SpaceScene {
    };image.src=planetUrl;
   }catch(error){console.warn('Space scene unavailable',error);this.gl=null;}
  }
- draw(ctx:CanvasRenderingContext2D,time:number,progress:number,tint:readonly number[]=[1,1,1],tintAmount=0):boolean{
+ draw(ctx:CanvasRenderingContext2D,time:number,progress:number,tint:readonly number[]=[1,1,1],tintAmount=0,view?:PlanetView):boolean{
   const gl=this.gl,program=this.program;
   if(!gl||!program||gl.isContextLost()||!this.ready||!this.nebula.complete||!this.nebula.naturalWidth)return false;
   const m=ctx.getTransform(),w=ctx.canvas.width/m.a,h=ctx.canvas.height/m.d,left=(320-w)/2,top=(224-h)/2;
-  const camera=spaceCamera(progress),p=ease(progress);ctx.save();ctx.imageSmoothingEnabled=true;
+  const camera=view?{...view,opacity:1}:spaceCamera(progress),p=view?1:ease(progress);ctx.save();ctx.imageSmoothingEnabled=true;
   ctx.fillStyle='#02050a';ctx.fillRect(left,top,w,h);
   const bw=Math.max(w,h*this.nebula.naturalWidth/this.nebula.naturalHeight)*1.16,bh=bw*this.nebula.naturalHeight/this.nebula.naturalWidth;
   ctx.drawImage(this.nebula,left+(w-bw)*(.5+Math.sin(time*.012)*.32+p*.1),top+(h-bh)*.5,bw,bh);
@@ -80,12 +83,30 @@ export class SpaceScene {
   }
   ctx.globalAlpha=1;
   if(camera.opacity>0){
-   const size=768;
-   if(this.canvas.width!==size){this.canvas.width=this.canvas.height=size;gl.viewport(0,0,size,size);}
-   gl.useProgram(program);gl.uniform1f(gl.getUniformLocation(program,'angle'),((time/ORBIT_SECONDS)%1)*TAU);
-   gl.uniform1f(gl.getUniformLocation(program,'resolution'),size);gl.uniform3f(gl.getUniformLocation(program,'tint'),tint[0],tint[1],tint[2]);
-   gl.uniform1f(gl.getUniformLocation(program,'tintAmount'),Math.max(0,Math.min(1,tintAmount)));gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
-   ctx.globalAlpha=camera.opacity;const d=camera.radius*2.2;ctx.drawImage(this.canvas,camera.x-d/2,camera.y-d/2,d,d);
+   const d=camera.radius*2.2,px=camera.x-d/2,py=camera.y-d/2;
+   // кусок диска в кадре (крупный план — только он, точка в точку экрана; обычный вид — весь диск, 768)
+   let rx=px,ry=py,rw=d,rh=d,cw=768,ch=768;
+   if(view){
+    rx=Math.max(px,left);ry=Math.max(py,top);rw=Math.min(px+d,left+w)-rx;rh=Math.min(py+d,top+h)-ry;
+    cw=Math.min(2048,Math.ceil(rw*m.a/64)*64);ch=Math.min(2048,Math.ceil(rh*m.a/64)*64);
+   }
+   if(rw>0&&rh>0){
+    if(this.canvas.width!==cw||this.canvas.height!==ch){this.canvas.width=cw;this.canvas.height=ch;gl.viewport(0,0,cw,ch);}
+    gl.useProgram(program);gl.uniform1f(gl.getUniformLocation(program,'angle'),((time/ORBIT_SECONDS)%1)*TAU);
+    gl.uniform4f(gl.getUniformLocation(program,'view'),(rx-px)/d,1-(ry+rh-py)/d,rw/d,rh/d);
+    gl.uniform1f(gl.getUniformLocation(program,'resolution'),view?d*m.a:cw);gl.uniform3f(gl.getUniformLocation(program,'tint'),tint[0],tint[1],tint[2]);
+    gl.uniform1f(gl.getUniformLocation(program,'tintAmount'),Math.max(0,Math.min(1,tintAmount)));gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+    ctx.globalAlpha=camera.opacity;ctx.drawImage(this.canvas,rx,ry,rw,rh);
+    // крупный план: густая голубая дымка атмосферы по краю, со стороны солнца ярче
+    if(view){
+     const r=camera.radius;ctx.globalCompositeOperation='lighter';ctx.globalAlpha=camera.opacity*Math.min(1,Math.max(0,(camera.radius-75)/90));
+     const glow=ctx.createRadialGradient(camera.x,camera.y,r*.965,camera.x,camera.y,r*1.045);
+     glow.addColorStop(0,'rgba(60,120,255,0)');glow.addColorStop(.42,'rgba(80,140,255,.16)');glow.addColorStop(.5,'rgba(150,195,255,.42)');
+     glow.addColorStop(.58,'rgba(90,150,255,.18)');glow.addColorStop(1,'rgba(60,120,255,0)');
+     ctx.fillStyle=glow;ctx.fillRect(Math.max(left,camera.x-r*1.05),Math.max(top,camera.y-r*1.05),Math.min(w,r*2.1),Math.min(h,r*2.1));
+     ctx.globalCompositeOperation='source-over';
+    }
+   }
   }
   ctx.restore();return true;
  }

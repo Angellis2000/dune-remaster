@@ -30,6 +30,10 @@ export interface ShipPose {
   time?: number;
   /** приближение (1 — корабль целиком в кадре) */
   zoom?: number;
+  /** направление на «солнце» в пространстве камеры (по умолчанию сверху-слева-спереди) — от него свет и тени */
+  light?: [number, number, number];
+  /** сила рассеянного света 0…1 (меньше — глубже тени; по умолчанию 1) */
+  ambient?: number;
 }
 
 /** длина пламени в полуразмерах сопла при полной тяге (факел; ядро — 0,45 от него) */
@@ -68,7 +72,7 @@ const FRAGMENT = `
 precision highp float;
 varying vec3 vNormal;varying vec3 vColor;varying vec3 vMaterial;varying vec3 vView;varying vec3 vLight;varying vec2 vUV;
 uniform mediump float thrust;uniform sampler2D shadowMap;uniform sampler2D albedo;uniform vec3 key;uniform float texel;
-uniform vec3 paint;uniform float repaint;
+uniform vec3 paint;uniform float repaint;uniform float ambientK;
 vec3 hsv(vec3 c){vec4 K=vec4(0.,-1./3.,2./3.,-1.);vec4 p=mix(vec4(c.bg,K.wz),vec4(c.gb,K.xy),step(c.b,c.g));vec4 q=mix(vec4(p.xyw,c.r),vec4(c.r,p.yzx),step(p.x,c.r));float d=q.x-min(q.w,q.y);return vec3(abs(q.z+(q.w-q.y)/(6.*d+1e-10)),d/(q.x+1e-10),q.x);}
 vec3 rgb(vec3 c){vec3 p=abs(fract(c.xxx+vec3(1.,2./3.,1./3.))*6.-3.);return c.z*mix(vec3(1.),clamp(p-1.,0.,1.),c.y);}
 /** текстура пака: насыщенная «краска» получает оттенок дома (paint), металл и тёмные детали — как есть */
@@ -100,7 +104,7 @@ void main(){
   float shadow=nl>0.?lit(vLight,.004+.01*(1.-nl)):0.;
   vec3 sun=vec3(1.,.9,.74)*3.1,sky=vec3(.05,.08,.16),sand=vec3(.34,.17,.06);
   float up=n.y*.5+.5;
-  vec3 ambient=mix(sand*.55,sky*1.4,up)+vec3(.012);
+  vec3 ambient=(mix(sand*.55,sky*1.4,up)+vec3(.012))*ambientK;
   vec3 diffuse=base*(sun*max(nl,0.)*shadow+ambient);
   // ободок «от планеты» снизу-справа: тёплый отсвет на теневой стороне
   diffuse+=base*sand*.9*pow(max(dot(n,normalize(vec3(.6,-.7,.2))),0.),2.);
@@ -358,7 +362,8 @@ export class ShipRenderer {
     const near = Math.max(0.05, distance - b.radius * 2.5), far = distance + b.radius * 3;
     const projection = new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, (2 * far * near) / (near - far), 0]);
     // базис света: смотрит вдоль −KEY (dir — к свету: больше — ближе к солнцу, глубина карты обратная)
-    const dir = [-KEY[0], -KEY[1], -KEY[2]];
+    const key = pose.light ? norm(pose.light) : KEY;
+    const dir = [-key[0], -key[1], -key[2]];
     const upGuess = Math.abs(dir[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0];
     const right = norm([upGuess[1] * dir[2] - upGuess[2] * dir[1], upGuess[2] * dir[0] - upGuess[0] * dir[2], upGuess[0] * dir[1] - upGuess[1] * dir[0]]);
     const up = [dir[1] * right[2] - dir[2] * right[1], dir[2] * right[0] - dir[0] * right[2], dir[0] * right[1] - dir[1] * right[0]];
@@ -374,7 +379,8 @@ export class ShipRenderer {
       gl.uniform3fv(u("lightRight"), right);
       gl.uniform3fv(u("lightUp"), up);
       gl.uniform3fv(u("lightDir"), dir);
-      gl.uniform3fv(u("key"), KEY);
+      gl.uniform3fv(u("key"), key);
+      gl.uniform1f(u("ambientK"), pose.ambient ?? 1);
       gl.uniform1f(u("texel"), 1 / SHADOW_SIZE);
       gl.uniform1f(u("pixels"), (h / 2) * f);
     };
@@ -458,7 +464,9 @@ export class ShipRenderer {
 
   /** Отрисовать модель в прямоугольник 2D-холста. */
   draw(ctx: CanvasRenderingContext2D, model: ShipModel, pose: ShipPose, x: number, y: number, w: number, h: number): void {
-    const scale = Math.min(2, window.devicePixelRatio || 1);
+    // настоящее разрешение: масштаб контекста (заставка рисует в 320×224 и растягивает), не больше 2048 точек
+    const m = ctx.getTransform(), k = Math.hypot(m.a, m.b) || 1;
+    const scale = Math.min(k, 2048 / Math.max(w, h, 1));
     ctx.drawImage(this.render(model, pose, w * scale, h * scale), x, y, w, h);
   }
 }

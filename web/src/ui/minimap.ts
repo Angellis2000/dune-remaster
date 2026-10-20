@@ -10,8 +10,8 @@ export interface MinimapSource {
   unveiled?: Uint8Array;
   bounds: { x: number; y: number; w: number; h: number };
 }
-export interface MinimapUnit { x: number; y: number; color?: string; own?: boolean; air?: boolean }
-export interface MinimapStructure { x: number; y: number; w: number; h: number; own: boolean }
+export interface MinimapUnit { x: number; y: number; color?: string; own?: boolean; air?: boolean; ally?:boolean }
+export interface MinimapStructure { x: number; y: number; w: number; h: number; own: boolean; ally?:boolean }
 import type { IconSet } from "../gfx/icons.ts";
 import { LST } from "../engine/core.ts";
 import { iconLandscape } from "../engine/tables.ts";
@@ -134,9 +134,9 @@ export class Minimap {
     // 4) здания по размеру, 5) юниты — точки с обводкой
     for (const s of structures) {
       const x = (s.x - b.x) * k, y = (s.y - b.y) * k, w = s.w * k, h = s.h * k;
-      ctx.fillStyle = s.own ? "#2f9fd0" : "#d0402e";
+      ctx.fillStyle = s.own ? "#2f9fd0" : s.ally ? '#27b49f' : "#d0402e";
       ctx.fillRect(x + d * .5, y + d * .5, w - d, h - d);
-      ctx.strokeStyle = s.own ? "#c8f0ff" : "#ffd0c8";
+      ctx.strokeStyle = s.own ? "#c8f0ff" : s.ally ? '#9dffe7' : "#ffd0c8";
       ctx.lineWidth = Math.max(1, d * .8);
       ctx.strokeRect(x + d, y + d, w - 2 * d, h - 2 * d);
     }
@@ -149,7 +149,7 @@ export class Minimap {
       if (u.air) { ctx.moveTo(x, y - r * 1.6); ctx.lineTo(x + r * 1.4, y + r * 1.1); ctx.lineTo(x - r * 1.4, y + r * 1.1); ctx.closePath(); }
       else ctx.arc(x, y, r + d * .8, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = own ? "#7fe4ff" : "#ff5a48";
+      ctx.fillStyle = own ? "#7fe4ff" : u.ally ? '#53e2c4' : "#ff5a48";
       ctx.beginPath();
       if (u.air) { ctx.moveTo(x, y - r * 1.1); ctx.lineTo(x + r * .9, y + r * .7); ctx.lineTo(x - r * .9, y + r * .7); ctx.closePath(); }
       else ctx.arc(x, y, r, 0, Math.PI * 2);

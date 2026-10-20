@@ -176,7 +176,10 @@ async function startGame(rom: DuneRom): Promise<void> {
     const surface = kind >= 10 && kind <= 13 ? 'structure' : kind === 8 || kind === 9 ? 'spice' :
       ([4,6,7].includes(kind) || ([1,5].includes(kind) && terrain?.isRockAt(x,y))) ? 'rock' : 'sand';
     particles?.burst(x, y, type, surface, G.timerGame);
-    if (type === 11) view.nukes.add(x, y, G.timerGame);
+  };
+  G.onHouseMissileImpact = position => {
+    const p = ((position.y >> 8) << 6) | (position.x >> 8);
+    if (p >= 0 && p < 4096 && (mapIsUnveiledLocal(p) || G.revealAll)) view.nukes.add(position.x / 8, position.y / 8, G.timerGame);
   };
   skins.onChange = () => view.invalidate();
   const minimap = new Minimap(view, icons);
@@ -406,6 +409,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   sound.musicOn = prefs.music;
   sound.soundOn = prefs.sound;
   const settings = new SettingsMenu(screens, {
+    network:()=>net.inMatch,
     mouse:()=>view.mouseMode,
     setMouse:(on)=>setMouseMode(on),
     difficulty:()=>prefs.difficulty,
@@ -506,6 +510,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     // $017418: заставка — секвенция 0 (музыка); $017636: корабли — секвенция 10 (звук пролёта)
     introSound: (seq) => sound.play(seq),
     introStop: (seq) => sound.stopSong(seq),
+    introFlyby: (house, seconds) => sound.flyby(house, seconds),
     openingTime: () => sound.customTrackTime("opening"),
     frame: () => sound.frame(),
     ui: (seq) => sound.ui(seq),
@@ -926,21 +931,15 @@ async function startGame(rom: DuneRom): Promise<void> {
     updateHud();
   };
 
-  /** Правая кнопка: отмена прицеливания; у выбранного завода — точка сбора, иначе снять выделение. */
+  /** Правая кнопка всегда отменяет действие и снимает выделение. */
   view.onSecondary = () => {
     sound.sfx(0x26);
     if (G.selectionType === SELECTION.TARGET || G.selectionType === SELECTION.PLACE) {
       if (G.selectionType === SELECTION.PLACE) queuedPlacementYard = null;
       world.game.cancelTarget();
       view.placement = null;
-    } else {
-      const s=view.selectedStructure;
-      if(s&&s.house===world.player&&world.game.canRally(s.ref)){
-        const packed=World.packAt(view.cursorX,view.cursorY);
-        const self=world.structureAtCell(packed&63,packed>>6)?.ref===s.ref;
-        world.game.setRallyPoint(s.ref,self?-1:packed);
-      }else clearSelection();
     }
+    clearSelection();
     updateHud();
   };
   /** Рамка: выбрать все свои юниты внутри. */
@@ -1074,6 +1073,9 @@ async function startGame(rom: DuneRom): Promise<void> {
     const enemyUnit = !!over && !houseAreAllied(world.player, over.house);
     const enemyStructure = !!overS && !houseAreAllied(world.player, overS.house) && (G.revealAll || !!world.map.unveiled[World.packAt(view.cursorX, view.cursorY)]);
     const enemy = enemyUnit || enemyStructure;
+    view.hoverRelation = over ? {x:over.x,y:over.y,house:over.house}
+      : overS && (G.revealAll || !!world.map.unveiled[World.packAt(view.cursorX,view.cursorY)])
+        ? {x:view.cursorX,y:view.cursorY,house:overS.house} : null;
     view.aimTarget = enemy && (mine || (G.selectionType === SELECTION.TARGET && G.activeAction !== ACTION.MOVE))
       ? enemyUnit ? { x: over!.x - 15, y: over!.y - 15, w: 30, h: 30 }
         : { x: overS!.x * CELL_PX, y: overS!.y * CELL_PX, w: overS!.w * CELL_PX, h: overS!.h * CELL_PX }
@@ -1090,8 +1092,8 @@ async function startGame(rom: DuneRom): Promise<void> {
       // здания — только на разведанных клетках (иначе мини-карта выдала бы базу врага)
       const seen = (x: number, y: number) => G.revealAll || !!world.map.unveiled[(y << 6) | x];
       minimap.refresh(
-        world.units.map((u) => ({ x: u.x, y: u.y, own: u.house === world.player, air: u.air })),
-        world.structures.filter((s) => s.type !== STRUCTURE.WALL && seen(s.x, s.y)).map((s) => ({ x: s.x, y: s.y, w: s.w, h: s.h, own: s.house === world.player })),
+        world.units.map((u) => ({ x: u.x, y: u.y, own: u.house === world.player, ally:u.house!==world.player&&houseAreAllied(world.player,u.house), air: u.air })),
+        world.structures.filter((s) => s.type !== STRUCTURE.WALL && seen(s.x, s.y)).map((s) => ({ x: s.x, y: s.y, w: s.w, h: s.h, own: s.house === world.player, ally:s.house!==world.player&&houseAreAllied(world.player,s.house) })),
       );
       updateHud();
     }
@@ -1196,6 +1198,12 @@ async function startGame(rom: DuneRom): Promise<void> {
     view.invalidate();
   });
   stage.append(toolbarToggle);
+  if (window.duneDesktop) {
+    const quit = el('button', {type:'button',className:'desktop-quit',textContent:'×',title:'Выйти из игры'});
+    quit.setAttribute('aria-label','Выйти из игры');
+    quit.addEventListener('click',()=>window.duneDesktop?.quit());
+    stage.append(quit);
+  }
   app.replaceChildren(el("div", { className: "game" }, topbar, stage));
 
   function updateHud(): void {

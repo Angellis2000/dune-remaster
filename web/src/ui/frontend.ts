@@ -27,6 +27,8 @@ export interface FrontEndHost {
   introSound?(seq: number): void;
   /** остановка звука заставки ($02DDCC) */
   introStop?(seq: number): void;
+  /** звук пролёта корабля-матки в заставке: дом и длительность, с */
+  introFlyby?(house: number, seconds: number): void;
   openingTime?(): number;
   /** звук интерфейса ($02DDB6) */
   ui?(seq: number): void;
@@ -69,6 +71,7 @@ export class FrontEnd {
       (seq) => this.host.introSound?.(seq),
       (seq) => this.host.introStop?.(seq),
       () => this.host.openingTime?.() ?? this.frame / 60,
+      (house, seconds) => this.host.introFlyby?.(house, seconds),
     );
   }
 

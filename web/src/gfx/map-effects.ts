@@ -10,6 +10,7 @@ import craterUrl from './assets/map-hd/crater-hd.png?url';
 import constructionUrl from './assets/map-hd/construction-site-hd.png?url';
 import type { IconSource } from './icons.ts';
 import type { SpriteImage } from './sprites.ts';
+import { craterLayout } from './crater-layout.ts';
 
 interface EffectMeta {
   key: string;
@@ -22,6 +23,8 @@ export class MapEffects {
   constructionSite: ImageBitmap | null = null;
   private frames = new Map<string, SpriteImage>();
   private decals = new Map<number, IconSource>();
+  private crater: ImageBitmap | null = null;
+  private craterLayouts = new Map<number, ReturnType<typeof craterLayout>>();
 
   static async load(): Promise<MapEffects | null> {
     try {
@@ -41,6 +44,7 @@ export class MapEffects {
         json<EffectMeta[]>(metaUrl), json<number[]>(idsUrl),
       ]);
       const result = new MapEffects();
+      result.crater = crater;
       result.constructionSite=construction;
       const sheet = document.createElement('canvas'); sheet.width = sheet.height = 1024;
       const g = sheet.getContext('2d', { willReadFrequently: true })!;
@@ -82,7 +86,6 @@ export class MapEffects {
         g.drawImage(crater,-128*scale,-128*scale,256*scale,256*scale);
         result.decals.set(id,{image:canvas,sx:0,sy:0,sw:256,sh:256});
       }
-      crater.close();
       result.decals.set(125, result.decals.get(33)!);
       // Spice blooms and concrete remain separate objects above the continuous ground.
       for (const [id, image] of [[126, concrete], [208, bloom], [209, bloomAlt]] as const) {
@@ -97,4 +100,19 @@ export class MapEffects {
 
   frame(key: string): SpriteImage | null { return this.frames.get(key) ?? null; }
   icon(id: number): IconSource | null { return this.decals.get(id) ?? null; }
+
+  drawCrater(ctx: CanvasRenderingContext2D, id: number, cell: number, x: number, y: number, size: number): boolean {
+    if (!this.crater || !this.decals.has(id) || !((id >= 1 && id <= 33) || id === 125)) return false;
+    const stage = id === 125 ? 9 : Math.floor((id - 1) / 2);
+    const key=cell*16+stage;
+    let layout=this.craterLayouts.get(key);
+    if(!layout){layout=craterLayout(cell,stage);this.craterLayouts.set(key,layout);}
+    for (const mark of layout) {
+      ctx.save();ctx.translate(x + mark.x * size, y + mark.y * size);ctx.rotate(mark.angle);
+      ctx.globalAlpha *= mark.alpha;ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(this.crater, -mark.size * size / 2, -mark.size * size / 2, mark.size * size, mark.size * size);
+      ctx.restore();
+    }
+    return true;
+  }
 }

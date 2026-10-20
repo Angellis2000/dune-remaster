@@ -1,10 +1,11 @@
 import {ACTION,EXPLOSION,G,IT,LST,MOVEMENT,STRUCTURE,indexEncode,indexGetStructure,indexGetTile,indexGetUnit,indexIsValid,packTile,tileCenter,tileGetDistance,unpackTile,type Tile32,type Unit,type Structure} from './core.ts';
 import {unitInfo,layoutSize,structureInfo} from './tables.ts';
 import {houseAreAllied} from './house.ts';
-import {mapGetLandscapeType,mapMakeExplosion,tileRemoveFogInRadius,alertNearbyBaseDefenders} from './map.ts';
+import {mapGetLandscapeType,mapIsValidPosition,mapMakeExplosion,tileRemoveFogInRadius,alertNearbyBaseDefenders} from './map.ts';
 import {structureGetByPackedTile,structureDamage} from './structure.ts';
 import {unitDamage,unitGetHouseID,unitUpdateMap,unitSetAction,unitSetTarget,unitSetOrientation} from './unit.ts';
 import {COMBAT_DRONE,LASER_TANK,DRONE_RADIUS,DRONE_RETURN_BATTERY} from './custom-unit-defs.ts';
+import {DRONES_PER_PAD,padDroneLoad} from './drone-capacity.ts';
 import {COMBAT_SFX} from '../sound/combat-sfx.ts';
 import {tileGetDirection,tileMoveByDirection} from './core.ts';
 import {fixed256,fixedLength,fixedSqrt,integerPower} from './lockstep-math.ts';
@@ -29,7 +30,7 @@ export function droneHome(u:Unit):Structure|null{
 export function initializeDrone(u:Unit,home?:Structure):void{
   if(u.o.type!==COMBAT_DRONE)return;
   const deployedFromPad=home?.o.type===STRUCTURE.DRONE_PAD;
-  const base=(deployedFromPad?home:null)??G.structureFind.filter(s=>s.o.flags.used&&s.o.hitpoints>0&&s.o.type===STRUCTURE.DRONE_PAD&&s.o.houseID===u.o.houseID)
+  const base=(deployedFromPad?home:null)??G.structureFind.filter(s=>s.o.flags.allocated&&!s.o.flags.isNotOnMap&&s.o.hitpoints>0&&s.o.type===STRUCTURE.DRONE_PAD&&s.o.houseID===u.o.houseID&&padDroneLoad(s)<DRONES_PER_PAD)
     .sort((a,b)=>distance(center(a),u.o.position)-distance(center(b),u.o.position))[0];
   const position=base?center(base):{...u.o.position};
   // A starport (or another factory) is only a launch point, never the drone's charging home.
@@ -38,6 +39,7 @@ export function initializeDrone(u:Unit,home?:Structure):void{
   u.drone={home:base?indexEncode(base.o.index,IT.STRUCTURE):0,homePosition:position,guardPosition:{...u.o.position},lastAction:ACTION.GUARD,phase:base?'guard':'orphan',battery:100,nextFire:0,lastTick:G.timerGame,launchAfter:0,vx:0,vy:0,restockAt:0,
     members:[[-56,-56],[48,-56],[0,24]].map(([x,y])=>({x:u.o.position.x+x,y:u.o.position.y+y,vx:0,vy:0,grenades:5}))};
   u.targetAttack=0;u.targetMove=0;u.actionID=ACTION.GUARD;
+  if(deployedFromPad)u.drone.guardPosition=waitingSpot(position,1,u);
 }
 export function clampDronePoint(u:Unit,p:Tile32):Tile32{
   const home=u.drone?.homePosition;if(!home)return{...p};
@@ -123,12 +125,14 @@ function dockRank(u:Unit):number{
 }
 /** Места ожидания вокруг площадки (целые смещения — одинаково у всех клиентов). */
 const WAITING=[[640,64],[-640,64],[0,-576],[0,704],[512,-448],[-512,-448],[512,576],[-512,576]];
-function waitingSpot(pad:Tile32,rank:number):Tile32{
+function waitingSpot(pad:Tile32,rank:number,wing?:Unit):Tile32{
   // первое по порядку место без здания (садятся на землю, не на крыши); порядок одинаков у всех клиентов
   for(let k=0;k<WAITING.length*2;k++){
     const i=rank-1+k,[dx,dy]=WAITING[i%WAITING.length],ring=1+Math.floor(i/WAITING.length)*0.5;
     const p={x:pad.x+Math.round(dx*ring),y:pad.y+Math.round(dy*ring)},tile=packTile(p);
-    if(tile>=0&&tile<4096&&!structureGetByPackedTile(tile)&&mapGetLandscapeType(tile)!==LST.WALL)return p;
+    const occupied=wing&&G.unitFind.some(o=>o!==wing&&o.o.flags.used&&!o.o.flags.isNotOnMap&&o.o.hitpoints>0&&
+      (distance(o.o.position,p)<220||(o.drone?.home===wing.drone?.home&&o.drone?.guardPosition&&distance(o.drone.guardPosition,p)<220)));
+    if(mapIsValidPosition(tile)&&!occupied&&!structureGetByPackedTile(tile)&&mapGetLandscapeType(tile)!==LST.WALL)return p;
   }
   const [dx,dy]=WAITING[(rank-1)%WAITING.length];
   return{x:pad.x+dx,y:pad.y+dy};
@@ -168,7 +172,8 @@ export function tickDrone(u:Unit):boolean{
     const rank=home?dockRank(u):0;
     if(rank>0&&d.phase!=='dock'){
       // площадка занята: ждать своей очереди на земле рядом, не тратя заряд
-      d.landed=moveDrone(u,waitingSpot(d.homePosition,rank),dt);
+      const waiting=waitingSpot(d.homePosition,rank,u);d.guardPosition=waiting;
+      d.landed=moveDrone(u,waiting,dt);
       return true;
     }
     d.landed=false;
@@ -176,7 +181,7 @@ export function tickDrone(u:Unit):boolean{
       d.phase='dock';u.speed=0;
       if(powered){d.battery=Math.min(100,d.battery+.25*dt);u.o.hitpoints=Math.min(unitInfo[COMBAT_DRONE].o.hitpoints,u.o.hitpoints+.08*dt);}
       if(powered&&G.timerGame>=d.restockAt){for(const m of d.members)m.grenades=Math.min(5,m.grenades+1);d.restockAt=G.timerGame+30;}
-      if(d.battery>=99&&u.o.hitpoints>=unitInfo[COMBAT_DRONE].o.hitpoints&&powered&&d.members.every(m=>m.grenades===5)){d.phase='guard';u.actionID=ACTION.GUARD;d.guardPosition=clampDronePoint(u,waitingSpot(d.homePosition,1+u.o.index%WAITING.length));d.launchAfter=G.timerGame+60;}
+      if(d.battery>=99&&u.o.hitpoints>=unitInfo[COMBAT_DRONE].o.hitpoints&&powered&&d.members.every(m=>m.grenades===5)){d.phase='guard';u.actionID=ACTION.GUARD;d.guardPosition=clampDronePoint(u,waitingSpot(d.homePosition,1+u.o.index%WAITING.length,u));d.launchAfter=G.timerGame+60;}
     }
     return true;
   }

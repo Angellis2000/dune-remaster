@@ -27,6 +27,7 @@ import { unitCreate, unitGetByPackedTile, unitGetHouseID, unitLaunchHouseMissile
 import {networkUnitCount} from './core.ts';
 import {NETWORK_ARMY_POOL_END,NETWORK_STRUCTURE_LIMIT,NETWORK_UNIT_LIMIT} from './network-rules.ts';
 import { netAIMayBuildUnits, netAIStructurePlaced } from "./net-ai.ts";
+import {DRONES_PER_PAD,padDroneLoad,houseHasDroneRoom} from './drone-capacity.ts';
 
 const ticks = { degrade: 0, structure: 0, script: 0, palace: 0 };
 let releaseProducedUnit: (s: Structure, u: Unit) => boolean = () => false;
@@ -86,7 +87,8 @@ export function gameLoopStructure(): void {
     G.scriptCurrentUnit = null;
     G.scriptCurrentTeam = null;
 
-    if (tickPalace && s.o.type === STRUCTURE.PALACE) {
+    const operational = s.o.flags.allocated && s.o.hitpoints > 0;
+    if (operational && tickPalace && s.o.type === STRUCTURE.PALACE) {
       // MD $00BDEA: сначала пауза после спецоружия, отсчёт стоит и при бите 8 (предел юнитов)
       if (s.specialWait !== 0) s.specialWait--;
       else if (s.countDown !== 0 && !(isHuman(s.o.houseID) && structureLimitReached(s))) s.countDown--;
@@ -94,7 +96,7 @@ export function gameLoopStructure(): void {
     }
     if (tickDegrade && s.o.flags.degrades && s.o.hitpoints > idiv(si.o.hitpoints, 2)) structureDamage(s, hi.degradingAmount, 0);
 
-    if (tickStructure) {
+    if (operational && tickStructure) {
       const upgradeWasActive = s.o.flags.upgrading;
       const parallelYardUpgrade = upgradeWasActive && s.o.type === STRUCTURE.CONSTRUCTION_YARD;
       if (upgradeWasActive) {
@@ -217,7 +219,7 @@ export function gameLoopStructure(): void {
 
     // Finished orders wait separately from the production slot. Deployment or
     // manual placement must never prevent the next prepaid order from starting.
-    if (isHuman(s.o.houseID) && s.state === STATE.READY && s.countDown === 0 && s.o.linkedID !== 0xff) {
+    if (operational && isHuman(s.o.houseID) && s.state === STATE.READY && s.countDown === 0 && s.o.linkedID !== 0xff) {
       if (s.o.type === STRUCTURE.CONSTRUCTION_YARD) {
         const built = G.structures[s.o.linkedID];
         (s.readyBuildings ??= []).push({ type: built.o.type, cost: s.prepaidBuildingCost ?? s.spent });
@@ -232,7 +234,7 @@ export function gameLoopStructure(): void {
         structureSetState(s, STATE.IDLE);
       }
     }
-    if (s.readyUnits?.length && releaseProducedUnit(s, G.units[s.readyUnits[0]])) s.readyUnits.shift();
+    if (operational && s.readyUnits?.length && releaseProducedUnit(s, G.units[s.readyUnits[0]])) s.readyUnits.shift();
     structureStartNextUnit(s);
     if(s.o.type===STRUCTURE.CONSTRUCTION_YARD)structureStartNextBuilding(s);
     if (tickScript) {
@@ -710,7 +712,8 @@ function structureDestroy(s: Structure | null): void {
   let linkedID = s.o.linkedID;
   if (linkedID !== 0xff) {
     if (s.o.type === STRUCTURE.CONSTRUCTION_YARD) {
-      structureDestroy(G.structures[linkedID]);
+      // Unplaced production has no world script to finish its destruction.
+      structureFree(G.structures[linkedID]);
       s.o.linkedID = 0xff;
     } else {
       while (linkedID !== 0xff) {
@@ -720,6 +723,13 @@ function structureDestroy(s: Structure | null): void {
       }
     }
   }
+  for (const index of s.readyUnits ?? []) unitRemove(G.units[index]);
+  s.o.linkedID = 0xff;
+  s.readyUnits = [];
+  s.readyBuildings = [];
+  s.unitQueue = [];
+  s.buildingQueue = [];
+  s.prepaidBuildingCost = s.prepaidUnitCost = undefined;
   const h = G.houses[s.o.houseID];
   const si = structureInfo[s.o.type];
   h.credits -= h.creditsStorage === 0 ? h.credits : Math.min(h.credits, idiv(idiv(h.credits * 256, h.creditsStorage) * si.creditsStorage, 256));
@@ -749,7 +759,7 @@ export function structureDamage(s: Structure | null, damage: number, range: numb
     if (isLocal(s.o.houseID)) {
       const index = [22, 23, 24][s.o.houseID] ?? 0xffff;
       G.onFeedback(index);
-    } else {
+    } else if (!G.net) {
       G.onFeedback(21);
     }
     structureUntargetMe(s);
@@ -987,6 +997,8 @@ export function structureStarportBuy(s: Structure, items: number[]): void {
  */
 export function structureBuildObject(s: Structure | null, objectType: number, quiet=false): boolean {
   if (!s) return false;
+  if(s.o.type===STRUCTURE.DRONE_PAD&&objectType===UNIT.COMBAT_DRONE&&padDroneLoad(s,false)>=DRONES_PER_PAD)return false;
+  if(s.o.type===STRUCTURE.DRONE_PAD&&objectType===UNIT.COMBAT_DRONE&&!isHuman(s.o.houseID)&&!houseHasDroneRoom(s.o.houseID))return false;
   const si = structureInfo[s.o.type];
   if (!si.o.flags.factory) return false;
   if(objectType===UNIT.LASER_TANK||objectType===UNIT.COMBAT_DRONE||s.o.type===STRUCTURE.CONSTRUCTION_YARD&&objectType===STRUCTURE.DRONE_PAD){
@@ -1064,6 +1076,8 @@ export function structureCanQueueUnits(s:Structure):boolean{
 /** Reserve the full price on acceptance; the ROM build tick must not charge it again. */
 export function structureEnqueueUnit(s:Structure,type:number):boolean{
   if(!s.o.flags.allocated||!structureCanQueueUnits(s)||type<0||type>=UNIT.MAX||!(structureGetBuildable(s)&(1<<type)))return false;
+  if(s.o.type===STRUCTURE.DRONE_PAD&&type===UNIT.COMBAT_DRONE&&padDroneLoad(s)>=DRONES_PER_PAD)return false;
+  if(type===UNIT.COMBAT_DRONE&&!houseHasDroneRoom(s.o.houseID))return false;
   const queue=s.unitQueue??=[],cost=unitInfo[type].o.buildCredits,h=G.houses[s.o.houseID];
   if(G.net&&networkUnitCount(s.o.houseID)+G.structureFind.filter(st=>st.o.houseID===s.o.houseID).reduce((n,st)=>n+(st.unitQueue?.length??0),0)>=NETWORK_UNIT_LIMIT)return false;
   if(queue.length+(s.readyUnits?.length??0)+(s.o.linkedID!==0xff?1:0)>=20||h.credits<cost)return false;
@@ -1309,6 +1323,7 @@ export const unitGroundPoolFull = () => !unitPoolHasFree(G.net?0:25, G.net?NETWO
  */
 export function structureLimitReached(s: Structure): boolean {
   const h = G.houses[s.o.houseID];
+  if(s.o.type===STRUCTURE.DRONE_PAD&&padDroneLoad(s)>=DRONES_PER_PAD)return true;
   if(G.net){
     if(s.o.type===STRUCTURE.CONSTRUCTION_YARD)return networkStructureCount(s.o.houseID)>=NETWORK_STRUCTURE_LIMIT||structurePoolFull();
     if(s.o.type===STRUCTURE.PALACE||structureCanQueueUnits(s)||s.o.type===STRUCTURE.STARPORT)return networkUnitCount(s.o.houseID)>=NETWORK_UNIT_LIMIT||unitGroundPoolFull();
@@ -1342,7 +1357,7 @@ export function structureHouseUnderAttack(houseID: number): void {
   if (h.flags.human) {
     if (h.timerStructureAttack !== 0) return;
     // MD $01A88C/$01A8B6: атака базы — сирена $3E (GEMS seq 75), не голос фрегата ($30/48)
-    G.onSound(0x3e);
+    if (isLocal(houseID)) G.onSound(0x3e);
     h.timerStructureAttack = 8;
   }
 }

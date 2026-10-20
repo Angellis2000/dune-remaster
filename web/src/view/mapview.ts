@@ -35,6 +35,7 @@ import {FogOfWar} from '../gfx/fog-of-war.ts';
 import type { Pad } from "../input/pad.ts";
 import { CELL_PX, MAP_SIZE } from "../rom/dune.ts";
 import type { Structure, Unit, World } from "../game/world.ts";
+import { playerRelation, RELATIONS } from '../ui/relations.ts';
 
 const ZOOMS = [1, 2, 3, 4, 5, 6];
 const EDGE_PX = 10; // полоса у края окна для прокрутки мышью (CSS-пиксели)
@@ -137,15 +138,17 @@ export class MapView {
   placement: { w: number; h: number; valid: number; cells?: boolean[] } | null = null;
   /** Red Alert-style lock brackets while a selected force is hovering a hostile target. */
   aimTarget: { x: number; y: number; w: number; h: number } | null = null;
+  hoverRelation: {x:number;y:number;house:number} | null = null;
   /** значки над зданиями («OK», молоток, молния): описание спрайта ROM */
   structureIcons: { s: Structure; def: number; kind?: StatusKind }[] = [];
   private stripes = new Map<string, CanvasPattern>();
 
-  private drawIcon(id: number, x: number, y: number, size: number, allowHD = true): void {
+  private drawIcon(id: number, x: number, y: number, size: number, allowHD = true, cell = 0): void {
     if (this.skins.iconOverridden[id]) {
       this.ctx.drawImage(this.skins.scaled(`icon:${id}`, size, size)!, x, y);
       return;
     }
+    if (allowHD && this.sprites.mapEffects?.drawCrater(this.ctx, id, cell, x, y, size)) return;
     const s = (allowHD ? this.sprites.mapEffects?.icon(id) : null) ?? this.icons.source(id);
     const smooth = this.ctx.imageSmoothingEnabled;
     if (s.sw > 32) this.ctx.imageSmoothingEnabled = true;
@@ -504,7 +507,7 @@ export class MapView {
           this.terrain.kinds[id] === 13 || this.terrain.kinds[id] === 14) {
           this.drawIcon(id, x * size - ox, y * size - oy, size, this.terrain !== null);
         }
-        if (ov !== 0 && !(this.veiledIcon&&ov>=this.veiledIcon-15&&ov<=this.veiledIcon)) this.drawIcon(ov, x * size - ox, y * size - oy, size);
+        if (ov !== 0 && !(this.veiledIcon&&ov>=this.veiledIcon-15&&ov<=this.veiledIcon)) this.drawIcon(ov, x * size - ox, y * size - oy, size, true, p);
       }
 
     }
@@ -531,7 +534,7 @@ export class MapView {
         if (ov === this.veiledIcon && this.veiledIcon !== 0) continue;
         const sw=img.width/st.w,sh=img.height/st.h;
         ctx.drawImage(img, col * sw, row * sh, sw, sh, x * size - ox, y * size - oy, size, size);
-        if (ov !== 0 && !(this.veiledIcon&&ov>=this.veiledIcon-15&&ov<=this.veiledIcon)) this.drawIcon(ov, x * size - ox, y * size - oy, size);
+        if (ov !== 0 && !(this.veiledIcon&&ov>=this.veiledIcon-15&&ov<=this.veiledIcon)) this.drawIcon(ov, x * size - ox, y * size - oy, size, true, (y << 6) | x);
       }
       if(!st.built||!this.skins.hasStructure(st.type)){
         ctx.save();ctx.beginPath();
@@ -663,24 +666,27 @@ export class MapView {
     }
     if (!blastsDrawn) drawBlasts();
 
-    // All world lighting stays below status/selection/cursors and inside revealed cells.
+    // Surface lighting also reaches the hidden ground visible through the soft
+    // fog frontier. Visibility clips apply to effects/objects, never day/night.
     if(this.atmosphere){
       const elapsed=Math.max(0,G.timerGame-G.tickScenarioStart);
-      ctx.save();ctx.beginPath();
+      const visibleArea=new Path2D();
       for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)
-        if(isVisible(x*32+16,y*32+16))ctx.rect(x*size-ox,y*size-oy,size,size);
-      ctx.clip();
+        if(isVisible(x*32+16,y*32+16))visibleArea.rect(x*size-ox,y*size-oy,size,size);
+      ctx.save();ctx.clip(visibleArea);
       ctx.save();ctx.setTransform(z,0,0,z,-ox,-oy);drawAdvancedWeapons(ctx,world.units,G.timerGame,isVisible);ctx.restore();
+      ctx.restore();
       this.atmosphere.draw(ctx,elapsed,ox,oy,z,this.canvas.width,this.canvas.height);
       const {night}=desertLight(elapsed);
       if(night>.03){
+        ctx.save();ctx.clip(visibleArea);
         ctx.setTransform(z,0,0,z,-ox,-oy);
         for(const st of buildingImages.keys()){
           const house=G.houses[st.house];
           if(!this.skins.hasStructure(st.type)&&(!house||house.powerProduction>=house.powerUsage))drawBuildingNightLights(ctx,st,night);
         }
+        ctx.restore();
       }
-      ctx.restore();
     }
 
     ctx.save();ctx.setTransform(z,0,0,z,-ox,-oy);this.nukes.drawAir(ctx,G.timerGame,isVisible);ctx.restore();
@@ -749,12 +755,21 @@ export class MapView {
 
     // выделение — уголки рамки, как у курсора оригинала
     const s = this.selectedStructure;
-    if (s) this.drawCorners(s.x * CELL_PX, s.y * CELL_PX, s.w * CELL_PX, s.h * CELL_PX, ox, oy,true);
+    if (s) this.drawCorners(s.x * CELL_PX, s.y * CELL_PX, s.w * CELL_PX, s.h * CELL_PX, ox, oy,true,RELATIONS[playerRelation(s.house,world.player)].color);
     for (const u of this.selectedUnits) {
       if (u === this.markedUnit) continue;
-      this.drawCorners(u.x - 14, u.y - 14, 28, 28, ox, oy);
+      this.drawCorners(u.x - 14, u.y - 14, 28, 28, ox, oy,false,RELATIONS[playerRelation(u.house,world.player)].color);
     }
     drawSelectedUnitStatus(ctx,this.selectedUnits,z,ox,oy);
+    if(G.net){
+      ctx.save();ctx.strokeStyle=RELATIONS.ally.color;ctx.fillStyle='#072b28';ctx.lineWidth=Math.max(1,z*.5);
+      for(const u of world.units){
+        if(playerRelation(u.house,world.player)!=='ally'||!isVisible(u.x,u.y))continue;
+        const x=u.x*z-ox,y=(u.y-18)*z-oy,r=Math.max(3,2*z);
+        ctx.beginPath();ctx.moveTo(x,y-r);ctx.lineTo(x+r,y);ctx.lineTo(x,y+r);ctx.lineTo(x-r,y);ctx.closePath();ctx.fill();ctx.stroke();
+      }
+      ctx.restore();
+    }
     if (this.markedUnit) {
       const u = this.markedUnit;
       drawCursor(ctx,'move',u.x*z-ox,u.y*z-oy,32*z,G.timerGame);
@@ -774,6 +789,12 @@ export class MapView {
       ctx.stroke();ctx.restore();
     }
 
+    if (G.net && this.hoverRelation) {
+      const a=this.hoverRelation,relation=RELATIONS[playerRelation(a.house,world.player)];
+      ctx.save();ctx.font=`600 ${Math.max(12,Math.min(16,8*z))}px sans-serif`;
+      const w=ctx.measureText(relation.label).width+16,x=Math.min(this.canvas.width-w-8,Math.max(4,a.x*z-ox+16)),y=Math.max(20,a.y*z-oy-30);
+      ctx.fillStyle='#08121be8';ctx.fillRect(x,y-16,w,24);ctx.fillStyle=relation.color;ctx.fillText(relation.label,x+8,y+1);ctx.restore();
+    }
     if (this.box?.active) {
       const a = this.box;
       ctx.strokeStyle = "#f4f4f4";
@@ -812,9 +833,9 @@ export class MapView {
     return p;
   }
 
-  private drawCorners(x:number,y:number,w:number,h:number,ox:number,oy:number,strong=false):void {
+  private drawCorners(x:number,y:number,w:number,h:number,ox:number,oy:number,strong=false,color?:string):void {
     const z=this.pixelScale;
-    drawSelection(this.ctx,x*z-ox,y*z-oy,w*z,h*z,z,G.timerGame,strong);
+    drawSelection(this.ctx,x*z-ox,y*z-oy,w*z,h*z,z,G.timerGame,strong,color);
   }
 
   private drawGrid(x0: number, y0: number, x1: number, y1: number, size: number, ox: number, oy: number): void {

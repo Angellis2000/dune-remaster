@@ -1,7 +1,7 @@
 // Dune Remaster для Windows (бета): окно Electron с собранной веб-игрой (web/dist → desktop/app).
 // Игра отдаётся по своему защищённому протоколу app:// — так работают fetch музыки и видео, IndexedDB (сохранённый
 // ROM и настройки) и WebSocket к серверу сетевой игры. ROM в сборку не входит: игра попросит файл при первом запуске.
-const { app, BrowserWindow, Menu, protocol, shell } = require("electron");
+const { app, BrowserWindow, Menu, protocol, shell, ipcMain } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs/promises");
 
@@ -89,7 +89,10 @@ app.whenReady().then(() => {
   const win = new BrowserWindow({
     width: 1280, height: 800, minWidth: 800, minHeight: 600, fullscreen:true,
     icon:path.join(__dirname,'assets/dune-icon.ico'),backgroundColor: "#000000", title: "Dune Remaster (бета)",
-    autoHideMenuBar: true, webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
+    autoHideMenuBar: true, webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: path.join(__dirname, 'preload.cjs') },
+  });
+  ipcMain.on('dune:quit', event => {
+    if (event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame && event.senderFrame.url.startsWith('app://dune/')) win.close();
   });
   // внешние ссылки — в обычном браузере, не в окне игры
   win.webContents.setWindowOpenHandler(({ url }) => {

@@ -74,7 +74,7 @@ const generalNoOperation: ScriptFunction = () => 0;
 
 const generalDisplayText: ScriptFunction = (script) => {
   const text = scriptText(script, P(script, 1));
-  if (text) G.onMessage(text, 0);
+  if (text && (!G.net || isLocal(G.scriptCurrentObject!.houseID))) G.onMessage(text, 0);
   return 0;
 };
 
@@ -82,7 +82,7 @@ const generalRandomRange: ScriptFunction = (script) => randomRange(P(script, 1),
 
 const generalDisplayModalMessage: ScriptFunction = (script) => {
   const text = scriptText(script, P(script, 1));
-  if (text) G.onMessage(text, 0);
+  if (text && (!G.net || isLocal(G.scriptCurrentObject!.houseID))) G.onMessage(text, 0);
   return 0;
 };
 
@@ -1088,7 +1088,7 @@ const unitFindStructure: ScriptFunction = (script) => {
 
 const unitDisplayDestroyedText: ScriptFunction = () => {
   const u = cur();
-  G.onMessage(msg.destroyed(unitGetHouseID(u), u.o.type, false), 0);
+  if (!G.net || isLocal(unitGetHouseID(u))) G.onMessage(msg.destroyed(unitGetHouseID(u), u.o.type, false), 0);
   return 0;
 };
 

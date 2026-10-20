@@ -1012,6 +1012,8 @@ button[aria-pressed="true"] {
 
 .toolbar-toggle { position: fixed; top: max(4px,env(safe-area-inset-top,0px)); left: max(4px,env(safe-area-inset-left,0px)); z-index: 10000; width: 22px; height: 26px; padding: 0; border: 1px solid #b59a6040; border-radius: 5px; background: #07101770; color: #c9b787; font-size: 19px; line-height: 1; opacity: .35; transition: opacity .18s, background .18s; }
 .toolbar-toggle:hover,.toolbar-toggle:focus-visible,.toolbar-toggle[aria-expanded="true"] { opacity: 1; background: #101920ed; }
+.desktop-quit { position:fixed;top:5px;right:6px;z-index:10001;width:28px;height:28px;padding:0;border:1px solid #bca66e55;border-radius:5px;background:#081119c9;color:#d5c6a2;font-size:24px;line-height:1;opacity:.55; }
+.desktop-quit:hover,.desktop-quit:focus-visible { opacity:1;background:#74352d;color:#fff1dc; }
 .topbar { padding-left: 32px; }
 @media(pointer:coarse) { .toolbar-toggle { width: 36px; height: 36px; } }
 
