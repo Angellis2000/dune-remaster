@@ -60,6 +60,18 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLEl
 // ------------------------------------------------------------------ выбор ROM
 async function showRomScreen(error?: string): Promise<void> {
   const q = new URLSearchParams(location.search);
+  // exe для Windows (desktop/main.cjs): ROM, лежащий в одной папке с exe, подхватывается сам — без выбора файла
+  if (!error && !q.has("chooseRom") && location.protocol === "app:") {
+    try {
+      const res = await fetch("./__local-rom");
+      if (res.ok) {
+        start(decodeURIComponent(res.headers.get("x-rom-name") ?? "ROM"), new Uint8Array(await res.arrayBuffer()), false);
+        return;
+      }
+    } catch {
+      /* рядом с exe ROM нет — обычный выбор файла */
+    }
+  }
   const stored = error ? null : await loadStoredRom();
   if (stored && !q.has("chooseRom")) {
     start(stored.name, stored.bytes, false);

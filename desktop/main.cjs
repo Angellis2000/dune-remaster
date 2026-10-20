@@ -17,9 +17,40 @@ const MIME = {
   ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".wasm": "application/wasm",
 };
 
+/**
+ * ROM рядом с exe: переносной exe распаковывается во временную папку, поэтому папку самого exe даёт
+ * PORTABLE_EXECUTABLE_DIR (electron-builder), иначе — папка запущенного файла. Берётся первый файл .gen/.bin/.md/.smd
+ * размером 256 КБ…8 МБ с заголовком Mega Drive. ROM в сборку не входит — его кладёт рядом владелец копии игры.
+ */
+async function localRom() {
+  const dir = process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(process.execPath);
+  let names = [];
+  try {
+    names = (await fs.readdir(dir)).filter((n) => /\.(gen|bin|md|smd)$/i.test(n)).sort();
+  } catch {
+    return null;
+  }
+  for (const name of names) {
+    const file = path.join(dir, name);
+    try {
+      const stat = await fs.stat(file);
+      if (!stat.isFile() || stat.size < 256 * 1024 || stat.size > 8 * 1024 * 1024) continue;
+      const data = await fs.readFile(file);
+      // заголовок картриджа Mega Drive: «SEGA» в $100…$10F (отсекает служебные .bin самого Electron)
+      if (data.subarray(0x100, 0x110).toString("latin1").includes("SEGA")) return { name, data };
+    } catch { /* следующий */ }
+  }
+  return null;
+}
+
 /** Файл игры по адресу app://dune/…; поддерживает Range — видео и музыка перематываются. */
 async function serve(request) {
   const url = new URL(request.url);
+  if (url.pathname === "/__local-rom") {
+    const rom = await localRom();
+    if (!rom) return new Response("no rom", { status: 404 });
+    return new Response(rom.data, { headers: { "content-type": "application/octet-stream", "x-rom-name": encodeURIComponent(rom.name) } });
+  }
   let rel = decodeURIComponent(url.pathname);
   if (rel === "/" || rel === "") rel = "/index.html";
   const file = path.normalize(path.join(root, rel));
