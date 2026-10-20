@@ -179,7 +179,8 @@ test('хозяин ставит компьютеры: место и дом за�
     assert.equal(bot.team, 1);
     assert.notEqual(bot.house, 'A', 'дом компьютера не повторяет дом игрока');
     assert.equal(withBot.room.players, 2);
-    a.send({ t: 'bot', op: 'set', slot: bot.slot, house: 'O' });
+    assert.equal(bot.difficulty, 1, 'компьютер по умолчанию обычный');
+    a.send({ t: 'bot', op: 'set', slot: bot.slot, house: 'O', difficulty: 2 });
     assert.equal((await a.next((m) => m.t === 'room' && m.room.members.some((x) => x.ai && x.house === 'O'))).room.members.length, 2);
     a.send({ t: 'bot', op: 'add', team: 0 });
     await a.next((m) => m.t === 'room' && m.room.members.filter((x) => x.ai).length === 2);
@@ -196,6 +197,7 @@ test('хозяин ставит компьютеры: место и дом за�
     const ai = start.players.filter((p) => p.ai);
     assert.equal(ai.length, 1);
     assert.equal(ai[0].house, 2);
+    assert.equal(ai[0].difficulty, 2, 'сложность доходит до старта');
     assert.ok(start.players.filter((p) => !p.ai).length === 2);
     for (const c of [a, b]) c.ws.close();
   } finally { await server.close(); }

@@ -241,9 +241,11 @@ button[aria-pressed="true"] {
   width: 252px;
   box-sizing: border-box;
   height: auto;
-  image-rendering: pixelated;
-  border: 1px solid var(--line);
-  background: #000;
+  image-rendering: auto;
+  border: 1px solid #8b7650;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px #0b0d10, 0 5px 18px #0009;
+  background: #0c0f13;
   cursor: crosshair;
   touch-action: none;
 }

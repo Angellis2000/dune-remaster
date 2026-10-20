@@ -1029,7 +1029,12 @@ async function startGame(rom: DuneRom): Promise<void> {
     if (frame % 10 === 0) panel.update();
     drawHud();
     if (frame % 30 === 0) {
-      minimap.refresh(world.units.map((u) => ({ x: u.x, y: u.y, color: u.house === world.player ? "#7fd0ff" : "#ff6a5a" })));
+      // здания — только на разведанных клетках (иначе мини-карта выдала бы базу врага)
+      const seen = (x: number, y: number) => G.revealAll || !!world.map.unveiled[(y << 6) | x];
+      minimap.refresh(
+        world.units.map((u) => ({ x: u.x, y: u.y, own: u.house === world.player, air: u.air })),
+        world.structures.filter((s) => s.type !== STRUCTURE.WALL && seen(s.x, s.y)).map((s) => ({ x: s.x, y: s.y, w: s.w, h: s.h, own: s.house === world.player })),
+      );
       updateHud();
     }
   };

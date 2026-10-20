@@ -26,6 +26,7 @@ import {
 import { unitCreate, unitGetByPackedTile, unitGetHouseID, unitLaunchHouseMissile, unitRemove, unitSetAction } from "./unit.ts";
 import {networkUnitCount} from './core.ts';
 import {NETWORK_ARMY_POOL_END,NETWORK_STRUCTURE_LIMIT,NETWORK_UNIT_LIMIT} from './network-rules.ts';
+import { netAIMayBuildUnits, netAIStructurePlaced } from "./net-ai.ts";
 
 const ticks = { degrade: 0, structure: 0, script: 0, palace: 0 };
 let releaseProducedUnit: (s: Structure, u: Unit) => boolean = () => false;
@@ -169,6 +170,7 @@ export function gameLoopStructure(): void {
                   if (!structurePlace(ns, h.ai_structureRebuild[i][1])) continue;
                   h.ai_structureRebuild[i][0] = 0;
                   h.ai_structureRebuild[i][1] = 0;
+                  if (G.net) netAIStructurePlaced(ns);
                   break;
                 }
                 if (i === 5) {
@@ -204,7 +206,8 @@ export function gameLoopStructure(): void {
         }
         if (h.flags.isAIActive && s.o.flags.allocated && !isHuman(s.o.houseID) && h.credits !== 0) {
           if (s.o.hitpoints < idiv(si.o.hitpoints, 2)) structureSetRepairingState(s, 1);
-          if (si.o.flags.factory && s.countDown === 0 && s.o.linkedID === 0xff) {
+          // сеть: пока у компьютера нет задела базы, деньги идут на здания (engine/net-ai.ts)
+          if (si.o.flags.factory && s.countDown === 0 && s.o.linkedID === 0xff && (!G.net || netAIMayBuildUnits(s))) {
             const type = structureAIPickNextToBuild(s);
             if (type !== 0xffff) structureBuildObject(s, type);
           }
@@ -270,7 +273,8 @@ export function structureCreate(index: number, typeID: number, houseID: number, 
   s.objectType = 0xffff;
   structureBuildObject(s, 0xfffe);
   s.countDown = 0;
-  if (!isHuman(houseID)) {
+  // в сети компьютер покупает улучшения, как человек (engine/net-ai.ts), а не получает даром
+  if (!isHuman(houseID) && !G.net) {
     while (structureIsUpgradable(s)) s.upgradeLevel++;
     s.upgradeTimeLeft = 0;
   }
@@ -324,6 +328,19 @@ export function structurePlace(s: Structure | null, position: number): boolean {
     }
   }
 
+  // Правило владельца (2026-10-20), для всех домов и режимов: на клетку, где стоит чужое здание или чужой юнит,
+  // здание не ставится. В MD двор ИИ ставил восстановленное здание поверх юнитов игрока и давил их; теперь
+  // постановка не проходит, двор возвращает деньги и пробует позже (запись в ai_structureRebuild остаётся).
+  // Свои юниты на месте ИИ, как в MD, убираются ниже. Загрузка сценария (validateStrictIfZero) не проверяется.
+  if (G.validateStrictIfZero === 0) {
+    for (let i = 0; i < layoutTileCount[si.layout]; i++) {
+      const curPos = u16(position + layoutTiles[si.layout][i]);
+      const other = structureGetByPackedTile(curPos);
+      if (other && other !== s && other.o.flags.used) return false;
+      const unit = unitGetByPackedTile(curPos);
+      if (unit && unit.o.flags.used && unitGetHouseID(unit) !== s.o.houseID) return false;
+    }
+  }
   const validBuildLocation = structureIsValidBuildLocation(position, s.o.type);
   if (validBuildLocation === 0 && isHuman(s.o.houseID) && G.validateStrictIfZero === 0) return false;
   if (isHuman(s.o.houseID)) tileRemoveFogInRadius(unpackTile(position), 2, s.o.houseID);

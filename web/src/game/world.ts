@@ -12,6 +12,21 @@ import { Game, type NetSetup } from "../engine/game.ts";
 import { layoutSize, structureInfo, tableMapDiff, unitInfo } from "../engine/tables.ts";
 import { MAP_SIZE } from "../rom/dune.ts";
 import type { UnitDrawState } from "../gfx/sprites.ts";
+import { refineryDock, refineryExit } from "../engine/refinery-dock.ts";
+
+/** Сколько кадров экрана харвестер плавно въезжает на причал завода очистки и выезжает с него (только вид). */
+const DOCK_FRAMES = 26;
+const ease = (t: number) => t * t * (3 - 2 * t);
+/** Причал и клетка выезда своего завода очистки рядом с точкой (в мировых точках) или null. */
+function nearRefinery(house: number, x: number, y: number, reach: number): { dock: { x: number; y: number }; exit: { x: number; y: number } } | null {
+  for (const s of G.structureFind) {
+    if (!s.o.flags.used || s.o.flags.isNotOnMap || s.o.type !== STRUCTURE.REFINERY || s.o.houseID !== house) continue;
+    const d = refineryDock(s.o.position), e = refineryExit(s.o.position);
+    const dock = { x: d.x / 8, y: d.y / 8 }, exit = { x: e.x / 8, y: e.y / 8 };
+    if (Math.hypot(dock.x - x, dock.y - y) <= reach || Math.hypot(exit.x - x, exit.y - y) <= reach) return { dock, exit };
+  }
+  return null;
+}
 
 export interface Structure {
   id: number;
@@ -87,6 +102,10 @@ export class World {
   blasts: Blast[] = [];
   readonly houses = new Map<number, HouseState>();
   private unitViews = new Map<EUnit, Unit>();
+  /** харвестеры, въезжающие на причал: движок уже убрал их внутрь, на экране они ещё доезжают */
+  private docking: { view: Unit; from: { x: number; y: number }; to: { x: number; y: number }; t: number }[] = [];
+  /** харвестеры, выезжающие с причала: появились на клетке выезда, на экране выкатываются с причала */
+  private undocking = new Map<EUnit, { from: { x: number; y: number }; t: number }>();
   private structureViews = new Map<EStructure, Structure>();
   private nextId = 1;
 
@@ -153,6 +172,15 @@ export class World {
           anim: 0, air: false, highlighted: false, state: {}, smoke: -1, dust: -1, shadow: false,
         };
         this.unitViews.set(u, v);
+        // харвестер появился ровно на клетке выезда завода очистки — выкатываем его с причала (движок ставит сразу)
+        if (u.o.type === 16) {
+          const r = nearRefinery(u.o.houseID, v.x, v.y, 4);
+          if (r && Math.hypot(r.exit.x - v.x, r.exit.y - v.y) <= 4) {
+            this.undocking.set(u, { from: r.dock, t: 0 });
+            v.x = r.dock.x;
+            v.y = r.dock.y;
+          }
+        }
       }
       const ui = unitInfo[u.o.type];
       v.type = u.o.type;
@@ -162,7 +190,13 @@ export class World {
       // Follow the actual path. Random sprite wobble became a visible sideways jump at HD zoom.
       const tx = u.o.position.x / 8;
       const ty = u.o.position.y / 8;
-      if (Math.abs(tx - v.x) > 40 || Math.abs(ty - v.y) > 40) {
+      const leaving = this.undocking.get(u);
+      if (leaving) {
+        const f = ease(Math.min(1, ++leaving.t / DOCK_FRAMES));
+        v.x = leaving.from.x + (tx - leaving.from.x) * f;
+        v.y = leaving.from.y + (ty - leaving.from.y) * f;
+        if (leaving.t >= DOCK_FRAMES) this.undocking.delete(u);
+      } else if (Math.abs(tx - v.x) > 40 || Math.abs(ty - v.y) > 40) {
         v.x = tx;
         v.y = ty;
       } else {
@@ -186,7 +220,25 @@ export class World {
       v.shadow = !!ui.o.flags.hasShadow;
       units.push(v);
     }
-    for (const u of [...this.unitViews.keys()]) if (!alive.has(u) && (!u.o.flags.used || u.o.flags.isNotOnMap)) this.unitViews.delete(u);
+    for (const u of [...this.unitViews.keys()]) {
+      if (alive.has(u) || (u.o.flags.used && !u.o.flags.isNotOnMap)) continue;
+      // харвестер заехал на причал (движок убрал его внутрь завода) — на экране он ещё доезжает до места
+      const v = this.unitViews.get(u)!;
+      if (u.o.flags.used && u.o.type === 16 && !u.o.flags.inTransport) {
+        const r = nearRefinery(u.o.houseID, v.x, v.y, 40);
+        if (r) this.docking.push({ view: { ...v, dust: -1, highlighted: false }, from: { x: v.x, y: v.y }, to: r.dock, t: 0 });
+      }
+      this.unitViews.delete(u);
+      this.undocking.delete(u);
+    }
+    this.docking = this.docking.filter((d) => {
+      const f = ease(Math.min(1, ++d.t / DOCK_FRAMES));
+      d.view.x = d.from.x + (d.to.x - d.from.x) * f;
+      d.view.y = d.from.y + (d.to.y - d.from.y) * f;
+      if (d.t > DOCK_FRAMES) return false;
+      units.push(d.view);
+      return true;
+    });
     this.units = units;
 
     const structures: Structure[] = [];

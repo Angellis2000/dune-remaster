@@ -28,7 +28,7 @@ import { actionInfo, applyRomTables, houseInfo, landscapeInfo, structureInfo, un
 import { gameLoopTeam, teamCreate, teamResetTimers } from "./team.ts";
 import {configureNetworkPools} from './core.ts';
 import {NETWORK_UNIT_LIMIT} from './network-rules.ts';
-import { netBuildAIBase, netCreateAITeams, netHandOver, netSetupAIHouse } from "./net-ai.ts";
+import { aiBuilderTick, netCreateAITeams, netHandOver, netSetupAIHouse } from "./net-ai.ts";
 import {
   gameLoopUnit, unitCreate, unitCreateWrapper, unitDeviationDecrease, unitFindTargetAround, unitGetByPackedTile, unitGetHouseID, unitGetTileEnterScore,
   unitHouseUnitCountAdd, unitLaunchHouseMissile, unitRemoveFog, unitResetTimers, unitSelect, unitSetAction, unitSetDestination,
@@ -53,6 +53,8 @@ export interface NetPlayer {
   name: string;
   /** противник-компьютер (engine/net-ai.ts): готовая база, заводы и команды ИИ */
   ai?: boolean;
+  /** сложность компьютера: 0 — лёгкий, 1 — обычный, 2 — тяжёлый */
+  difficulty?: number;
 }
 /** Всё, что нужно, чтобы у всех клиентов матч начался одинаково. */
 export interface NetSetup {
@@ -405,6 +407,8 @@ export class Game {
     gameLoopUnit();
     gameLoopStructure();
     gameLoopHouse();
+    // строитель ИИ (engine/net-ai.ts): в сети и в обычной миссии — по просьбе владельца
+    aiBuilderTick();
     explosionTick();
     animationTick();
     unitSort();
@@ -1040,7 +1044,7 @@ export class Game {
       const h = houseAllocate(p.house);
       if (!h) continue;
       if (p.ai) {
-        netSetupAIHouse(p.house, setup.credits);
+        netSetupAIHouse(p.house, setup.credits, p.difficulty ?? 1);
         continue;
       }
       h.flags.human = true;
@@ -1067,10 +1071,8 @@ export class Game {
         if (u) unitSetAction(u, ACTION.GUARD);
       }
     }
-    // противники-компьютеры: готовая база у своей точки и команды атаки (engine/net-ai.ts)
-    const ai = setup.players.filter((p) => p.ai && spawns.has(p.house));
-    for (const p of ai) netBuildAIBase(p.house, spawns.get(p.house)!, [...spawns].filter(([h]) => h !== p.house).map(([, c]) => c));
-    netCreateAITeams(ai.map((p) => p.house));
+    // противники-компьютеры начинают как люди (двор, два квадроцикла), базу строят сами — engine/net-ai.ts
+    netCreateAITeams(setup.players.filter((p) => p.ai && spawns.has(p.house)).map((p) => p.house));
     G.tickScenarioStart = 0;
     this.prepare();
     G.validateStrictIfZero--;

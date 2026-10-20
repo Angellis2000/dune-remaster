@@ -14,7 +14,8 @@ game.loadNetwork({map:5,seed:1,credits:50000,local:1,players:[{slot:0,house:1,na
 G.net!.humans&=~1; // also cover storage for a non-human house in a network match
 for(const h of G.houseFind){h.credits=100_000_000;h.creditsStorage=10;}
 for(let i=0;i<2000;i++)game.tick();
-for(const h of G.houseFind)assert.ok(h.credits>99_999_900,`house ${h.index}: balance was capped by storage`);
+// дом ИИ тратит деньги на стройку (engine/net-ai.ts) — проверяем только, что хранилище (10) их не урезало
+for(const h of G.houseFind)assert.ok(h.credits>99_000_000,`house ${h.index}: balance was capped by storage`);
 const refinery=structureCreate(INDEX_INVALID,STRUCTURE.REFINERY,1,INDEX_INVALID)!;
 const harvester=unitCreate(INDEX_INVALID,UNIT.HARVESTER,1,{x:0xffff,y:0xffff},0)!;
 refinery.o.linkedID=harvester.o.index;harvester.amount=100;

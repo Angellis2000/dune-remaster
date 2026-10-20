@@ -56,7 +56,7 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
     observers: room.observers.size,
     members: [
       ...[...room.players.values()].map((p) => ({ slot: p.slot, name: p.name, house: p.house, team: p.team, connected: p.connected })),
-      ...room.bots.map((b) => ({ slot: b.slot, name: b.name, house: b.house, team: b.team, connected: true, ai: true })),
+      ...room.bots.map((b) => ({ slot: b.slot, name: b.name, house: b.house, team: b.team, connected: true, ai: true, difficulty: b.difficulty })),
     ],
   });
   const broadcastRoom = (room) => {
@@ -87,12 +87,13 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
       const slot = freeSlot(room, msg.team), house = freeHouse(room, msg.house);
       if (slot === null || house === null) return;
       const n = Math.max(0, ...room.bots.map((b) => Number(b.name.split(" ").pop()) || 0)) + 1;
-      room.bots.push({ slot, house, team: msg.team, name: `Компьютер ${n}` });
+      room.bots.push({ slot, house, team: msg.team, name: `Компьютер ${n}`, difficulty: [0, 1, 2].includes(msg.difficulty) ? msg.difficulty : 1 });
     } else if (msg.op === "remove") {
       room.bots = room.bots.filter((b) => b.slot !== msg.slot);
     } else if (msg.op === "set") {
       const bot = room.bots.find((b) => b.slot === msg.slot);
       if (bot && msg.house in HOUSES && msg.house !== bot.house && freeHouse(room, msg.house) === msg.house) bot.house = msg.house;
+      if (bot && [0, 1, 2].includes(msg.difficulty)) bot.difficulty = msg.difficulty;
     }
   }
   const validConfig = (c) => {
@@ -198,7 +199,7 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
       seed: room.seed,
       config: room.config,
       players: [...room.players.values(), ...room.bots.map((b) => ({ ...b, ai: true }))].sort((a, b) => a.slot - b.slot)
-        .map((p) => ({ slot: p.slot, name: p.name, house: HOUSES[p.house], team: p.team, ...(p.ai ? { ai: true } : {}) })),
+        .map((p) => ({ slot: p.slot, name: p.name, house: HOUSES[p.house], team: p.team, ...(p.ai ? { ai: true, difficulty: p.difficulty } : {}) })),
       turnMs,
       framesPerTurn: FRAMES_PER_TURN,
     };

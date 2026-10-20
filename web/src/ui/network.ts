@@ -7,7 +7,7 @@ interface NetworkMap {id:string;name:string;description:string;width:number;heig
 export interface NetworkRoom {id:string;name:string;map:string;players:number;capacity:number;state:'waiting'|'playing'|'finished';passwordRequired?:boolean}
 /** Комната и состав с сервера (net/session.ts). */
 export interface ServerRoomInfo {id:string;name:string;map:number;teamSize:number;players:number;capacity:number;state:'waiting'|'playing'|'finished';passwordRequired:boolean}
-export interface ServerRoomState extends ServerRoomInfo {host:number;config:{map:number;teamSize:number;credits:number};observers:number;members:{slot:number;name:string;house:string;team:number;connected:boolean;ai?:boolean}[]}
+export interface ServerRoomState extends ServerRoomInfo {host:number;config:{map:number;teamSize:number;credits:number};observers:number;members:{slot:number;name:string;house:string;team:number;connected:boolean;ai?:boolean;difficulty?:number}[]}
 /** Карта для лобби: каталог сетевых карт или карты ROM (id «rom-N»). */
 export type LobbyMap={id:string;name:string;description:string;width:number;height:number;teamSize:number;capacity:number;preview:string;data:string};
 const HOUSE_OPTIONS=[['A','Атрейдесы'],['H','Харконнены'],['O','Ордосы'],['F','Фримены'],['S','Сардаукары'],['M','Наёмники']] as const;
@@ -63,7 +63,7 @@ export class NetworkMenu {
   constructor(private host:{back():void;ui?(sequence?:number):void;endpoint?:string;refreshRooms?():void;joinRoom?(id:string,role:'player'|'observer',password?:string):void;leaveObservation?():void;
     romMaps?():LobbyMap[];connect?(name:string):Promise<void>;createRoom?(c:{roomName:string;password:string;map:number;teamSize:number;credits:number;house:string}):void;
     leaveRoom?():void;setOwn?(c:{house?:string;team?:number}):void;setConfig?(c:{map:number;teamSize:number;credits:number}):void;startMatch?():void;
-    bot?(c:{op:'add';team:number;house?:string}|{op:'remove';slot:number}|{op:'set';slot:number;house:string}):void;openReplays?():void}){
+    bot?(c:{op:'add';team:number;house?:string;difficulty?:number}|{op:'remove';slot:number}|{op:'set';slot:number;house?:string;difficulty?:number}):void;openReplays?():void}){
     this.root.hidden=true;this.root.setAttribute('role','dialog');this.root.setAttribute('aria-modal','true');this.root.setAttribute('aria-label','Сетевая игра');
     this.dialog.style.setProperty('--network-console',`url("${consoleUrl}")`);
     this.root.style.setProperty('--network-backdrop',`url("${consoleUrl}")`);
@@ -361,6 +361,12 @@ export class NetworkMenu {
       this.lobby.querySelectorAll<HTMLElement>('.network-add').forEach(button=>button.hidden=true);
       this.slots.forEach(slot=>{
         slot.difficulty.hidden=true;slot.row.querySelector<HTMLElement>('.network-remove')?.setAttribute('hidden','');
+        // сложность компьютера: видна у мест компьютеров, менять может хозяин
+        slot.difficulty.addEventListener('change',()=>{
+          if(!this.room||this.room.state!=='waiting'||this.you!==this.room.host)return;
+          const at=this.slotOf(slot),member=this.room.members.find(m=>m.slot===at);
+          if(member?.ai)this.host.bot?.({op:'set',slot:at,difficulty:['easy','normal','hard'].indexOf(slot.difficulty.value)});
+        });
         slot.house.addEventListener('change',()=>{
           if(!this.room||this.you===null||slot.house.value==='random')return;
           const at=this.slotOf(slot),member=this.room.members.find(m=>m.slot===at);
@@ -417,6 +423,8 @@ export class NetworkMenu {
       slot.row.classList.toggle('slot-closed',!member);
       if(member)slot.house.value=member.house;else slot.house.value='random';
       slot.house.disabled=!(own||(member?.ai&&host))||room.state!=='waiting';
+      slot.difficulty.hidden=!member?.ai;slot.difficulty.disabled=!host||room.state!=='waiting';
+      if(member?.ai)slot.difficulty.value=['easy','normal','hard'][member.difficulty??1]??'normal';
       if(own)this.playerHouse.value=member!.house;
     });
     const [start,team]=[...this.lobby.querySelectorAll<HTMLButtonElement>('.network-actions button')];

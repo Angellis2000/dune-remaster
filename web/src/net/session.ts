@@ -30,6 +30,8 @@ export interface RoomMember {
   connected: boolean;
   /** место компьютера */
   ai?: boolean;
+  /** сложность компьютера 0..2 */
+  difficulty?: number;
 }
 export interface RoomState extends RoomInfo {
   host: number;
@@ -42,7 +44,7 @@ export interface MatchStart {
   seed: number;
   config: RoomConfig;
   /** house — номер дома движка */
-  players: { slot: number; name: string; house: number; team: number; ai?: boolean }[];
+  players: { slot: number; name: string; house: number; team: number; ai?: boolean; difficulty?: number }[];
   turnMs: number;
   framesPerTurn: number;
   /** своё место или null — наблюдатель */
@@ -293,7 +295,7 @@ export class NetSession {
     this.send({ t: "config", config });
   }
   /** Места компьютеров (только хозяин, до начала матча). */
-  bot(change: { op: "add"; team: number; house?: string } | { op: "remove"; slot: number } | { op: "set"; slot: number; house: string }): void {
+  bot(change: { op: "add"; team: number; house?: string; difficulty?: number } | { op: "remove"; slot: number } | { op: "set"; slot: number; house?: string; difficulty?: number }): void {
     this.send({ t: "bot", ...change });
   }
   startMatch(): void {
