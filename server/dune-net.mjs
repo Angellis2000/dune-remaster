@@ -355,7 +355,7 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
         // номера мест зависят от размера команды
         for (const x of [...room.players.values(), ...room.bots]) x.slot = x.team * config.teamSize + (x.slot % room.config.teamSize);
         room.hostSlot = [...room.players.values()].find((x) => x.client === client)?.slot ?? room.hostSlot;
-        if (config.map !== room.config.map) for (const x of room.players.values()) x.spawn = null;
+        if (config.map !== room.config.map || config.teamSize !== room.config.teamSize) for (const x of room.players.values()) x.spawn = null;
         room.config = config;
         return broadcastRoom(room);
       }

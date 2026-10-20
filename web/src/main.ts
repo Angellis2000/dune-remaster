@@ -32,7 +32,7 @@ import { FrontEnd } from "./ui/frontend.ts";
 import {NetworkMenu,type LobbyMap} from './ui/network.ts';
 import { NetSession, defaultEndpoint, type MatchStart } from './net/session.ts';
 import { saveRecording } from './net/replay.ts';
-import { netSpawnPoints } from './engine/net-spawns.ts';
+import { netMapTeamSize, netSpawnPoints } from './engine/net-spawns.ts';
 import { ReplayBar, ReplayList } from './ui/replays.ts';
 import { installNetControls } from './net/controls.ts';
 import { HOUSE_INDEX, MentatScreen } from "./ui/mentat.ts";
@@ -557,12 +557,14 @@ async function startGame(rom: DuneRom): Promise<void> {
         const s = icons.source(map.ground[((y + b.y) << 6) | (x + b.x)]);
         g.drawImage(s.image, s.sx, s.sy, s.sw, s.sh, x * k, y * k, k, k);
       }
-      const spawns = netSpawnPoints(map.ground, b.w === 64 ? 0 : 1).map((p) => ({ x: p.x - b.x, y: p.y - b.y }));
+      // годные форматы: только там, где у каждого игрока свой материк, место под базу и точки не в куче
+      const fits = netMapTeamSize(map.ground, b.w === 64 ? 0 : 1);
+      const spawns = netSpawnPoints(map.ground, b.w === 64 ? 0 : 1).slice(0, fits * 2).map((p) => ({ x: p.x - b.x, y: p.y - b.y }));
       // номера точек высадки — кружки по центру двора 2×2
       g.font = `bold ${Math.round(k * 1.5)}px sans-serif`;
       g.textAlign = "center";
       g.textBaseline = "middle";
-      spawns.slice(0, 6).forEach((p, i) => {
+      spawns.forEach((p, i) => {
         const cx = (p.x + 1) * k, cy = (p.y + 1) * k, r = k * 1.25;
         g.fillStyle = "#0b1116d0"; g.strokeStyle = "#f0cc83"; g.lineWidth = Math.max(2, k / 5);
         g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill(); g.stroke();
@@ -570,7 +572,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       });
       const preview = c.toDataURL("image/jpeg", 0.9);
       const where = usedIn.get(n);
-      for (let teamSize = 1; teamSize <= 3; teamSize++) {
+      for (let teamSize = 1; teamSize <= fits; teamSize++) {
         list.push({
           id: `rom-${n}`, name: `Карта ${n} · ${b.w}×${b.h}`, width: b.w, height: b.h, teamSize, capacity: teamSize * 2, preview, data: "", spawns,
           description: where ? `Карта кампании: ${where.join(", ")}` : "Карта кампании",

@@ -254,7 +254,7 @@ export class NetworkMenu {
     const map=this.mapList.find(item=>item.id===this.map.value),room=this.room;if(!map?.spawns||!room)return;
     this.markers.replaceChildren();
     const me=room.members.find(m=>m.slot===this.you),waiting=room.state==='waiting';
-    map.spawns.slice(0,6).forEach((point,i)=>{
+    map.spawns.slice(0,room.config.teamSize*2).forEach((point,i)=>{
       const occupant=room.members.find(m=>!m.ai&&m.spawn===i),own=!!occupant&&occupant.slot===this.you,enemy=!!occupant&&!!me&&occupant.team!==me.team;
       const button=node('button',`network-spawn-point${occupant?` occupied spawn-team-${enemy?1:0}`:''}${own?' spawn-self':''}`);
       button.type='button';button.style.left=`${(point.x+1)/map.width*100}%`;button.style.top=`${(point.y+1)/map.height*100}%`;

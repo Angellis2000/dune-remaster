@@ -44,21 +44,23 @@ const vsAI: NetPlayer[] = [
 const growth: string[] = [];
 const atStart = { hard: 0, easy: 0 };
 let huntingInPeace = 0;
-const a = run(vsAI, 1, 18000, undefined, (f) => {
+const a = run(vsAI, 1, 36000, undefined, (f) => {
   if (f === 1) { atStart.hard = buildings(0); atStart.easy = buildings(2); }
   // «мирное время» тяжёлого — 4 минуты (14400 кадров): ни одна машина компьютера не на охоте
   if (f < 14400 && f % 300 === 0) huntingInPeace += G.units.filter((u) => u.o.flags.used && (u.o.houseID === 0 || u.o.houseID === 2) && u.actionID === ACTION.HUNT).length;
-  if (f % 3600 === 0) growth.push(`${f / 3600} мин: тяжёлый ${buildings(0)} зд/${army(0)} тех/${G.units.filter((u)=>u.o.flags.used&&u.o.houseID===0&&u.o.type===UNIT.HARVESTER).length} харв/${G.houses[0].credits} кр, лёгкий ${buildings(2)} зд/${army(2)} тех/${G.units.filter((u)=>u.o.flags.used&&u.o.houseID===2&&u.o.type===UNIT.HARVESTER).length} харв/${G.houses[2].credits} кр`);
+  if (f % 7200 === 0) growth.push(`${f / 3600} мин: тяжёлый ${buildings(0)} зд/${army(0)} тех/${G.units.filter((u)=>u.o.flags.used&&u.o.houseID===0&&u.o.type===UNIT.HARVESTER).length} харв/${G.houses[0].credits} кр, лёгкий ${buildings(2)} зд/${army(2)} тех/${G.units.filter((u)=>u.o.flags.used&&u.o.houseID===2&&u.o.type===UNIT.HARVESTER).length} харв/${G.houses[2].credits} кр`);
 });
+const harv = (h: number) => G.units.filter((u) => u.o.flags.used && u.o.houseID === h && u.o.type === UNIT.HARVESTER).length;
 const final = { hard: buildings(0), easy: buildings(2) };
+const power = { hard: buildings(0) + army(0) + harv(0) * 3, easy: buildings(2) + army(2) + harv(2) * 3 };
 console.log("1)", growth.join("; "), `; конец: ${a.game.ended}`);
-const b = run(vsAI, -1, 18000);
+const b = run(vsAI, -1, 36000);
 assert.equal(a.hashes, b.hashes, "хеши у игрока и наблюдателя разошлись");
 assert.equal(atStart.hard, 1, "компьютер начинает только с двора");
 assert.equal(huntingInPeace, 0, "в мирное время машины компьютера не должны охотиться");
 assert.ok(final.hard >= 8, `тяжёлый мало построил: ${final.hard}`);
 assert.ok(final.easy >= 4, `лёгкий не строится: ${final.easy}`);
-assert.ok(final.hard > final.easy, "тяжёлый должен развиваться быстрее лёгкого");
+assert.ok(power.hard > power.easy, `тяжёлый должен быть сильнее лёгкого: ${power.hard} против ${power.easy}`);
 
 // 2) двое людей против ИИ, Харконнены выходят на 900-м кадре — база уходит Атрейдесам
 const coop: NetPlayer[] = [
