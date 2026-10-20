@@ -1,0 +1,110 @@
+# Харконнены — баржа «Кулак»
+newmtl harkonnen_0
+Kd 0.2275 0.2392 0.2588
+Ke 0.0000 0.0000 0.0000
+Ns 94
+
+newmtl harkonnen_1
+Kd 0.6196 0.1059 0.1059
+Ke 0.0000 0.0000 0.0000
+Ns 130
+
+newmtl harkonnen_2
+Kd 0.6196 0.1059 0.1059
+Ke 0.0000 0.0000 0.0000
+Ns 130
+
+newmtl harkonnen_3
+Kd 0.1686 0.1765 0.1922
+Ke 0.0000 0.0000 0.0000
+Ns 82
+
+newmtl harkonnen_4
+Kd 1.0000 0.2314 0.1843
+Ke 0.9000 0.2082 0.1659
+Ns 106
+
+newmtl harkonnen_5
+Kd 0.1098 0.1098 0.1216
+Ke 0.0000 0.0000 0.0000
+Ns 154
+
+newmtl harkonnen_6
+Kd 0.1098 0.1098 0.1216
+Ke 0.0000 0.0000 0.0000
+Ns 154
+
+newmtl harkonnen_7
+Kd 0.1098 0.1098 0.1216
+Ke 0.0000 0.0000 0.0000
+Ns 154
+
+newmtl harkonnen_8
+Kd 0.1098 0.1098 0.1216
+Ke 0.0000 0.0000 0.0000
+Ns 154
+
+newmtl harkonnen_9
+Kd 0.1098 0.1098 0.1216
+Ke 0.0000 0.0000 0.0000
+Ns 154
+
+newmtl harkonnen_10
+Kd 0.1686 0.1765 0.1922
+Ke 0.0000 0.0000 0.0000
+Ns 106
+
+newmtl harkonnen_11
+Kd 1.0000 0.3529 0.1216
+Ke 1.0000 0.3529 0.1216
+Ns 106
+
+newmtl harkonnen_12
+Kd 0.2275 0.2392 0.2588
+Ke 0.0000 0.0000 0.0000
+Ns 106
+
+newmtl harkonnen_13
+Kd 0.1490 0.1569 0.1725
+Ke 0.0000 0.0000 0.0000
+Ns 106
+
+newmtl harkonnen_14
+Kd 1.0000 0.3529 0.1216
+Ke 1.0000 0.3529 0.1216
+Ns 106
+
+newmtl harkonnen_15
+Kd 0.1490 0.1569 0.1725
+Ke 0.0000 0.0000 0.0000
+Ns 106
+
+newmtl harkonnen_16
+Kd 1.0000 0.3529 0.1216
+Ke 1.0000 0.3529 0.1216
+Ns 106
+
+newmtl harkonnen_17
+Kd 0.1490 0.1569 0.1725
+Ke 0.0000 0.0000 0.0000
+Ns 106
+
+newmtl harkonnen_18
+Kd 1.0000 0.3529 0.1216
+Ke 1.0000 0.3529 0.1216
+Ns 106
+
+newmtl harkonnen_19
+Kd 0.1490 0.1569 0.1725
+Ke 0.0000 0.0000 0.0000
+Ns 106
+
+newmtl harkonnen_20
+Kd 1.0000 0.3529 0.1216
+Ke 1.0000 0.3529 0.1216
+Ns 106
+
+newmtl harkonnen_21
+Kd 1.0000 0.1647 0.1020
+Ke 1.0000 0.1647 0.1020
+Ns 106
