@@ -108,3 +108,123 @@ newmtl harkonnen_21
 Kd 1.0000 0.1647 0.1020
 Ke 1.0000 0.1647 0.1020
 Ns 106
+
+newmtl harkonnen_22
+Kd 0.3529 0.3647 0.3882
+Ke 0.0000 0.0000 0.0000
+Ns 154
+
+newmtl harkonnen_23
+Kd 0.3529 0.3647 0.3882
+Ke 0.0000 0.0000 0.0000
+Ns 154
+
+newmtl harkonnen_24
+Kd 0.1098 0.1098 0.1216
+Ke 0.0000 0.0000 0.0000
+Ns 106
+
+newmtl harkonnen_25
+Kd 1.0000 0.2314 0.1843
+Ke 0.7000 0.1620 0.1290
+Ns 106
+
+newmtl harkonnen_26
+Kd 0.1098 0.1098 0.1216
+Ke 0.0000 0.0000 0.0000
+Ns 106
+
+newmtl harkonnen_27
+Kd 1.0000 0.2314 0.1843
+Ke 0.7000 0.1620 0.1290
+Ns 106
+
+newmtl harkonnen_28
+Kd 0.1098 0.1098 0.1216
+Ke 0.0000 0.0000 0.0000
+Ns 106
+
+newmtl harkonnen_29
+Kd 1.0000 0.2314 0.1843
+Ke 0.7000 0.1620 0.1290
+Ns 106
+
+newmtl harkonnen_30
+Kd 0.1098 0.1098 0.1216
+Ke 0.0000 0.0000 0.0000
+Ns 106
+
+newmtl harkonnen_31
+Kd 1.0000 0.2314 0.1843
+Ke 0.7000 0.1620 0.1290
+Ns 106
+
+newmtl harkonnen_32
+Kd 0.1412 0.1490 0.1647
+Ke 0.0000 0.0000 0.0000
+Ns 82
+
+newmtl harkonnen_33
+Kd 0.1412 0.1490 0.1647
+Ke 0.0000 0.0000 0.0000
+Ns 82
+
+newmtl harkonnen_34
+Kd 0.1490 0.1569 0.1725
+Ke 0.0000 0.0000 0.0000
+Ns 106
+
+newmtl harkonnen_35
+Kd 1.0000 0.3529 0.1216
+Ke 1.0000 0.3529 0.1216
+Ns 106
+
+newmtl harkonnen_36
+Kd 0.1490 0.1569 0.1725
+Ke 0.0000 0.0000 0.0000
+Ns 106
+
+newmtl harkonnen_37
+Kd 1.0000 0.3529 0.1216
+Ke 1.0000 0.3529 0.1216
+Ns 106
+
+newmtl harkonnen_38
+Kd 0.1686 0.1765 0.1922
+Ke 0.0000 0.0000 0.0000
+Ns 106
+
+newmtl harkonnen_39
+Kd 1.0000 0.1647 0.1020
+Ke 1.0000 0.1647 0.1020
+Ns 106
+
+newmtl harkonnen_40
+Kd 0.1686 0.1765 0.1922
+Ke 0.0000 0.0000 0.0000
+Ns 106
+
+newmtl harkonnen_41
+Kd 0.1098 0.1098 0.1216
+Ke 0.0000 0.0000 0.0000
+Ns 154
+
+newmtl harkonnen_42
+Kd 0.1098 0.1098 0.1216
+Ke 0.0000 0.0000 0.0000
+Ns 154
+
+newmtl harkonnen_43
+Kd 0.1098 0.1098 0.1216
+Ke 0.0000 0.0000 0.0000
+Ns 154
+
+newmtl harkonnen_44
+Kd 1.0000 0.2314 0.1843
+Ke 1.0000 0.2314 0.1843
+Ns 106
+
+newmtl harkonnen_45
+Kd 0.4784 0.0784 0.0784
+Ke 0.0000 0.0000 0.0000
+Ns 154

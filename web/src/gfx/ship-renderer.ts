@@ -1,71 +1,177 @@
 /**
  * WebGL-рендер 3D-кораблей заставки (gfx/ship-models.ts): модель в любом ракурсе на прозрачный холст, дальше —
- * drawImage в кадр заставки. Плоское затенение по граням, тёплый ключевой свет «от солнца» и холодный
- * заполняющий, блик по блеску детали, контровая подсветка, свечение сопел и огней. Без внешних библиотек.
+ * drawImage в кадр заставки. Без внешних библиотек.
+ *
+ * Освещение (владелец: «выглядят как мыло — проработай цвет, блики и тени»):
+ *  - свет считается в линейном пространстве, на выходе плёночная кривая ACES и гамма 2.2 — насыщенный, контрастный цвет;
+ *  - тени от «солнца»: карта теней (глубина в RGBA, 2048²) из положения ключевого света, мягкий край 3×3 —
+ *    крылья, надстройки и гондолы отбрасывают тени на корпус;
+ *  - блики Блинна — Фонга по блеску детали и отражение окружения с френелем: сверху тёмный космос, снизу тёплый
+ *    отсвет Арракиса;
+ *  - у каждой грани немного свой тон (панели обшивки), сопла и огни светятся.
+ * Пламя двигателей — отдельный проход: из каждого сопла (model.nozzles) ядро, факел и ореол цвета дома, складываются
+ * по яркости, прозрачнее к концу и краям, дрожат во времени, длина — от тяги.
  *
  *   const r = new ShipRenderer();
- *   r.draw(ctx, model, { yaw: 0.6, pitch: -0.15, roll: 0.1 }, x, y, w, h);
+ *   r.draw(ctx, model, { yaw: 0.6, pitch: -0.15, roll: 0.1, thrust: 1, time: now / 1000 }, x, y, w, h);
  */
 import type { ShipModel } from "./ship-models.ts";
 
 export interface ShipPose {
-  /** поворот вокруг вертикали, рад (0 — нос к зрителю справа налево не повёрнут: нос смотрит на +Z, в экран) */
+  /** поворот вокруг вертикали, рад (0 — нос смотрит на зрителя, +Z в экран) */
   yaw: number;
   /** наклон носа вверх (+) / вниз (−), рад */
   pitch: number;
   /** крен, рад */
   roll: number;
-  /** сила факела двигателей 0…1 (добавляет свечение соплам) */
+  /** тяга 0…1: длина пламени и свечение сопел (0 — двигатели выключены) */
   thrust?: number;
+  /** время, с — для дрожания пламени (по умолчанию часы страницы) */
+  time?: number;
 }
 
+/** длина пламени в радиусах сопла при полной тяге (факел; ядро — 0,5, ореол — 0,7 от него) */
+const FLAME_LENGTH = 9;
+const SHADOW_SIZE = 2048;
+/** ключевой свет («солнце») и заполняющий — в пространстве камеры */
+const KEY = norm([-0.55, 0.62, 0.55]);
+
+function norm(v: number[]): [number, number, number] {
+  const l = Math.hypot(v[0], v[1], v[2]);
+  return [v[0] / l, v[1] / l, v[2] / l];
+}
+
+const COMMON = `
+uniform mat4 rotation;uniform mat4 projection;uniform float distance,radius;
+uniform vec3 lightRight,lightUp,lightDir;
+vec3 toLight(vec3 p){return vec3(dot(p,lightRight),dot(p,lightUp),dot(p,lightDir))/radius;}`;
+
+const DEPTH_VERTEX = `
+attribute vec3 position;${COMMON}
+varying float vDepth;
+void main(){vec3 l=toLight((rotation*vec4(position,1.)).xyz);vDepth=l.z*.5+.5;gl_Position=vec4(l.xy,l.z,1.);}`;
+const DEPTH_FRAGMENT = `
+precision highp float;varying float vDepth;
+void main(){vec4 e=vec4(1.,255.,65025.,16581375.)*vDepth;e=fract(e);e-=e.yzww*vec4(1./255.,1./255.,1./255.,0.);gl_FragColor=e;}`;
+
 const VERTEX = `
-attribute vec3 position;attribute vec3 normal;attribute vec3 color;attribute vec2 material;
-uniform mat4 rotation;uniform mat4 projection;uniform float distance;
-varying vec3 vNormal;varying vec3 vColor;varying vec2 vMaterial;varying vec3 vView;
+attribute vec3 position;attribute vec3 normal;attribute vec3 color;attribute vec3 material;${COMMON}
+varying vec3 vNormal;varying vec3 vColor;varying vec3 vMaterial;varying vec3 vView;varying vec3 vLight;
 void main(){
   vec4 p=rotation*vec4(position,1.);vec3 view=p.xyz-vec3(0.,0.,distance);
-  vNormal=(rotation*vec4(normal,0.)).xyz;vColor=color;vMaterial=material;vView=view;
+  vNormal=(rotation*vec4(normal,0.)).xyz;vColor=color;vMaterial=material;vView=view;vLight=toLight(p.xyz);
   gl_Position=projection*vec4(view,1.);
 }`;
 const FRAGMENT = `
-precision mediump float;
-varying vec3 vNormal;varying vec3 vColor;varying vec2 vMaterial;varying vec3 vView;
-uniform float thrust;
+precision highp float;
+varying vec3 vNormal;varying vec3 vColor;varying vec3 vMaterial;varying vec3 vView;varying vec3 vLight;
+uniform mediump float thrust;uniform sampler2D shadowMap;uniform vec3 key;uniform float texel;
+float unpack(vec4 c){return dot(c,vec4(1.,1./255.,1./65025.,1./16581375.));}
+float lit(vec3 l,float bias){
+  vec2 uv=l.xy*.5+.5;float d=l.z*.5+.5-bias,s=0.;
+  for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++)s+=d>unpack(texture2D(shadowMap,uv+vec2(float(x),float(y))*texel))?0.:1.;
+  return s/9.;
+}
+vec3 aces(vec3 x){return clamp((x*(2.51*x+.03))/(x*(2.43*x+.59)+.14),0.,1.);}
 void main(){
   vec3 n=normalize(vNormal);if(!gl_FrontFacing)n=-n;
   vec3 v=normalize(-vView);
-  vec3 key=normalize(vec3(-.55,.62,.55)),fill=normalize(vec3(.7,-.35,.4));
-  float diffuse=max(dot(n,key),0.),back=max(dot(n,fill),0.);
-  vec3 light=vec3(1.,.93,.8)*diffuse*1.05+vec3(.45,.6,.9)*back*.32+vec3(.16,.17,.2);
-  float gloss=vMaterial.y,emissive=vMaterial.x;
-  float spec=pow(max(dot(n,normalize(key+v)),0.),6.+gloss*90.)*(.15+gloss*.85);
-  float rim=pow(1.-max(dot(n,v),0.),3.)*.35;
-  vec3 c=vColor*light+vec3(1.,.95,.85)*spec+vec3(.55,.7,1.)*rim;
-  float glow=clamp(emissive*(.75+.5*thrust),0.,1.4);
-  c=mix(c,vColor*1.35+vec3(.15)*glow,clamp(glow,0.,1.));
-  gl_FragColor=vec4(pow(c,vec3(1./1.1)),1.);
+  float emissive=vMaterial.x,gloss=vMaterial.y,panel=vMaterial.z;
+  vec3 base=pow(vColor,vec3(2.2))*(.86+.28*panel);
+  float nl=dot(n,key);
+  float shadow=nl>0.?lit(vLight,.004+.01*(1.-nl)):0.;
+  vec3 sun=vec3(1.,.9,.74)*3.1,sky=vec3(.05,.08,.16),sand=vec3(.34,.17,.06);
+  float up=n.y*.5+.5;
+  vec3 ambient=mix(sand*.55,sky*1.4,up)+vec3(.012);
+  vec3 diffuse=base*(sun*max(nl,0.)*shadow+ambient);
+  // ободок «от планеты» снизу-справа: тёплый отсвет на теневой стороне
+  diffuse+=base*sand*.9*pow(max(dot(n,normalize(vec3(.6,-.7,.2))),0.),2.);
+  vec3 h=normalize(key+v);
+  float spec=pow(max(dot(n,h),0.),12.+gloss*220.)*(.04+gloss*1.6)*shadow*(nl>0.?1.:0.);
+  float fres=pow(1.-max(dot(n,v),0.),5.)*(.04+.6*gloss)+.04*gloss;
+  vec3 r=reflect(-v,n);
+  vec3 env=mix(sand*.8,sky*.6,smoothstep(-.35,.45,r.y))+vec3(1.,.85,.6)*.6*pow(max(dot(r,key),0.),24.)*gloss;
+  vec3 c=diffuse+sun*spec*.35+env*fres;
+  float glow=clamp(emissive*(.55+.6*thrust),0.,1.4);
+  c=mix(c,pow(vColor,vec3(2.2))*(1.6+2.4*glow),clamp(glow,0.,1.));
+  c=aces(c*1.15);
+  gl_FragColor=vec4(pow(c,vec3(1./2.2)),1.);
+}`;
+// пламя: center — сопло, ring — направление от оси (единичное), t — 0 у сопла … 1 у конца,
+// flame = [радиус, фаза, слой: 0 — факел, 1 — ядро, 2 — ореол]
+const FLAME_VERTEX = `
+attribute vec3 center;attribute vec2 ring;attribute float t;attribute vec3 flame;attribute vec3 color;
+uniform mat4 rotation;uniform mat4 projection;uniform float distance,time;uniform mediump float thrust;
+varying float vT;varying float vLayer;varying vec3 vColor;varying float vFacing;
+void main(){
+  float r=flame.x,phase=flame.y,layer=flame.z;
+  float flick=.84+.1*sin(time*23.+phase)+.06*sin(time*57.+phase*2.3)+.05*sin(time*91.+phase*4.1);
+  float lenK=layer>1.5?.7:layer>.5?.5:1.,widK=layer>1.5?1.9:layer>.5?.6:1.12;
+  float len=r*${FLAME_LENGTH.toFixed(1)}*thrust*flick*lenK;
+  float width=r*widK*(1.-pow(t,layer>1.5?.8:1.35))*(1.+.1*sin(time*41.+phase+t*11.));
+  vec3 local=center+vec3(ring*width,-t*len);
+  vec4 p=rotation*vec4(local,1.);vec3 view=p.xyz-vec3(0.,0.,distance);
+  vec3 side=(rotation*vec4(ring,0.,0.)).xyz;
+  vFacing=1.-abs(dot(normalize(side),normalize(-view)));
+  vT=t;vLayer=layer;vColor=color;
+  gl_Position=projection*vec4(view,1.);
+}`;
+const FLAME_FRAGMENT = `
+precision mediump float;
+varying float vT;varying float vLayer;varying vec3 vColor;varying float vFacing;
+uniform float thrust;
+void main(){
+  float edge=pow(vFacing,1.4);
+  vec3 c;float a;
+  if(vLayer>1.5){c=vColor;a=pow(1.-vT,2.)*.22*edge;}
+  else if(vLayer>.5){c=mix(vec3(1.,1.,.97),vColor*1.3+.2,smoothstep(.05,.9,vT));a=pow(1.-vT,1.3)*(.35+.65*edge);}
+  else{c=mix(vColor*1.6+.15,vColor*.9,vT);a=pow(1.-vT,1.6)*.75*(.25+.75*edge);}
+  gl_FragColor=vec4(c,a*clamp(thrust*1.4,0.,1.));
 }`;
 
-type Buffers = { buffer: WebGLBuffer; count: number; radius: number };
+type Buffers = { body: WebGLBuffer; bodyCount: number; flame: WebGLBuffer; flameCount: number; radius: number };
 
 export class ShipRenderer {
   readonly canvas = document.createElement("canvas");
   private gl: WebGLRenderingContext | null;
   private program: WebGLProgram | null = null;
+  private depthProgram: WebGLProgram | null = null;
+  private flameProgram: WebGLProgram | null = null;
+  private shadowTexture: WebGLTexture | null = null;
+  private shadowFrame: WebGLFramebuffer | null = null;
   private cache = new Map<ShipModel, Buffers>();
 
   constructor() {
     this.gl = this.canvas.getContext("webgl", { alpha: true, antialias: true, premultipliedAlpha: true, preserveDrawingBuffer: true });
-    if (this.gl) this.program = this.link(this.gl);
+    const gl = this.gl;
+    if (!gl) return;
+    this.program = this.link(gl, VERTEX, FRAGMENT);
+    this.depthProgram = this.link(gl, DEPTH_VERTEX, DEPTH_FRAGMENT);
+    this.flameProgram = this.link(gl, FLAME_VERTEX, FLAME_FRAGMENT);
+    // карта теней: глубина, упакованная в RGBA
+    this.shadowTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.shadowTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, SHADOW_SIZE, SHADOW_SIZE, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const depth = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, SHADOW_SIZE, SHADOW_SIZE);
+    this.shadowFrame = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowFrame);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.shadowTexture, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
   /** Есть ли WebGL (иначе заставка остаётся на 2D-атласе). */
   get ready(): boolean {
-    return !!this.gl && !!this.program;
+    return !!this.gl && !!this.program && !!this.depthProgram && !!this.flameProgram;
   }
 
-  private link(gl: WebGLRenderingContext): WebGLProgram | null {
+  private link(gl: WebGLRenderingContext, vertex: string, fragment: string): WebGLProgram | null {
     const shader = (type: number, src: string) => {
       const s = gl.createShader(type)!;
       gl.shaderSource(s, src);
@@ -74,19 +180,21 @@ export class ShipRenderer {
       return s;
     };
     const p = gl.createProgram()!;
-    gl.attachShader(p, shader(gl.VERTEX_SHADER, VERTEX));
-    gl.attachShader(p, shader(gl.FRAGMENT_SHADER, FRAGMENT));
+    gl.attachShader(p, shader(gl.VERTEX_SHADER, vertex));
+    gl.attachShader(p, shader(gl.FRAGMENT_SHADER, fragment));
     gl.linkProgram(p);
-    return gl.getProgramParameter(p, gl.LINK_STATUS) ? p : null;
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) ?? "link");
+    return p;
   }
 
-  /** Вершины модели: позиция, нормаль грани, цвет, [свечение, блеск] — 11 чисел на вершину. */
+  /** Вершины корпуса (позиция, нормаль грани, цвет, [свечение, блеск, тон панели] — 12 чисел) и пламени (12 чисел). */
   private buffers(model: ShipModel): Buffers {
     const hit = this.cache.get(model);
     if (hit) return hit;
     const gl = this.gl!;
-    const data: number[] = [];
-    let radius = 0;
+    const body: number[] = [];
+    let radius = 0, seed = 0x9e3779b9;
+    const random = () => { seed = Math.imul(seed ^ (seed >>> 15), 0x2c1b3c6d) >>> 0; seed = (seed ^ (seed >>> 12)) >>> 0; return (seed & 0xffff) / 0xffff; };
     for (const part of model.parts) {
       const p = part.positions;
       for (let i = 0; i < p.length; i += 9) {
@@ -95,40 +203,52 @@ export class ShipRenderer {
         let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
         const len = Math.hypot(nx, ny, nz) || 1;
         nx /= len; ny /= len; nz /= len;
+        const panel = random();
         for (let k = 0; k < 9; k += 3) {
-          data.push(p[i + k], p[i + k + 1], p[i + k + 2], nx, ny, nz, ...part.color, part.emissive, part.gloss);
+          body.push(p[i + k], p[i + k + 1], p[i + k + 2], nx, ny, nz, ...part.color, part.emissive, part.gloss, panel);
           radius = Math.max(radius, Math.hypot(p[i + k], p[i + k + 1], p[i + k + 2]));
         }
       }
     }
-    const buffer = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
-    const b = { buffer, count: data.length / 11, radius };
+    // конусы пламени: 16 граней × 8 колец, три слоя (факел, ядро, ореол)
+    const flame: number[] = [];
+    const SEG = 16, RINGS = 8;
+    model.nozzles.forEach((n, ni) => {
+      const phase = ni * 1.7 + 0.3;
+      for (const layer of [2, 0, 1]) {
+        const vert = (i: number, k: number) => {
+          const a = (i / SEG) * Math.PI * 2;
+          flame.push(n.at[0], n.at[1], n.at[2], Math.cos(a), Math.sin(a), k / RINGS, n.radius, phase, layer, ...n.color);
+        };
+        for (let k = 0; k < RINGS; k++) {
+          for (let i = 0; i < SEG; i++) {
+            vert(i, k); vert(i + 1, k); vert(i + 1, k + 1);
+            vert(i, k); vert(i + 1, k + 1); vert(i, k + 1);
+          }
+        }
+      }
+      radius = Math.max(radius, Math.hypot(n.at[0], n.at[1], n.at[2] - n.radius * FLAME_LENGTH * 0.8));
+    });
+    const bodyBuffer = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, bodyBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(body), gl.STATIC_DRAW);
+    const flameBuffer = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, flameBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(flame), gl.STATIC_DRAW);
+    const b = { body: bodyBuffer, bodyCount: body.length / 12, flame: flameBuffer, flameCount: flame.length / 12, radius };
     this.cache.set(model, b);
     return b;
   }
 
   /** Отрисовать модель на внутренний холст w×h (точек) и вернуть его. */
   render(model: ShipModel, pose: ShipPose, w: number, h: number): HTMLCanvasElement {
-    const gl = this.gl, program = this.program;
+    const gl = this.gl, program = this.program, depthProgram = this.depthProgram, flameProgram = this.flameProgram;
     w = Math.max(1, Math.round(w)); h = Math.max(1, Math.round(h));
     if (this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h; }
-    if (!gl || !program) return this.canvas;
+    if (!gl || !program || !depthProgram || !flameProgram) return this.canvas;
     const b = this.buffers(model);
-    gl.viewport(0, 0, w, h);
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    gl.enable(gl.DEPTH_TEST);
-    gl.disable(gl.CULL_FACE);
-    gl.useProgram(program);
-    gl.bindBuffer(gl.ARRAY_BUFFER, b.buffer);
-    const attr = (name: string, size: number, offset: number) => {
-      const loc = gl.getAttribLocation(program, name);
-      gl.enableVertexAttribArray(loc);
-      gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 44, offset * 4);
-    };
-    attr("position", 3, 0); attr("normal", 3, 3); attr("color", 3, 6); attr("material", 2, 9);
+    const thrust = Math.max(0, Math.min(1, pose.thrust ?? 1));
+    const time = pose.time ?? performance.now() / 1000;
     // поворот: крен (Z) → тангаж (X) → рыскание (Y)
     const cy = Math.cos(pose.yaw), sy = Math.sin(pose.yaw), cp = Math.cos(pose.pitch), sp = Math.sin(pose.pitch), cr = Math.cos(pose.roll), sr = Math.sin(pose.roll);
     const rz = [cr, sr, 0, -sr, cr, 0, 0, 0, 1], rx = [1, 0, 0, 0, cp, sp, 0, -sp, cp], ry = [cy, 0, -sy, 0, 1, 0, sy, 0, cy];
@@ -136,14 +256,83 @@ export class ShipRenderer {
     const r = mul(ry, mul(rx, rz));
     const rotation = new Float32Array([r[0], r[1], r[2], 0, r[3], r[4], r[5], 0, r[6], r[7], r[8], 0, 0, 0, 0, 1]);
     const fov = 0.5, aspect = w / h, f = 1 / Math.tan(fov / 2);
-    const distance = (b.radius * 1.08) / Math.sin(fov / 2) / Math.min(1, aspect);
+    const distance = (b.radius * 1.02) / Math.sin(fov / 2) / Math.min(1, aspect);
     const near = Math.max(0.1, distance - b.radius * 2), far = distance + b.radius * 2;
     const projection = new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, (2 * far * near) / (near - far), 0]);
-    gl.uniformMatrix4fv(gl.getUniformLocation(program, "rotation"), false, rotation);
-    gl.uniformMatrix4fv(gl.getUniformLocation(program, "projection"), false, projection);
-    gl.uniform1f(gl.getUniformLocation(program, "distance"), distance);
-    gl.uniform1f(gl.getUniformLocation(program, "thrust"), pose.thrust ?? 1);
-    gl.drawArrays(gl.TRIANGLES, 0, b.count);
+    // базис света: смотрит вдоль −KEY (dir — к свету: больше — ближе к солнцу, глубина карты обратная)
+    const dir = [-KEY[0], -KEY[1], -KEY[2]];
+    const upGuess = Math.abs(dir[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0];
+    const right = norm([upGuess[1] * dir[2] - upGuess[2] * dir[1], upGuess[2] * dir[0] - upGuess[0] * dir[2], upGuess[0] * dir[1] - upGuess[1] * dir[0]]);
+    const up = [dir[1] * right[2] - dir[2] * right[1], dir[2] * right[0] - dir[0] * right[2], dir[0] * right[1] - dir[1] * right[0]];
+    const shadowRadius = b.radius * 1.02;
+    const uniforms = (prog: WebGLProgram) => {
+      const u = (n: string) => gl.getUniformLocation(prog, n);
+      gl.uniformMatrix4fv(u("rotation"), false, rotation);
+      gl.uniformMatrix4fv(u("projection"), false, projection);
+      gl.uniform1f(u("distance"), distance);
+      gl.uniform1f(u("radius"), shadowRadius);
+      gl.uniform1f(u("thrust"), thrust);
+      gl.uniform1f(u("time"), time);
+      gl.uniform3fv(u("lightRight"), right);
+      gl.uniform3fv(u("lightUp"), up);
+      gl.uniform3fv(u("lightDir"), dir);
+      gl.uniform3fv(u("key"), KEY);
+      gl.uniform1f(u("texel"), 1 / SHADOW_SIZE);
+    };
+    const attrs = (prog: WebGLProgram, stride: number, list: [string, number][]) => {
+      let offset = 0;
+      for (const [name, size] of list) {
+        const loc = gl.getAttribLocation(prog, name);
+        if (loc >= 0) { gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, size, gl.FLOAT, false, stride * 4, offset * 4); }
+        offset += size;
+      }
+    };
+    const off = (prog: WebGLProgram, names: string[]) => { for (const n of names) { const loc = gl.getAttribLocation(prog, n); if (loc >= 0) gl.disableVertexAttribArray(loc); } };
+    const BODY: [string, number][] = [["position", 3], ["normal", 3], ["color", 3], ["material", 3]];
+
+    gl.enable(gl.DEPTH_TEST);
+    gl.disable(gl.CULL_FACE);
+    gl.disable(gl.BLEND);
+    gl.depthMask(true);
+    // 1) карта теней
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowFrame);
+    gl.viewport(0, 0, SHADOW_SIZE, SHADOW_SIZE);
+    gl.clearColor(1, 1, 1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.useProgram(depthProgram);
+    gl.bindBuffer(gl.ARRAY_BUFFER, b.body);
+    attrs(depthProgram, 12, BODY);
+    uniforms(depthProgram);
+    gl.drawArrays(gl.TRIANGLES, 0, b.bodyCount);
+    off(depthProgram, ["position"]);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    // 2) корпус
+    gl.viewport(0, 0, w, h);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.useProgram(program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.shadowTexture);
+    gl.uniform1i(gl.getUniformLocation(program, "shadowMap"), 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, b.body);
+    attrs(program, 12, BODY);
+    uniforms(program);
+    gl.drawArrays(gl.TRIANGLES, 0, b.bodyCount);
+    off(program, ["position", "normal", "color", "material"]);
+    // 3) пламя: по яркости поверх, корпус его загораживает (тест глубины), само в глубину не пишет
+    if (thrust > 0.01 && b.flameCount) {
+      gl.useProgram(flameProgram);
+      gl.bindBuffer(gl.ARRAY_BUFFER, b.flame);
+      attrs(flameProgram, 12, [["center", 3], ["ring", 2], ["t", 1], ["flame", 3], ["color", 3]]);
+      uniforms(flameProgram);
+      gl.enable(gl.BLEND);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE, gl.ONE, gl.ONE);
+      gl.depthMask(false);
+      gl.drawArrays(gl.TRIANGLES, 0, b.flameCount);
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+      off(flameProgram, ["center", "ring", "t", "flame", "color"]);
+    }
     return this.canvas;
   }
 

@@ -7,6 +7,7 @@ const host = document.getElementById("ships")!;
 const spin = document.getElementById("spin") as HTMLInputElement;
 const pitch = document.getElementById("pitch") as HTMLInputElement;
 const roll = document.getElementById("roll") as HTMLInputElement;
+const thrust = document.getElementById("thrust") as HTMLInputElement;
 
 const download = (name: string, text: string) => {
   const a = document.createElement("a");
@@ -50,7 +51,7 @@ const frame = (now: number) => {
     if (v.canvas.width !== w || v.canvas.height !== h) { v.canvas.width = w; v.canvas.height = h; }
     const ctx = v.canvas.getContext("2d")!;
     ctx.clearRect(0, 0, w, h);
-    ctx.drawImage(renderer.render(v.model, { yaw: v.yaw, pitch: (Number(pitch.value) * Math.PI) / 180, roll: (Number(roll.value) * Math.PI) / 180, thrust: 0.8 + 0.2 * Math.sin(now / 90) }, w, h), 0, 0);
+    ctx.drawImage(renderer.render(v.model, { yaw: v.yaw, pitch: (Number(pitch.value) * Math.PI) / 180, roll: (Number(roll.value) * Math.PI) / 180, thrust: Number(thrust.value) / 100, time: now / 1000 }, w, h), 0, 0);
   }
   requestAnimationFrame(frame);
 };
