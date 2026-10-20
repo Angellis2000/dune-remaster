@@ -1053,5 +1053,8 @@ Caddy перечитан (блок Dune уже был, повторно не д�
 первом запуске игра просит файл ROM (как в браузере), дальше помнит его. **ROM рядом с exe** (решение владельца
 2026-10-20): `main.cjs` → `localRom` ищет в папке exe (`PORTABLE_EXECUTABLE_DIR`) .gen/.bin/.md/.smd 256 КБ…8 МБ с
 заголовком «SEGA» в $100 и отдаёт его по `app://dune/__local-rom`; `main.ts` → `showRomScreen` пробует его первым (только
-в exe). В сам exe ROM не встраивается: exe раздаётся другим игрокам, а ROM — чужая собственность; каждый кладёт свою копию. Сетевая игра — через общий сервер VPS.
+в exe). Обычная бета ROM не содержит (её раздают другим игрокам). **Личная сборка владельца** (решение 2026-10-20, «игра для
+меня»): `DUNE_ROM=путькom.gen npm run build` копирует его ROM в `desktop/app/embedded-rom.gen` → exe
+`DuneRemaster-personal-<версия>.exe`; `localRom` берёт ROM рядом с exe, иначе встроенный. Личную сборку не раздавать
+и в git не класть (`desktop/app`, `desktop/release` в .gitignore). Сетевая игра — через общий сервер VPS.
 `desktop/node_modules`, `desktop/app`, `desktop/release` — в .gitignore. Версия — поле `version` в `desktop/package.json`.

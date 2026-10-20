@@ -40,7 +40,13 @@ async function localRom() {
       if (data.subarray(0x100, 0x110).toString("latin1").includes("SEGA")) return { name, data };
     } catch { /* следующий */ }
   }
-  return null;
+  // личная сборка (DUNE_ROM при npm run build): свой ROM владельца лежит внутри exe — только для себя, не раздавать
+  try {
+    const data = await fs.readFile(path.join(root, "embedded-rom.gen"));
+    return { name: "встроенный ROM", data };
+  } catch {
+    return null;
+  }
 }
 
 /** Файл игры по адресу app://dune/…; поддерживает Range — видео и музыка перематываются. */
