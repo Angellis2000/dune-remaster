@@ -210,7 +210,7 @@ export class NetworkMenu {
   }
   close(){this.closeChoice(false);if(this.observedRoom)this.host.leaveObservation?.();this.observedRoom=null;this.root.hidden=true;this.viewer.hidden=true;this.passwordDialog.hidden=true;this.passwordInput.value='';this.pendingJoin=null;this.dialog.inert=false;}
   private async openMap(){
-    const map=this.mapList.find(item=>item.id===this.map.value);if(!map)return;
+    const map=this.mapEntry();if(!map)return;
     if(!map.data){this.spawnPoints=[];this.markers.replaceChildren();}
     this.viewerTitle.textContent=`${map.name} · ${map.teamSize} на ${map.teamSize} · ${map.width} × ${map.height}`;this.viewerImage.src=map.preview;
     this.viewerZoom=1;this.viewer.hidden=false;this.dialog.inert=true;
@@ -282,7 +282,8 @@ export class NetworkMenu {
     this.mode='lobby';this.lobby.hidden=false;this.roomSection.hidden=true;this.connection.hidden=false;const capacity=this.root.querySelector<HTMLElement>('.network-capacity');if(capacity)capacity.hidden=false;if(this.roomField)this.roomField.hidden=false;
     this.role=role;const observing=role==='observer';this.playerHouse.disabled=observing;this.roomName.disabled=observing;
     this.slots[0].active=!observing;this.slots[0].row.hidden=observing;
-    if(room){const map=this.mapList.find(map=>map.id===room.map);if(map){this.format.value=String(map.teamSize);this.applyFormat(room.map);}}
+    // формат — из комнаты (мест = 2 × команда), а не из первой записи карты: одна карта ROM лежит в списке по записи на формат
+    if(room){const size=Math.max(1,Math.round(room.capacity/2)),map=this.mapList.find(map=>map.id===room.map&&map.teamSize===size)??this.mapList.find(map=>map.id===room.map);if(map){this.format.value=String(map.teamSize);this.applyFormat(room.map);}}
     if(observing)for(const [point,player]of this.spawnAssignments)if(player===0)this.spawnAssignments.delete(point);
     for(const control of [this.format,this.map,this.random,this.resources,this.speed,this.roomPassword])control.disabled=observing||!!room;
     this.slots.forEach((slot,id)=>{slot.controller.disabled=observing;slot.house.disabled=observing||slot.controller.value==='closed';slot.difficulty.disabled=observing||slot.controller.value!=='ai';const remove=slot.row.querySelector<HTMLButtonElement>('button');if(remove)remove.disabled=observing||id===0;});
@@ -326,7 +327,9 @@ export class NetworkMenu {
     const capacity=this.root.querySelector<HTMLElement>('.network-capacity');if(capacity)capacity.textContent=`${size} × ${size} / ${size*2} МЕСТ`;
     this.updateMap();
   }
-  private updateMap(){const map=this.mapList.find(item=>item.id===this.map.value);if(!map)return;if(this.spawnMap!==map.id){this.spawnMap=map.id;this.spawnAssignments.clear();this.spawnPoints=[];}this.map.value=map.id;this.preview.src=map.preview;this.description.textContent=`${map.description}. ${map.teamSize} на ${map.teamSize} · ${map.capacity} стартов · ${map.width} × ${map.height} клеток.`;}
+  /** Запись карты для текущего формата (у карты ROM запись на каждый подходящий формат с тем же id). */
+  private mapEntry(id=this.map.value){const size=Number(this.format.value);return this.mapList.find(item=>item.id===id&&item.teamSize===size)??this.mapList.find(item=>item.id===id);}
+  private updateMap(){const map=this.mapEntry();if(!map)return;if(this.spawnMap!==map.id){this.spawnMap=map.id;this.spawnAssignments.clear();this.spawnPoints=[];}this.map.value=map.id;this.preview.src=map.preview;this.description.textContent=`${map.description}. ${map.teamSize} на ${map.teamSize} · ${map.teamSize*2} мест · точек высадки на карте: ${map.spawns?.length??map.capacity} · ${map.width} × ${map.height} клеток.`;}
   private openChoice(select:HTMLSelectElement){
     if(select.disabled||!select.options.length)return;this.closeChoice(false);this.choiceSelect=select;this.choiceCursor=Math.max(0,select.selectedIndex);this.choicePopup.hidden=false;this.choicePopup.setAttribute('aria-label',select.getAttribute('aria-label')??'Выбор');select.setAttribute('aria-expanded','true');select.focus();
     const rect=select.getBoundingClientRect(),height=Math.min(248,select.options.length*42+8,(window.innerHeight||800)-24),width=Math.min(Math.max(rect.width,180),(window.innerWidth||1000)-24);

@@ -101,7 +101,12 @@ test('network upgrades start, progress, stop and restart using the same rule as 
     const s:Structure=type===STRUCTURE.CONSTRUCTION_YARD?yard():structureCreate(INDEX_INVALID,type,1,spot(type))!;
     assert.ok(s);
     assert.ok(structureIsUpgradable(s),`type ${type} upgradable`);
-    // No radar: this is still an enabled action in the right-hand mouse menu.
+    // As on MD ($00FAF4 → $010C66): starting an upgrade needs a built outpost (radar), in the mouse menu and over the network.
+    G.houses[1].structuresBuilt&=~(1<<STRUCTURE.OUTPOST);
+    assert.equal(game.upgradeInfo(s).possible,false,`type ${type} needs radar`);
+    game.execNet(1,{k:'upgrade',s:s.o.index});
+    assert.equal(s.o.flags.upgrading,false,`type ${type} network command ignored without radar`);
+    G.houses[1].structuresBuilt|=1<<STRUCTURE.OUTPOST;
     assert.ok(game.upgradeInfo(s).possible);
     game.execNet(1,{k:'upgrade',s:s.o.index});
     assert.ok(s.o.flags.upgrading,`type ${type} starts`);

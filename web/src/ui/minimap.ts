@@ -95,11 +95,32 @@ export class Minimap {
     return this.hatch = ctx.createPattern(c, "repeat")!;
   }
 
-  /** Перерисовать местность, здания и юниты (после разведки и изменений карты). */
-  refresh(units: MinimapUnit[] = [], structures: MinimapStructure[] = []): void {
+  /**
+   * Перерисовать местность, здания и юниты (после разведки и изменений карты). radar — работает ли радар дома: как в
+   * Sega (аудит 2026-10-20) подробная карта только с аванпостом и при хватающей энергии ($1A7FE, рисование $51B4);
+   * без него окно — ровная подложка, на которой видны лишь свои постройки ($53C2), и рамка обзора.
+   */
+  refresh(units: MinimapUnit[] = [], structures: MinimapStructure[] = [], radar = true): void {
     const map = this.map;
     if (!map) return;
     const b = map.bounds, k = this.k, d = this.dpr;
+    if (!radar) {
+      const ctx = this.base.getContext("2d")!;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = "#14181d";
+      ctx.fillRect(0, 0, this.base.width, this.base.height);
+      for (const s of structures) {
+        if (!s.own) continue;
+        ctx.fillStyle = "#2f9fd0";
+        ctx.fillRect((s.x - b.x) * k + d * .5, (s.y - b.y) * k + d * .5, s.w * k - d, s.h * k - d);
+      }
+      ctx.fillStyle = "rgba(200,190,160,.28)";
+      ctx.font = `${Math.round(11 * d)}px "Segoe UI", Arial, sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillText("РАДАР НЕ РАБОТАЕТ", this.base.width / 2, this.base.height - 6 * d);
+      this.draw();
+      return;
+    }
     // 1) местность по клетке: цвет типа, чуть смешанный со средним цветом иконки — чтобы были оттенки
     const cg = this.cells.getContext("2d")!, img = cg.createImageData(b.w, b.h);
     for (let y = 0; y < b.h; y++) for (let x = 0; x < b.w; x++) {

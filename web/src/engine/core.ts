@@ -158,6 +158,11 @@ export interface Dir24 {
 
 export interface Unit {
   o: GObject;
+  /**
+   * Порядковый номер создания (unitAllocate). Только для экрана: ячейку пула погибшего может за один кадр занять
+   * новый юнит, и вид не должен передать ему чужой рисунок/труп (аудит 2026-10-20, п. 11). В симуляции не участвует.
+   */
+  serial?: number;
   /** Factory rally order retained while a carryall transports this unit. */
   rallyDestination?: number;
   carryallFlight?: {height:number; serviceKey:string; serviceSince:number; lastTick:number; settling?:boolean};
@@ -857,6 +862,8 @@ export function configureNetworkPools(network:boolean):void{
 export const isNetworkArmyType=(type:number):boolean=>type<=UNIT.MCV||type===UNIT.LASER_TANK||type===UNIT.COMBAT_DRONE;
 export const networkUnitCount=(house:number):number=>G.unitFind.filter(u=>u.o.flags.used&&u.o.houseID===house&&isNetworkArmyType(u.o.type)&&!(u.o.type===UNIT.CARRYALL&&u.o.flags.byScenario)).length;
 
+/** счётчик Unit.serial — только для экрана */
+let unitSerial = 0;
 export function unitAllocate(index: number, type: number, houseID: number): Unit | null {
   if (type === 0xff || houseID === 0xff) return null;
   const h = G.houses[houseID];
@@ -879,6 +886,7 @@ export function unitAllocate(index: number, type: number, houseID: number): Unit
   }
   h.unitCount++;
   resetUnit(u);
+  u.serial = ++unitSerial;
   u.o.index = index;
   u.o.type = type;
   u.o.houseID = houseID;

@@ -57,6 +57,8 @@ type Turn = [slot: number, command: NetCommand][];
 /** Буква дома в лобби → номер дома движка. */
 export const HOUSE_LETTERS: Record<string, number> = { H: 0, A: 1, O: 2, F: 3, S: 4, M: 5 };
 export const HOUSE_NAMES: Record<string, string> = { A: "Атрейдесы", H: "Харконнены", O: "Ордосы", F: "Фримены", S: "Сардаукары", M: "Наёмники" };
+/** Сколько юнитов в одной групповой команде: столько берёт движок (engine/game.ts → execNetCommand), столько пускает сервер. */
+export const NET_GROUP = 64;
 
 /** Адрес сервера: ?net=… в адресе страницы, иначе общий сервер на VPS. */
 export function defaultEndpoint(): string {
@@ -97,7 +99,7 @@ export class NetSession {
   private exec: (slot: number, c: NetCommand) => void = () => {};
   private tick: () => void = () => {};
   private hash: () => number = () => 0;
-  private pendingOrders = new Map<string, NetCommand & { k: "order" }>();
+  private pendingOrders: Extract<NetCommand, { k: "order" | "act" }>[] = [];
   // ---- запись: все ходы с командами (turns после выполнения удаляются, эти — нет)
   private recordLog = new Map<number, Turn>();
   // ---- просмотр записи: ходы берутся из неё, сеть не нужна
@@ -314,26 +316,33 @@ export class NetSession {
     this.send({ t: "over", result });
   }
 
-  /** Команда своего игрока. Приказы одной цели за один вызов кода склеиваются в одну команду. */
+  /**
+   * Команда своего игрока. Групповые приказы одного вызова кода (order — с целью, act — без цели: стоп, охрана…)
+   * склеиваются, если идут подряд с тем же действием и целью, и уходят пакетами по NET_GROUP юнитов: движок берёт из
+   * команды не больше 64, а сервер — не больше 24 команд игрока за ход (аудит 2026-10-20: группа 100 теряла приказ
+   * после 64-го, 50 приказов «охранять» по одному упирались в лимит). Прочие команды сначала досылают накопленное —
+   * порядок приказов одного события сохраняется.
+   */
   command(c: NetCommand): void {
     if (!this.start || this.start.you === null || !this.connected || this.replaying) return;
-    if (c.k === "order") {
-      const key = `${c.a}:${c.p}`;
-      const pending = this.pendingOrders.get(key);
-      if (pending) {
-        for (const i of c.u) if (!pending.u.includes(i)) pending.u.push(i);
-      }
-      else {
-        if (!this.pendingOrders.size) queueMicrotask(() => this.flushOrders());
-        this.pendingOrders.set(key, { ...c, u: [...c.u] });
+    if (c.k === "order" || c.k === "act") {
+      const last = this.pendingOrders[this.pendingOrders.length - 1];
+      if (last && last.k === c.k && last.a === c.a && (c.k === "act" || (last.k === "order" && last.p === c.p))) {
+        for (const i of c.u) if (!last.u.includes(i)) last.u.push(i);
+      } else {
+        if (!this.pendingOrders.length) queueMicrotask(() => this.flushOrders());
+        this.pendingOrders.push({ ...c, u: [...c.u] });
       }
       return;
     }
+    this.flushOrders();
     this.send({ t: "cmd", c });
   }
   private flushOrders(): void {
-    if (!this.replaying) for (const c of this.pendingOrders.values()) this.send({ t: "cmd", c });
-    this.pendingOrders.clear();
+    const list = this.pendingOrders;
+    this.pendingOrders = [];
+    if (this.replaying) return;
+    for (const c of list) for (let i = 0; i < c.u.length; i += NET_GROUP) this.send({ t: "cmd", c: { ...c, u: c.u.slice(i, i + NET_GROUP) } });
   }
 
   private receive(msg: any): void {
@@ -419,7 +428,7 @@ export class NetSession {
     this.frame = 0;
     this.awaitingCatchup = false;
     this.catchupTarget = 0;
-    this.pendingOrders.clear();
+    this.pendingOrders = [];
   }
 
   /** Продвинуть игру на прошедшее время (мс). Возвращает число выполненных тактов. */

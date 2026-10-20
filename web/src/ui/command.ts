@@ -8,7 +8,7 @@
 import { ACTION, G, SELECTION, STATE, STRUCTURE, UNIT, type Structure as EStructure, type Unit as EUnit } from "../engine/core.ts";
 import { houseInfo, structureInfo, unitInfo } from "../engine/tables.ts";
 import { HOUSE_NAMES } from "../game/tables.ts";
-import { playerRelation, RELATIONS } from './relations.ts';
+import { relationText } from './relations.ts';
 import {padDroneLoad,DRONES_PER_PAD} from '../engine/drone-capacity.ts';
 import { STRUCTURE_NAMES, UNIT_NAMES } from "../game/names.ts";
 import type {Portraits} from '../gfx/portraits.ts';
@@ -197,7 +197,7 @@ export class CommandPanel {
       title = (other.isUnit ? UNIT_NAMES[other.type] : STRUCTURE_NAMES[other.type]) ?? "?";
       pic = this.picture(other.isUnit ? "unit" : "structure", other.type);
       hp = other.hp / 256;
-      sub = (G.net ? RELATIONS[playerRelation(other.house)].label + ' · ' : '') + (HOUSE_NAMES[other.house] ?? "");
+      sub = G.net ? relationText(other.house) || (HOUSE_NAMES[other.house] ?? "") : (HOUSE_NAMES[other.house] ?? "");
     }
     if (!title) {
       this.root.hidden = !this.focused;
@@ -352,7 +352,8 @@ export class CommandPanel {
           picture: this.picture("unit", t),
           disabled: count <= 0,
           run: () => {
-            game.starportBuy(s, t, prices[t]);
+            // отказ — звук 47 «ОТМЕНА ПРИКАЗА», как отказы в окнах зданий MD ($0288DC, ремонт $028B70)
+            if (!game.starportBuy(s, t, prices[t])) this.host.sfx?.(0x2f);
             this.done();
           },
         });

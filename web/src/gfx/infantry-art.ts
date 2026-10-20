@@ -5,7 +5,7 @@ import type {Unit} from '../game/world.ts';
 import {loadSpriteCells} from './vehicle-art.ts';
 import {angleRadians} from './vehicle-geometry.ts';
 
-interface Pose {x:number;y:number;phase:number;move:number;tick:number;type:number;house:number;angle:number;dead:number;ref:EngineUnit}
+interface Pose {x:number;y:number;phase:number;move:number;tick:number;type:number;house:number;angle:number;dead:number;ref:EngineUnit;serial?:number}
 interface Shot {tick:number;angle:number;rocket:boolean}
 export class InfantryArt {
   private poses=new Map<EngineUnit,Pose>();
@@ -37,14 +37,17 @@ export class InfantryArt {
     const seen=new Set<EngineUnit>();
     for(const u of units){
       if(u.type<2||u.type>6)continue;seen.add(u.ref);
-      const p=this.poses.get(u.ref),dead=u.ref.o.hitpoints===0||u.ref.actionID===10;
+      // ячейку погибшего занял новый юнит (аудит 2026-10-20, п. 11): труп остаётся на месте, новый не наследует позу
+      let p=this.poses.get(u.ref);
+      if(p&&p.serial!==u.ref.serial){if(p.dead>=0)this.corpses.push(p);p=undefined;}
+      const dead=u.ref.o.hitpoints===0||u.ref.actionID===10;
       const distance=p?Math.hypot(u.x-p.x,u.y-p.y):0;
       this.poses.set(u.ref,{x:u.x,y:u.y,phase:(p?.phase??u.id*.8)+(distance<12?distance*1.4:0),
         move:distance>.025?1:(p?.move??0)*.65,tick,type:u.type,house:u.house,angle:u.orientation,
-        dead:dead?(p&&p.dead>=0?p.dead:tick):-1,ref:u.ref});
+        dead:dead?(p&&p.dead>=0?p.dead:tick):-1,ref:u.ref,serial:u.ref.serial});
     }
     for(const [ref,p]of this.poses)if(!seen.has(ref)){
-      if(ref.o.hitpoints===0||ref.actionID===10)this.corpses.push({...p,dead:p.dead>=0?p.dead:tick});
+      if(p.dead>=0||(p.serial===ref.serial&&(ref.o.hitpoints===0||ref.actionID===10)))this.corpses.push({...p,dead:p.dead>=0?p.dead:tick});
       this.poses.delete(ref);
     }
     this.corpses=this.corpses.filter(p=>tick-p.dead<180).slice(-40);

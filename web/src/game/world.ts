@@ -45,6 +45,8 @@ export interface Structure {
 export interface Unit {
   id: number;
   ref: EUnit;
+  /** EUnit.serial: в ячейке пула уже другой юнит — новый вид, без скольжения из чужой позиции */
+  serial?: number;
   type: number;
   house: number;
   hp: number;
@@ -166,9 +168,9 @@ export class World {
       if (!this.map.unveiled[packTile(u.o.position)]) continue;
       alive.add(u);
       let v = this.unitViews.get(u);
-      if (!v || v.type !== u.o.type) {
+      if (!v || v.type !== u.o.type || v.serial !== u.serial) {
         v = {
-          id: this.nextId++, ref: u, type: 0, house: 0, hp: 0, x: u.o.position.x / 8, y: u.o.position.y / 8, orientation: 0, turret: 0,
+          id: this.nextId++, ref: u, serial: u.serial, type: 0, house: 0, hp: 0, x: u.o.position.x / 8, y: u.o.position.y / 8, orientation: 0, turret: 0,
           anim: 0, air: false, highlighted: false, state: {}, smoke: -1, dust: -1, shadow: false,
         };
         this.unitViews.set(u, v);

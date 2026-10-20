@@ -20,6 +20,33 @@ const SPAWN_POINTS = 8;
 const MAX_COMMANDS_PER_TURN = 24;
 const MAX_MESSAGE = 16 * 1024;
 const MAX_MESSAGES_PER_SECOND = 80;
+/** юнитов в одной групповой команде — столько берёт движок (web/src/net/session.ts → NET_GROUP) */
+const MAX_GROUP = 64;
+
+/**
+ * Схема команды игрока (web/src/engine/game.ts → NetCommand, netCommandValid): лишнее, неполное и чужое (left шлёт
+ * только сервер) не рассылается всем — аудит 2026-10-20: `{k:'order',a:1,p:1000}` без u ронял ход у клиентов.
+ * Возвращает чистую копию только с известными полями или null.
+ */
+export function cleanCommand(c) {
+  if (typeof c !== "object" || c === null || Array.isArray(c)) return null;
+  const int = (v, max) => Number.isInteger(v) && v >= 0 && v <= max;
+  const ids = (v) => Array.isArray(v) && v.length > 0 && v.length <= MAX_GROUP && v.every((i) => int(i, 0xfff));
+  switch (c.k) {
+    case "order": return ids(c.u) && int(c.a, 0xff) && int(c.p, 4095) ? { k: c.k, u: [...c.u], a: c.a, p: c.p } : null;
+    case "act": return ids(c.u) && int(c.a, 0xff) ? { k: c.k, u: [...c.u], a: c.a } : null;
+    case "build": case "starport": case "unreadyB": return int(c.s, 0xff) && int(c.t, 0xff) ? { k: c.k, s: c.s, t: c.t } : null;
+    case "cancel": case "hold": case "stop": case "repair": case "fix": case "upgrade": return int(c.s, 0xff) ? { k: c.k, s: c.s } : null;
+    // rally с клеткой −1 — сброс точки сбора
+    case "rally": return int(c.s, 0xff) && (c.p === -1 || int(c.p, 4095)) ? { k: c.k, s: c.s, p: c.p } : null;
+    case "palace": return int(c.s, 0xff) && int(c.p, 4095) ? { k: c.k, s: c.s, p: c.p } : null;
+    case "unqueue": case "unqueueB": return int(c.s, 0xff) && int(c.i, 0xff) ? { k: c.k, s: c.s, i: c.i } : null;
+    case "place":
+      if (!int(c.s, 0xff) || !int(c.p, 4095) || (c.t !== undefined && !int(c.t, 0xff))) return null;
+      return c.t === undefined ? { k: c.k, s: c.s, p: c.p } : { k: c.k, s: c.s, p: c.p, t: c.t };
+    default: return null;
+  }
+}
 
 const clean = (s, max) => String(s ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max);
 const hashPassword = (password, salt) => scryptSync(password, salt, 32);
@@ -370,10 +397,10 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
       case "cmd": {
         const p = room?.players.get(client.id);
         if (!room || !p || room.state !== "playing" || !p.connected) return;
-        if (typeof msg.c !== "object" || msg.c === null || typeof msg.c.k !== "string" || msg.c.k === "left") return;
-        if (JSON.stringify(msg.c).length > 2048) return;
+        const c = cleanCommand(msg.c);
+        if (!c) return;
         if (room.pending.filter(([slot]) => slot === p.slot).length >= MAX_COMMANDS_PER_TURN) return;
-        room.pending.push([p.slot, msg.c]);
+        room.pending.push([p.slot, c]);
         return;
       }
       case "hash":

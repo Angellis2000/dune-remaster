@@ -94,6 +94,32 @@ export type NetCommand =
   | { k: "palace"; s: number; p: number }
   | { k: "left" };
 
+/**
+ * Проверка входящей сетевой команды: JSON с сервера типам TS не обязан (аудит 2026-10-20: `{k:'order',a:1,p:1000}`
+ * без u ронял обработку хода). Плохая команда у всех клиентов одинаково пропускается — детерминизм не страдает.
+ * Список юнитов — до 256 номеров: старые записи матчей хранят склеенные приказы больше 64, движок по-прежнему берёт
+ * первые 64 (как они и исполнялись); новые клиенты шлют пакеты не длиннее 64 (net/session.ts), сервер больше не пустит.
+ */
+export function netCommandValid(c: unknown): c is NetCommand {
+  if (typeof c !== "object" || c === null || Array.isArray(c)) return false;
+  const o = c as Record<string, unknown>;
+  const int = (v: unknown, max = 0xffff) => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= max;
+  const ids = (v: unknown) => Array.isArray(v) && v.length > 0 && v.length <= 256 && v.every((i) => int(i, 0xfff));
+  switch (o.k) {
+    case "order": return ids(o.u) && int(o.a, 0xff) && int(o.p, 4095);
+    case "act": return ids(o.u) && int(o.a, 0xff);
+    case "build": case "starport": case "unreadyB": return int(o.s, 0xff) && int(o.t, 0xff);
+    case "cancel": case "hold": case "stop": case "repair": case "fix": case "upgrade": return int(o.s, 0xff);
+    // rally с клеткой −1 — сброс точки сбора
+    case "rally": return int(o.s, 0xff) && (o.p === -1 || int(o.p, 4095));
+    case "palace": return int(o.s, 0xff) && int(o.p, 4095);
+    case "unqueue": case "unqueueB": return int(o.s, 0xff) && int(o.i, 0xff);
+    case "place": return int(o.s, 0xff) && int(o.p, 4095) && (o.t === undefined || int(o.t, 0xff));
+    case "left": return true;
+    default: return false;
+  }
+}
+
 /** Космопорт сетевого матча: что и сколько можно купить (общий запас CHOAM). */
 const NET_STARPORT_STOCK: [number, number][] = [
   [UNIT.CARRYALL, 2], [UNIT.ORNITHOPTER, 2], [UNIT.TRIKE, 5], [UNIT.QUAD, 5], [UNIT.TANK, 4], [UNIT.LAUNCHER, 3],
@@ -980,11 +1006,16 @@ export class Game {
     structureActivateSpecial(s);
   }
 
-  /** Можно ли улучшить здание (и сколько стоит). */
+  /**
+   * Можно ли улучшить здание (и сколько стоит). Начать улучшение — как пункт окна MD (upgradeEntry, $00FAF4 →
+   * проверка построек $010C66): нужен построенный аванпост (радар); начатое улучшение продолжается и без него
+   * (аудит 2026-10-20: меню мыши и сетевая команда раньше пускали без радара).
+   */
   upgradeInfo(s: Structure): { possible: boolean; cost: number } {
     const si = structureInfo[s.o.type];
+    const radarBuilt = (G.houses[s.o.houseID]?.structuresBuilt ?? 0) & (1 << STRUCTURE.OUTPOST);
     return { possible: !!si.o.flags.factory && s.o.type !== STRUCTURE.STARPORT &&
-      (s.o.flags.upgrading || (s.upgradeTimeLeft !== 0 && structureIsUpgradable(s))), cost: idiv(si.o.buildCredits, 2) };
+      (s.o.flags.upgrading || (s.upgradeTimeLeft !== 0 && structureIsUpgradable(s) && radarBuilt !== 0)), cost: idiv(si.o.buildCredits, 2) };
   }
 
   /**
@@ -1253,7 +1284,7 @@ export class Game {
 
   /** Выполнить команду игрока-дома. Интерфейсные глобальные переменные (постановка, цель) после команды возвращаются. */
   execNet(house: number, c: NetCommand): void {
-    if (!G.net || !isHuman(house)) return;
+    if (!G.net || !isHuman(house) || !netCommandValid(c)) return;
     const saved = [G.selectionType, G.unitActive, G.activeAction, G.structureActive, G.structureActiveType, G.structureActivePosition] as const;
     this.netExecuting = true;
     try {

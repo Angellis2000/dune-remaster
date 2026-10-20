@@ -35,7 +35,7 @@ import {FogOfWar} from '../gfx/fog-of-war.ts';
 import type { Pad } from "../input/pad.ts";
 import { CELL_PX, MAP_SIZE } from "../rom/dune.ts";
 import type { Structure, Unit, World } from "../game/world.ts";
-import { playerRelation, RELATIONS } from '../ui/relations.ts';
+import { playerRelation, RELATIONS, relationText } from '../ui/relations.ts';
 
 const ZOOMS = [1, 2, 3, 4, 5, 6];
 const EDGE_PX = 10; // полоса у края окна для прокрутки мышью (CSS-пиксели)
@@ -135,7 +135,8 @@ export class MapView {
   /** Полностью скрытая клетка; HD-туман рисуется отдельным мягким слоем. */
   veiledIcon = 0;
   /** постановка здания: размер и годность места (1 — да, <0 — без бетона, 0 — нельзя), cells — годность каждой клетки */
-  placement: { w: number; h: number; valid: number; cells?: boolean[] } | null = null;
+  /** name — что ставится: подпись у сетки (владелец 2026-10-20), из общей русской таблицы game/names.ts */
+  placement: { w: number; h: number; valid: number; cells?: boolean[]; name?: string } | null = null;
   /** Red Alert-style lock brackets while a selected force is hovering a hostile target. */
   aimTarget: { x: number; y: number; w: number; h: number } | null = null;
   hoverRelation: {x:number;y:number;house:number} | null = null;
@@ -720,6 +721,22 @@ export class MapView {
           ctx.fillRect((cx + x) * size - ox, (cy + y) * size - oy, size, size);
         }
       }
+      // название здания у сетки: над ней, у верхнего края — под ней; не выходит за экран
+      if (pl.name) {
+        const ok = pl.cells ? pl.cells.every(Boolean) : pl.valid !== 0;
+        ctx.font = `600 ${Math.round(Math.max(12, Math.min(16, 7 * z)))}px sans-serif`;
+        ctx.textBaseline = "middle";
+        const tw = ctx.measureText(pl.name).width + 14, th = Math.round(Math.max(20, Math.min(26, 11 * z)));
+        const gx = cx * size - ox, gy = cy * size - oy, gw = pl.w * size, gh = pl.h * size;
+        const lx = Math.min(this.canvas.width - tw - 4, Math.max(4, gx + gw / 2 - tw / 2));
+        const ly = gy - th - 6 >= 4 ? gy - th - 6 : Math.min(this.canvas.height - th - 4, gy + gh + 6);
+        ctx.fillStyle = "#08121bdd";
+        ctx.fillRect(lx, ly, tw, th);
+        ctx.fillStyle = ok ? "#9cf0a4" : "#ff9a8c";
+        ctx.fillRect(lx, ly, 3, th);
+        ctx.fillStyle = "#f4f1e8";
+        ctx.fillText(pl.name, lx + 9, ly + th / 2 + 1);
+      }
       ctx.restore();
     }
     for (const { s, def, kind } of this.structureIcons) {
@@ -790,10 +807,13 @@ export class MapView {
     }
 
     if (G.net && this.hoverRelation) {
-      const a=this.hoverRelation,relation=RELATIONS[playerRelation(a.house,world.player)];
-      ctx.save();ctx.font=`600 ${Math.max(12,Math.min(16,8*z))}px sans-serif`;
-      const w=ctx.measureText(relation.label).width+16,x=Math.min(this.canvas.width-w-8,Math.max(4,a.x*z-ox+16)),y=Math.max(20,a.y*z-oy-30);
-      ctx.fillStyle='#08121be8';ctx.fillRect(x,y-16,w,24);ctx.fillStyle=relation.color;ctx.fillText(relation.label,x+8,y+1);ctx.restore();
+      // у своих подписи нет; у союзников и врагов — имя игрока и дом (ui/relations.ts → relationText)
+      const a=this.hoverRelation,relation=RELATIONS[playerRelation(a.house,world.player)],label=relationText(a.house,world.player);
+      if(label){
+        ctx.save();ctx.font=`600 ${Math.max(12,Math.min(16,8*z))}px sans-serif`;
+        const w=ctx.measureText(label).width+16,x=Math.min(this.canvas.width-w-8,Math.max(4,a.x*z-ox+16)),y=Math.max(20,a.y*z-oy-30);
+        ctx.fillStyle='#08121be8';ctx.fillRect(x,y-16,w,24);ctx.fillStyle=relation.color;ctx.fillText(label,x+8,y+1);ctx.restore();
+      }
     }
     if (this.box?.active) {
       const a = this.box;

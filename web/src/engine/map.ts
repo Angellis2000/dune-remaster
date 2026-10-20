@@ -519,6 +519,26 @@ export function mapUnveilTile(packed: number, houseID: number): boolean {
   return true;
 }
 
+/**
+ * Раскрытие вокруг здания по его площади (просьба владельца 2026-10-20, аудит п. 8): расстояние — от ближайшей
+ * клетки здания, а не от левого верхнего угла, поэтому постройка видна целиком и подступы раскрыты одинаково со всех
+ * сторон; только клетки внутри границ карты (MAP_INFOS), без светлых клеток за краем. Детерминировано — то же у всех.
+ */
+export function tileRemoveFogAroundRect(x0: number, y0: number, w: number, h: number, radius: number, houseID = G.playerHouseID): void {
+  for (let y = y0 - radius; y < y0 + h + radius; y++) {
+    for (let x = x0 - radius; x < x0 + w + radius; x++) {
+      if (x < 0 || x >= 64 || y < 0 || y >= 64) continue;
+      const packed = packXY(x, y);
+      if (!mapIsValidPosition(packed)) continue;
+      // ближайшая клетка здания
+      const nx = Math.max(x0, Math.min(x0 + w - 1, x)), ny = Math.max(y0, Math.min(y0 + h - 1, y));
+      const d = tileGetDistance({ x: (nx << 8) | 0x80, y: (ny << 8) | 0x80 }, { x: (x << 8) | 0x80, y: (y << 8) | 0x80 });
+      if (((d + 0x80) >> 8) > radius) continue;
+      mapUnveilTile(packed, houseID);
+    }
+  }
+}
+
 /** Tile_RemoveFogInRadius. В оригинале — всегда для игрока; в сети вызывающий передаёт дом, чей туман снимается. */
 export function tileRemoveFogInRadius(t: Tile32, radius: number, houseID = G.playerHouseID): void {
   let packed = packTile(t);

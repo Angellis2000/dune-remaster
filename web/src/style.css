@@ -772,7 +772,7 @@ button[aria-pressed="true"] {
 @keyframes network-create-sheen { 0%,55% { transform: translateX(-110%); } 85%,100% { transform: translateX(110%); } }
 @keyframes network-create-glow { 0%,100% { opacity: .15; } 50% { opacity: .65; } }
 @media(prefers-reduced-motion:reduce) { .network-menu .network-create::before { animation: none; opacity: 0; }.network-menu .network-create::after { animation: none; opacity: .3; } }
-.network-menu :focus-visible { outline: 2px solid #ffe2a1; outline-offset: 3px; }
+.network-menu :focus-visible { outline: 2px solid #ffe2a1; outline-offset: -2px; }
 .network-menu :disabled { color: #89918f; opacity: .65; cursor: default; }
 .network-status { margin: 0; padding: 12px 0; color: #c3ad83; font-size: 12px; }
 .network-status::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 8px; border-radius: 50%; background: #bb9561; box-shadow: 0 0 7px #cc9c3440; }
@@ -950,7 +950,9 @@ button[aria-pressed="true"] {
 .network-map-panel { border: 0; padding: 0; background: none; box-shadow: none; }
 .network-map-panel img { border: 1px solid #4e616d; border-radius: 7px; box-shadow: none; }
 .network-menu input,.network-menu select { border-color: #40525e; border-radius: 5px; background: #0b151d; box-shadow: none; color: #eadfc9; }
-.network-menu :is(button,input,select):focus-visible { outline: 2px solid var(--net-amber); outline-offset: 3px; }
+/* фокус внутри поля: внешний обрезался боковыми краями прокручиваемых колонок и раскрытого списка (владелец 2026-10-20) */
+.network-menu :is(button,input,select):focus-visible { outline: 2px solid var(--net-amber); outline-offset: -2px; }
+.network-menu .network-choice-option:focus-visible { outline-offset: -3px; }
 .network-menu button:active:enabled { filter: brightness(1.12); }
 .network-field { color: #acbac3; font-weight: 500; }
 .network-team h2,.network-team.team-1 h2 { padding: 5px 0 10px; background: none; border-bottom-width: 1px; font-size: 11px; letter-spacing: .06em; }

@@ -1,5 +1,5 @@
 import css from "./style.css?inline";
-import { ACTION, G, SELECTION, STRUCTURE, UNIT, type Structure as EngineStructure, type Unit as EUnit } from "./engine/core.ts";
+import { ACTION, G, SELECTION, STRUCTURE, UNIT, isHuman, type Structure as EngineStructure, type Unit as EUnit } from "./engine/core.ts";
 import { layoutSize, structureInfo } from "./engine/tables.ts";
 import { houseAreAllied } from "./engine/house.ts";
 import { structureLimitReached } from "./engine/structure.ts";
@@ -46,6 +46,9 @@ import { FinaleScreen } from "./ui/finale.ts";
 import { Hud, hudState } from "./ui/hud.ts";
 import { SettingsMenu, type HouseCode } from "./ui/settings.ts";
 import { MapView } from "./view/mapview.ts";
+import { autoPlacement } from "./ui/auto-placement.ts";
+import { markPlayerLeft, setMatchPlayers } from "./ui/relations.ts";
+import { STRUCTURE_NAMES } from "./game/names.ts";
 
 const style = document.createElement("style");
 style.textContent = css;
@@ -378,6 +381,8 @@ async function startGame(rom: DuneRom): Promise<void> {
     const stats = missionStats(result === "won");
     paused = true;
     endPicture.open(result, () => {
+      // $022B08: после 8-й победы, до ментата и итогов, — мелодия 0x26 (аудит 2026-10-20, п. 15: её не было)
+      if (result === "won" && m === 8) sound.playMusic(MUSIC.LAST_LEVEL);
       if (result === "won")
         mentat.open({ house, level: m, text: mentat.text(house, m, 1), buttons: "key" }, () =>
           scoreScreen.open(stats, () => {
@@ -639,6 +644,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     queuedPlacementYard = null;
     clearSelection();
     netRestore?.();
+    setMatchPlayers(start.players);
     const res = world.loadNetwork({ map: start.config.map, seed: start.seed, credits: start.config.credits, players: start.players.map((p) => ({ ...p })), local });
     netRestore = installNetControls(world.game, (c) => net.command(c), () => G.playerHouseID);
     net.bind(
@@ -648,6 +654,7 @@ async function startGame(rom: DuneRom): Promise<void> {
         if (c.k === "left" && p) {
           const to = start.players.find((x) => x.house === world.game.netLastHandOver);
           G.onMessage(`${p.name} покинул матч · база ${to ? `у союзника ${to.name}` : "под управлением компьютера"}`, 0);
+          markPlayerLeft(p.house, to?.name ?? null);
         }
       },
       () => world.game.tick(),
@@ -689,13 +696,14 @@ async function startGame(rom: DuneRom): Promise<void> {
       return;
     }
     endBanner.textContent = result === "won"
-      ? "ПОБЕДА КОМАНДЫ · Start → «Начать сначала» — выйти в лобби"
-      : "ПОРАЖЕНИЕ КОМАНДЫ · все союзники разбиты · Start → «Начать сначала» — выйти в лобби";
+      ? "ПОБЕДА КОМАНДЫ · Start → «Покинуть матч» — выйти в лобби"
+      : "ПОРАЖЕНИЕ КОМАНДЫ · все союзники разбиты · Start → «Покинуть матч» — выйти в лобби";
     endBanner.hidden = false;
     if (!net.replaying) sound.playMusic((result === "won" ? MUSIC.WIN : MUSIC.LOSE)[world.player] ?? 0);
   };
   /** Выйти из сетевого матча (без перехода куда-либо). */
   const endNetMatch = (): void => {
+    setMatchPlayers(null);
     if (!net.inMatch && !netRestore) return;
     net.leave();
     netRestore?.();
@@ -1007,11 +1015,17 @@ async function startGame(rom: DuneRom): Promise<void> {
     if (!paused || netActive) {
       if (!netActive) world.step();
       world.sync();
-      const readyYard = completedConstructionYard ?? (queuedPlacementYard?.readyBuildings?.length?queuedPlacementYard:null);
+      // готовое здание — на курсор, но только пока игрок работает со двором, не в бою (ui/auto-placement.ts)
+      const decision = autoPlacement({
+        completed: completedConstructionYard, queued: queuedPlacementYard,
+        ready: (y) => world.game.readyBuildings(y).length > 0,
+        hovered: (y) => readyYardAt(view.cursorX, view.cursorY, true)?.ref === y,
+        selectedStructure: view.selectedStructure?.ref ?? null, selectedUnits: view.selectedUnits.size, selectionType: G.selectionType,
+      });
       completedConstructionYard = null;
-      const queuedPlacementReady = readyYard !== null && queuedPlacementYard === readyYard && (readyYard.readyBuildings?.length??0)>0;
-      const hoveredReadyYard = readyYard !== null && readyYardAt(view.cursorX, view.cursorY, true)?.ref === readyYard;
-      if (readyYard && G.selectionType !== SELECTION.PLACE && (queuedPlacementReady || hoveredReadyYard || view.selectedStructure?.ref===readyYard)) {
+      if (!decision.keepQueue) queuedPlacementYard = null;
+      const readyYard = decision.yard;
+      if (readyYard) {
         const yard = world.structures.find((s) => s.ref === readyYard);
         if (yard && world.game.placeIt(readyYard)) {
           selectStructure(yard, false);
@@ -1065,7 +1079,7 @@ async function startGame(rom: DuneRom): Promise<void> {
       const si = structureInfo[G.structureActiveType];
       const size = layoutSize[si.layout];
       const detail = world.game.placementDetail(World.packAt(view.cursorX, view.cursorY));
-      view.placement = { w: size.width, h: size.height, valid: detail.valid, cells: detail.cells };
+      view.placement = { w: size.width, h: size.height, valid: detail.valid, cells: detail.cells, name: STRUCTURE_NAMES[G.structureActiveType] };
     } else view.placement = null;
     const over = world.unitAt(view.cursorX, view.cursorY);
     const overS = world.structureAtCell(Math.floor(view.cursorX / CELL_PX), Math.floor(view.cursorY / CELL_PX));
@@ -1094,6 +1108,8 @@ async function startGame(rom: DuneRom): Promise<void> {
       minimap.refresh(
         world.units.map((u) => ({ x: u.x, y: u.y, own: u.house === world.player, ally:u.house!==world.player&&houseAreAllied(world.player,u.house), air: u.air })),
         world.structures.filter((s) => s.type !== STRUCTURE.WALL && seen(s.x, s.y)).map((s) => ({ x: s.x, y: s.y, w: s.w, h: s.h, own: s.house === world.player, ally:s.house!==world.player&&houseAreAllied(world.player,s.house) })),
+        // радар как в Sega: аванпост и энергия ($1A7FE); наблюдателю и записи — вся карта
+        G.revealAll || !G.houses[world.player] || !isHuman(world.player) || G.houses[world.player].flags.radarActivated,
       );
       updateHud();
     }

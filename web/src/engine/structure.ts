@@ -14,14 +14,14 @@ import { isHuman, isLocal } from "./core.ts";
 import { houseAlliedToHuman, houseAreAllied, houseCalculatePowerAndCredit, houseUpdateCreditsStorage, houseUpdateRadarState } from "./house.ts";
 import {
   mapFindLocationTile, mapGetLandscapeType, mapIsPositionUnveiled, mapIsValidPosition, mapMakeExplosion, mapSearchSpice,
-  tileIsUnveiled, tileRemoveFogInRadius,
+  tileIsUnveiled, tileRemoveFogAroundRect, tileRemoveFogInRadius,
 } from "./map.ts";
 import { objectGetByPackedTile, objectScriptVariable4Clear } from "./object.ts";
 import { scriptIsLoaded, scriptLoad, scriptReset, scriptRun } from "./script.ts";
 import { msg } from "./strings.ts";
 import {
   animationStructureBuild, animationStructureRubble, houseInfo, landscapeInfo, layoutTileCount, layoutTileDiff, layoutTiles,
-  layoutTilesAround, structureInfo, tableMapDiff, unitInfo,
+  layoutTilesAround, layoutSize as structureLayoutSize, structureInfo, tableMapDiff, unitInfo,
 } from "./tables.ts";
 import { unitCreate, unitGetByPackedTile, unitGetHouseID, unitLaunchHouseMissile, unitRemove, unitSetAction } from "./unit.ts";
 import {networkUnitCount} from './core.ts';
@@ -695,9 +695,18 @@ export function structureActivateSpecial(s: Structure | null): void {
   }
 }
 
+/**
+ * Раскрытие тумана вокруг здания: по его площади, а не кругом от левого верхнего угла (аудит 2026-10-20, п. 8 —
+ * у больших построек правая и нижняя часть оставались в тумане). Радиус таблицы считается от центра «точечного»
+ * здания, поэтому от края площади он короче на половину размера: площадь раскрытия близка к прежней, но ровная со
+ * всех сторон; у однопольных построек (башни, бетон) — как было.
+ */
 export function structureRemoveFog(s: Structure | null): void {
   if (!s || (!isHuman(s.o.houseID) && !G.net)) return;
-  tileRemoveFogInRadius(s.o.position, structureInfo[s.o.type].o.fogUncoverRadius, s.o.houseID);
+  const si = structureInfo[s.o.type], size = structureLayoutSize[si.layout] ?? { width: 1, height: 1 };
+  const radius = Math.max(1, si.o.fogUncoverRadius - (Math.max(size.width, size.height) >> 1));
+  const p = packTile(s.o.position);
+  tileRemoveFogAroundRect(p & 63, p >> 6, size.width, size.height, radius, s.o.houseID);
 }
 
 function structureDestroy(s: Structure | null): void {

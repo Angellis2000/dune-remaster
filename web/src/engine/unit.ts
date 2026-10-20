@@ -28,7 +28,7 @@ import {
   structureDamage, structureFree, structureGetByPackedTile, structureGetStructuresBuilt, structureHouseUnderAttack,
   structureSetState, structureUpdateMap,
 } from "./structure.ts";
-import { actionInfo, houseInfo, landscapeInfo, layoutTileDiff, structureInfo, unitInfo } from "./tables.ts";
+import { actionInfo, houseInfo, landscapeInfo, layoutSize, layoutTileDiff, structureInfo, unitInfo } from "./tables.ts";
 import { teamGetByIndex } from "./team.ts";
 import { houseCalculatePowerAndCredit } from "./house.ts";
 
@@ -1494,7 +1494,10 @@ export function unitLaunchHouseMissile(packed: number): void {
   G.houseMissileCountdown = 0;
   G.unitHouseMissile = null;
   if (isAI) {
-    if (!G.net || !houseAreAllied(G.playerHouseID,m.o.houseID)) G.onFeedback(39);
+    // MD $023220: после пуска, если ракета не своего дома, — звук 27 «РУКА СМЕРТИ» (последовательность $53).
+    // Голос-оповещение 39 из PC в MD пустой ($06A95C → $FF), его и не было слышно (аудит 2026-10-20, п. 13).
+    // В сети союзный пуск тревоги не даёт.
+    if (!G.net || !houseAreAllied(G.playerHouseID,m.o.houseID)) G.onSound(27);
     return;
   }
   G.selectionType = SELECTION.STRUCTURE;
@@ -1538,6 +1541,19 @@ function bulletRemoveFog(bullet: Unit): void {
   }
 }
 
+/** Чужой юнит рядом со своей базой: не дальше 8 клеток от площади любой своей постройки (только для оповещений). */
+export function enemyNearOwnBase(unit: Unit, houseID: number, range = 8): boolean {
+  const x = unit.o.position.x >> 8, y = unit.o.position.y >> 8;
+  for (const s of G.structures) {
+    if (!s.o.flags.used || s.o.houseID !== houseID) continue;
+    const size = layoutSize[structureInfo[s.o.type].layout] ?? { width: 1, height: 1 };
+    const sx = s.o.position.x >> 8, sy = s.o.position.y >> 8;
+    const dx = Math.max(sx - x, 0, x - (sx + size.width - 1)), dy = Math.max(sy - y, 0, y - (sy + size.height - 1));
+    if (Math.max(dx, dy) <= range) return true;
+  }
+  return false;
+}
+
 export function unitHouseUnitCountAdd(unit: Unit | null, houseID: number): void {
   if (!unit) return;
   const ui = unitInfo[unit.o.type];
@@ -1574,9 +1590,12 @@ export function unitHouseUnitCountAdd(unit: Unit | null, houseID: number): void 
       }
     } else if (!houseAreAllied(houseID, unitGetHouseID(unit))) {
       if (hp.timerUnitAttack === 0) {
-        if (local && G.musicInBattle === 0) G.musicInBattle = 1;
-        if (!local) {
-          // голос предупреждения — только своему игроку
+        // в сети обзор у команды общий: враг у базы союзника виден и мне, но тревога — только у своей базы
+        // (владелец 2026-10-20, аудит п. 12); таймер и команда врага ниже — симуляция, они не зависят от зрителя
+        const warn = local && (!G.net || enemyNearOwnBase(unit, houseID));
+        if (warn && G.musicInBattle === 0) G.musicInBattle = 1;
+        if (!warn) {
+          // голос предупреждения — только своему игроку и только у своей базы
         } else if (unit.o.type === UNIT.SABOTEUR) {
           G.onFeedback(12);
         } else if (G.scenarioID < 3) {

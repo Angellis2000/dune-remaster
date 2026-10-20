@@ -132,10 +132,12 @@ const generalGetLinkedUnitType: ScriptFunction = () => {
   return G.units[linkedID].o.type;
 };
 
-const generalVoicePlay: ScriptFunction = (script) => {
-  G.onSound(P(script, 1), G.scriptCurrentObject!.position);
-  return 0;
-};
+/**
+ * Слот 38 скриптов юнитов. В MD это пустышка ($0112F2: moveq #0; rts — таблица функций юнитов $0FED7C): скрипты
+ * юнитов звуков не играют, звук смерти пехоты даёт unitStartAnimation ($045810). Прежний перенос из PC здесь играл
+ * вскрик — и у раздавленного вместо «В ЛЕПЁШКУ!» звучал он (аудит 2026-10-20, п. 10).
+ */
+const generalVoicePlay: ScriptFunction = () => 0;
 
 const generalSearchSpice: ScriptFunction = (script) => {
   const packed = mapSearchSpice(packTile(G.scriptCurrentObject!.position), P(script, 1));
@@ -1053,8 +1055,14 @@ function houseHasRefinery(houseID: number): boolean {
 
 const unitIsInTransport: ScriptFunction = () => (cur().o.flags.inTransport ? 1 : 0);
 
+/**
+ * $045810 (слот 4 таблицы $0FED7C): смерть пехотинца. Раздавленный техникой (переменная 1 = 1, её ставит unitMove) —
+ * эффект-клякса $16/$17 и звук 35 «В ЛЕПЁШКУ!» (последовательность $4E); обычная смерть — эффект $14/$15 и звук 30
+ * «ВСКРИК» ($4C). Оверлейных иконок трупов в MD нет (группа 4 в ROM занята частями зданий) — эффекты рисует ремейк.
+ */
 const unitStartAnimation: ScriptFunction = () => {
-  // В Mega Drive версии нет оверлейных иконок трупов пехоты (группа 4 в ROM занята частями зданий)
+  const u = cur();
+  G.onSound(u.o.script.variables[1] === 1 ? 35 : 30, u.o.position);
   return 1;
 };
 
@@ -1241,7 +1249,9 @@ const unitMCVDeploy: ScriptFunction = () => {
       return 1;
     }
   }
-  if (isLocal(unitGetHouseID(u))) G.onMessage(msg.unableToDeploy, 0);
+  // MD $027FF2: место под двор не годится — звук 47 «ОТМЕНА ПРИКАЗА» (последовательность $1A); у нас проверка позже,
+  // в скрипте развёртывания, поэтому звук — вместе с сообщением
+  if (isLocal(unitGetHouseID(u))) { G.onSound(47); G.onMessage(msg.unableToDeploy, 0); }
   unitUpdateMap(1, u);
   return 0;
 };

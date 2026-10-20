@@ -30,7 +30,7 @@ export const STRUCTURE_NAMES = [
   "Бетон 2×2", // 1 STRUCTURE_SLAB_2x2
   "Дворец", // 2 STRUCTURE_PALACE
   "Лёгкий завод", // 3 STRUCTURE_LIGHT_VEHICLE
-  "Машинный двор", // 4 STRUCTURE_HEAVY_VEHICLE
+  "Тяжёлый завод", // 4 STRUCTURE_HEAVY_VEHICLE (владелец 2026-10-20: вместо «Машинный двор»)
   "Завод хай-тек", // 5 STRUCTURE_HIGH_TECH
   "Дом IX", // 6 STRUCTURE_HOUSE_OF_IX
   "Казармы WOR", // 7 STRUCTURE_WOR_TROOPER
