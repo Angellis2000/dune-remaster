@@ -78,6 +78,9 @@ vec3 texColor(){
   vec3 h=hsv(c),ph=hsv(paint);
   float k=smoothstep(.18,.38,h.y)*smoothstep(.08,.2,h.z);
   vec3 painted=rgb(vec3(ph.x,clamp(h.y*.55+ph.y*.6,0.,1.),h.z*mix(1.,ph.z*1.25,.5)));
+  // светлая неокрашенная обшивка (белые и светло-серые панели) — темнее, в тон кораблю (просьба владельца)
+  float light=smoothstep(.3,.85,h.z)*(1.-k);
+  c*=mix(1.,.42,light);
   return mix(c,painted,k);
 }
 float unpack(vec4 c){return dot(c,vec4(1.,1./255.,1./65025.,1./16581375.));}
