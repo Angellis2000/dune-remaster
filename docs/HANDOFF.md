@@ -1112,3 +1112,13 @@ Caddy перечитан (блок Dune уже был, повторно не д�
 `intro-transports-v3.png` — 3 ряда × 5 ракурсов). Подключение: в `ShipFlight` вместо кадра атласа рисовать
 `renderer.draw(...)` с `shipModels()[ряд]` (порядок рядов атласа сверить с домами) и рысканием/тангажем из положения
 корабля; факел — по `model.nozzles`.
+
+**Корабли-матки из готового пака (2026-10-20, владелец: «не истребители, а большие корабли-матки»; «поищи готовые»).**
+Пак Quaternius «Ultimate Spaceships» (CC0, OpenGameArt, 10 кораблей OBJ + текстуры) → `tools/sim/ship_import.ts` →
+`web/src/gfx/assets/ships/mothership-*.json` (треугольники + UV, нос на +Z, длина 11) и `.png` (текстуры пака, 2–3 МБ),
+источник — `assets/ships/SOURCES.txt`. Выбраны три крупных разных силуэта: Атрейдесы — крейсер Insurgent, Харконнены —
+авианосец Imperial, Ордосы — дисковая матка Pancake. `gfx/ship-assets.ts` → `MOTHERSHIPS`, `loadMotherships()` (сопла
+заданы вручную по профилю кормы; `gfx/ship-nozzles.ts` → `findNozzles` — грубый автопоиск). Рендер умеет текстуры:
+`ShipModel.mesh` (positions, uvs, texture, paint) — насыщенная «краска» текстуры перекрашивается в оттенок дома (HSV в
+шейдере), металл остаётся. Предпросмотр `/ship-preview.html`: сверху матки, ниже самодельные модели. В заставку не
+подключено (это делает агент заставки): `loadMotherships()` → `ShipRenderer.draw(ctx, model, pose, x, y, w, h)`.

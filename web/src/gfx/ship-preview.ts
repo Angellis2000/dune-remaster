@@ -1,5 +1,6 @@
 // Предпросмотр 3D-кораблей заставки (web/ship-preview.html, в dev-сервере: /ship-preview.html).
-import { shipModelToObj, shipModels } from "./ship-models.ts";
+import { shipModelToObj, shipModels, type ShipModel } from "./ship-models.ts";
+import { loadMotherships } from "./ship-assets.ts";
 import { ShipRenderer } from "./ship-renderer.ts";
 
 const renderer = new ShipRenderer();
@@ -17,7 +18,9 @@ const download = (name: string, text: string) => {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 };
 
-const views = shipModels().map((model, i) => {
+// сверху — корабли-матки (пак Quaternius, CC0, по домам), ниже — самодельные модели
+const models: ShipModel[] = [...(await loadMotherships()), ...shipModels()];
+const views = models.map((model, i) => {
   const figure = document.createElement("figure");
   const canvas = document.createElement("canvas");
   const caption = document.createElement("figcaption");
@@ -25,6 +28,7 @@ const views = shipModels().map((model, i) => {
   title.textContent = model.name;
   const obj = document.createElement("button");
   obj.textContent = "Скачать OBJ";
+  obj.hidden = !!model.mesh;
   obj.addEventListener("click", () => {
     const { obj: o, mtl } = shipModelToObj(model);
     download(`${model.id}.obj`, o);

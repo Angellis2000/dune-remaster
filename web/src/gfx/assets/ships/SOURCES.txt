@@ -1,0 +1,5 @@
+mothership-atreides.* — Insurgent, mothership-harkonnen.* — Imperial, mothership-ordos.* — Pancake
+из пака «Ultimate Spaceships» (May 2021), автор Quaternius, лицензия CC0 1.0 (общественное достояние):
+https://opengameart.org/content/lowpoly-spaceships-pack — http://creativecommons.org/publicdomain/zero/1.0/
+Сетка пересчитана tools/sim/ship_import.ts (центр, длина 11, нос на +Z), текстуры — как в паке;
+перекраска по домам — в шейдере gfx/ship-renderer.ts. atreides/harkonnen/ordos.obj — свои модели (gfx/ship-models.ts).

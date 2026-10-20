@@ -55,17 +55,29 @@ precision highp float;varying float vDepth;
 void main(){vec4 e=vec4(1.,255.,65025.,16581375.)*vDepth;e=fract(e);e-=e.yzww*vec4(1./255.,1./255.,1./255.,0.);gl_FragColor=e;}`;
 
 const VERTEX = `
-attribute vec3 position;attribute vec3 normal;attribute vec3 color;attribute vec3 material;${COMMON}
-varying vec3 vNormal;varying vec3 vColor;varying vec3 vMaterial;varying vec3 vView;varying vec3 vLight;
+attribute vec3 position;attribute vec3 normal;attribute vec3 color;attribute vec3 material;attribute vec2 uv;${COMMON}
+varying vec3 vNormal;varying vec3 vColor;varying vec3 vMaterial;varying vec3 vView;varying vec3 vLight;varying vec2 vUV;
 void main(){
   vec4 p=rotation*vec4(position,1.);vec3 view=p.xyz-vec3(0.,0.,distance);
-  vNormal=(rotation*vec4(normal,0.)).xyz;vColor=color;vMaterial=material;vView=view;vLight=toLight(p.xyz);
+  vNormal=(rotation*vec4(normal,0.)).xyz;vColor=color;vMaterial=material;vView=view;vLight=toLight(p.xyz);vUV=uv;
   gl_Position=projection*vec4(view,1.);
 }`;
 const FRAGMENT = `
 precision highp float;
-varying vec3 vNormal;varying vec3 vColor;varying vec3 vMaterial;varying vec3 vView;varying vec3 vLight;
-uniform mediump float thrust;uniform sampler2D shadowMap;uniform vec3 key;uniform float texel;
+varying vec3 vNormal;varying vec3 vColor;varying vec3 vMaterial;varying vec3 vView;varying vec3 vLight;varying vec2 vUV;
+uniform mediump float thrust;uniform sampler2D shadowMap;uniform sampler2D albedo;uniform vec3 key;uniform float texel;
+uniform vec3 paint;uniform float repaint;
+vec3 hsv(vec3 c){vec4 K=vec4(0.,-1./3.,2./3.,-1.);vec4 p=mix(vec4(c.bg,K.wz),vec4(c.gb,K.xy),step(c.b,c.g));vec4 q=mix(vec4(p.xyw,c.r),vec4(c.r,p.yzx),step(p.x,c.r));float d=q.x-min(q.w,q.y);return vec3(abs(q.z+(q.w-q.y)/(6.*d+1e-10)),d/(q.x+1e-10),q.x);}
+vec3 rgb(vec3 c){vec3 p=abs(fract(c.xxx+vec3(1.,2./3.,1./3.))*6.-3.);return c.z*mix(vec3(1.),clamp(p-1.,0.,1.),c.y);}
+/** текстура пака: насыщенная «краска» получает оттенок дома (paint), металл и тёмные детали — как есть */
+vec3 texColor(){
+  vec3 c=texture2D(albedo,vUV).rgb;
+  if(repaint<.5)return c;
+  vec3 h=hsv(c),ph=hsv(paint);
+  float k=smoothstep(.18,.38,h.y)*smoothstep(.08,.2,h.z);
+  vec3 painted=rgb(vec3(ph.x,clamp(h.y*.55+ph.y*.6,0.,1.),h.z*mix(1.,ph.z*1.25,.5)));
+  return mix(c,painted,k);
+}
 float unpack(vec4 c){return dot(c,vec4(1.,1./255.,1./65025.,1./16581375.));}
 float lit(vec3 l,float bias){
   vec2 uv=l.xy*.5+.5;float d=l.z*.5+.5-bias,s=0.;
@@ -77,7 +89,8 @@ void main(){
   vec3 n=normalize(vNormal);if(!gl_FrontFacing)n=-n;
   vec3 v=normalize(-vView);
   float emissive=vMaterial.x,gloss=vMaterial.y,panel=vMaterial.z;
-  vec3 base=pow(vColor,vec3(2.2))*(.86+.28*panel);
+  vec3 surface=vUV.x>=0.?texColor():vColor;
+  vec3 base=pow(surface,vec3(2.2))*(vUV.x>=0.?1.:.86+.28*panel);
   float nl=dot(n,key);
   float shadow=nl>0.?lit(vLight,.004+.01*(1.-nl)):0.;
   vec3 sun=vec3(1.,.9,.74)*3.1,sky=vec3(.05,.08,.16),sand=vec3(.34,.17,.06);
@@ -93,7 +106,7 @@ void main(){
   vec3 env=mix(sand*.8,sky*.6,smoothstep(-.35,.45,r.y))+vec3(1.,.85,.6)*.6*pow(max(dot(r,key),0.),24.)*gloss;
   vec3 c=diffuse+sun*spec*.35+env*fres;
   float glow=clamp(emissive*(.55+.6*thrust),0.,1.4);
-  c=mix(c,pow(vColor,vec3(2.2))*(1.6+2.4*glow),clamp(glow,0.,1.));
+  c=mix(c,pow(surface,vec3(2.2))*(1.6+2.4*glow),clamp(glow,0.,1.));
   c=aces(c*1.15);
   gl_FragColor=vec4(pow(c,vec3(1./2.2)),1.);
 }`;
@@ -129,7 +142,7 @@ void main(){
   gl_FragColor=vec4(c,a*clamp(thrust*1.4,0.,1.));
 }`;
 
-type Buffers = { body: WebGLBuffer; bodyCount: number; flame: WebGLBuffer; flameCount: number; radius: number };
+type Buffers = { body: WebGLBuffer; bodyCount: number; flame: WebGLBuffer; flameCount: number; radius: number; texture: WebGLTexture | null };
 
 export class ShipRenderer {
   readonly canvas = document.createElement("canvas");
@@ -187,7 +200,7 @@ export class ShipRenderer {
     return p;
   }
 
-  /** Вершины корпуса (позиция, нормаль грани, цвет, [свечение, блеск, тон панели] — 12 чисел) и пламени (12 чисел). */
+  /** Вершины корпуса (позиция, нормаль грани, цвет, [свечение, блеск, тон панели], UV — 14 чисел) и пламени (12 чисел). */
   private buffers(model: ShipModel): Buffers {
     const hit = this.cache.get(model);
     if (hit) return hit;
@@ -195,19 +208,24 @@ export class ShipRenderer {
     const body: number[] = [];
     let radius = 0, seed = 0x9e3779b9;
     const random = () => { seed = Math.imul(seed ^ (seed >>> 15), 0x2c1b3c6d) >>> 0; seed = (seed ^ (seed >>> 12)) >>> 0; return (seed & 0xffff) / 0xffff; };
+    const face = (p: ArrayLike<number>, i: number, color: number[], emissive: number, gloss: number, uv: ArrayLike<number> | null) => {
+      const ux = p[i + 3] - p[i], uy = p[i + 4] - p[i + 1], uz = p[i + 5] - p[i + 2];
+      const vx = p[i + 6] - p[i], vy = p[i + 7] - p[i + 1], vz = p[i + 8] - p[i + 2];
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      nx /= len; ny /= len; nz /= len;
+      const panel = random();
+      for (let k = 0; k < 9; k += 3) {
+        const j = (i + k) / 3;
+        body.push(p[i + k], p[i + k + 1], p[i + k + 2], nx, ny, nz, ...color, emissive, gloss, panel, uv ? uv[j * 2] : -1, uv ? uv[j * 2 + 1] : -1);
+        radius = Math.max(radius, Math.hypot(p[i + k], p[i + k + 1], p[i + k + 2]));
+      }
+    };
+    if (model.mesh) for (let i = 0; i < model.mesh.positions.length; i += 9) face(model.mesh.positions, i, [1, 1, 1], 0, 0.55, model.mesh.uvs);
     for (const part of model.parts) {
       const p = part.positions;
       for (let i = 0; i < p.length; i += 9) {
-        const ux = p[i + 3] - p[i], uy = p[i + 4] - p[i + 1], uz = p[i + 5] - p[i + 2];
-        const vx = p[i + 6] - p[i], vy = p[i + 7] - p[i + 1], vz = p[i + 8] - p[i + 2];
-        let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-        const len = Math.hypot(nx, ny, nz) || 1;
-        nx /= len; ny /= len; nz /= len;
-        const panel = random();
-        for (let k = 0; k < 9; k += 3) {
-          body.push(p[i + k], p[i + k + 1], p[i + k + 2], nx, ny, nz, ...part.color, part.emissive, part.gloss, panel);
-          radius = Math.max(radius, Math.hypot(p[i + k], p[i + k + 1], p[i + k + 2]));
-        }
+        face(p, i, part.color, part.emissive, part.gloss, null);
       }
     }
     // конусы пламени: 16 граней × 8 колец, три слоя (факел, ядро, ореол)
@@ -235,7 +253,21 @@ export class ShipRenderer {
     const flameBuffer = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, flameBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(flame), gl.STATIC_DRAW);
-    const b = { body: bodyBuffer, bodyCount: body.length / 12, flame: flameBuffer, flameCount: flame.length / 12, radius };
+    let texture: WebGLTexture | null = null;
+    if (model.mesh) {
+      texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, model.mesh.texture);
+      const pot = (n: number) => (n & (n - 1)) === 0;
+      const img = model.mesh.texture as { width: number; height: number };
+      if (pot(img.width) && pot(img.height)) { gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); }
+      else gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+    const b = { body: bodyBuffer, bodyCount: body.length / 14, flame: flameBuffer, flameCount: flame.length / 12, radius, texture };
     this.cache.set(model, b);
     return b;
   }
@@ -288,7 +320,7 @@ export class ShipRenderer {
       }
     };
     const off = (prog: WebGLProgram, names: string[]) => { for (const n of names) { const loc = gl.getAttribLocation(prog, n); if (loc >= 0) gl.disableVertexAttribArray(loc); } };
-    const BODY: [string, number][] = [["position", 3], ["normal", 3], ["color", 3], ["material", 3]];
+    const BODY: [string, number][] = [["position", 3], ["normal", 3], ["color", 3], ["material", 3], ["uv", 2]];
 
     gl.enable(gl.DEPTH_TEST);
     gl.disable(gl.CULL_FACE);
@@ -301,7 +333,7 @@ export class ShipRenderer {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.useProgram(depthProgram);
     gl.bindBuffer(gl.ARRAY_BUFFER, b.body);
-    attrs(depthProgram, 12, BODY);
+    attrs(depthProgram, 14, BODY);
     uniforms(depthProgram);
     gl.drawArrays(gl.TRIANGLES, 0, b.bodyCount);
     off(depthProgram, ["position"]);
@@ -314,11 +346,17 @@ export class ShipRenderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.shadowTexture);
     gl.uniform1i(gl.getUniformLocation(program, "shadowMap"), 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, b.texture ?? this.shadowTexture);
+    gl.uniform1i(gl.getUniformLocation(program, "albedo"), 1);
+    gl.uniform3fv(gl.getUniformLocation(program, "paint"), model.mesh?.paint ?? [1, 1, 1]);
+    gl.uniform1f(gl.getUniformLocation(program, "repaint"), model.mesh?.paint ? 1 : 0);
+    gl.activeTexture(gl.TEXTURE0);
     gl.bindBuffer(gl.ARRAY_BUFFER, b.body);
-    attrs(program, 12, BODY);
+    attrs(program, 14, BODY);
     uniforms(program);
     gl.drawArrays(gl.TRIANGLES, 0, b.bodyCount);
-    off(program, ["position", "normal", "color", "material"]);
+    off(program, ["position", "normal", "color", "material", "uv"]);
     // 3) пламя: по яркости поверх, корпус его загораживает (тест глубины), само в глубину не пишет
     if (thrust > 0.01 && b.flameCount) {
       gl.useProgram(flameProgram);

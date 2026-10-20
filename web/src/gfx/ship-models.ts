@@ -21,12 +21,17 @@ export interface ShipPart {
   gloss: number;
 }
 export interface ShipModel {
-  id: "atreides" | "harkonnen" | "ordos";
+  id: string;
   name: string;
   house: number;
   parts: ShipPart[];
   /** точки сопел (для факела в заставке): центр и радиус */
   nozzles: { at: Vec3; radius: number; color: Vec3 }[];
+  /**
+   * Готовая модель с текстурой (gfx/ship-assets.ts — пак Quaternius, CC0): треугольники подряд и UV к каждой вершине.
+   * Рендер берёт цвет из текстуры, а насыщенную «краску» перекрашивает в paint (цвет дома); металл не трогает.
+   */
+  mesh?: { positions: ArrayLike<number>; uvs: ArrayLike<number>; texture: TexImageSource; paint?: Vec3 };
 }
 
 const hex = (h: string): Vec3 => [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255];
