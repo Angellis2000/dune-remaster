@@ -17,3 +17,8 @@ __pycache__/
 web/node_modules/
 server/node_modules/
 web/dist/
+
+# бета-exe (desktop/): зависимости, копия сборки игры и готовый exe
+desktop/node_modules/
+desktop/app/
+desktop/release/

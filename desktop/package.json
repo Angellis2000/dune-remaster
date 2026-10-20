@@ -1,0 +1,25 @@
+{
+  "name": "dune-remaster-desktop",
+  "productName": "Dune Remaster Beta",
+  "version": "0.9.0-beta.1",
+  "description": "Dune Remaster — бета-версия для Windows (кампания и сетевая игра)",
+  "author": "Dune Remaster",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.17.0"
+  },
+  "build": {
+    "appId": "kz.dune.remaster.beta",
+    "productName": "Dune Remaster Beta",
+    "directories": { "output": "release" },
+    "files": ["main.cjs", "app/**/*"],
+    "asar": true,
+    "win": { "target": [{ "target": "portable", "arch": ["x64"] }] },
+    "portable": { "artifactName": "DuneRemaster-beta-${version}.exe" }
+  }
+}
