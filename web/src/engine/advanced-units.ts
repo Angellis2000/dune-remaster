@@ -1,4 +1,4 @@
-import {ACTION,EXPLOSION,G,IT,LST,MOVEMENT,STRUCTURE,indexEncode,indexGetStructure,indexGetTile,indexGetUnit,indexIsValid,packTile,tileCenter,tileGetDistance,unpackTile,type Tile32,type Unit,type Structure} from './core.ts';
+import {ACTION,EXPLOSION,G,IT,LST,MOVEMENT,STRUCTURE,indexEncode,indexGetStructure,indexGetTile,indexGetUnit,indexIsValid,packTile,tileCenter,tileGetDistance,tileIsValid,unpackTile,type Tile32,type Unit,type Structure} from './core.ts';
 import {unitInfo,layoutSize,structureInfo} from './tables.ts';
 import {houseAreAllied} from './house.ts';
 import {mapGetLandscapeType,mapIsValidPosition,mapMakeExplosion,tileRemoveFogInRadius,alertNearbyBaseDefenders} from './map.ts';
@@ -132,7 +132,7 @@ function waitingSpot(pad:Tile32,rank:number,wing?:Unit):Tile32{
     const p={x:pad.x+Math.round(dx*ring),y:pad.y+Math.round(dy*ring)},tile=packTile(p);
     const occupied=wing&&G.unitFind.some(o=>o!==wing&&o.o.flags.used&&!o.o.flags.isNotOnMap&&o.o.hitpoints>0&&
       (distance(o.o.position,p)<220||(o.drone?.home===wing.drone?.home&&o.drone?.guardPosition&&distance(o.drone.guardPosition,p)<220)));
-    if(mapIsValidPosition(tile)&&!occupied&&!structureGetByPackedTile(tile)&&mapGetLandscapeType(tile)!==LST.WALL)return p;
+    if(tileIsValid(p)&&mapIsValidPosition(tile)&&!occupied&&!structureGetByPackedTile(tile)&&mapGetLandscapeType(tile)!==LST.WALL)return p;
   }
   const [dx,dy]=WAITING[(rank-1)%WAITING.length];
   return{x:pad.x+dx,y:pad.y+dy};

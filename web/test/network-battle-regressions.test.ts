@@ -183,3 +183,14 @@ test('drone production, cap and landing remain identical for different local pla
   }
   assert.deepEqual(run(1),run(0));
 });
+
+test('drone parking candidates at the right map edge cannot wrap into the next row',()=>{
+  match();G.validateStrictIfZero++;
+  const pad=structureCreate(INDEX_INVALID,STRUCTURE.DRONE_PAD,1,packXY(60,30))!;
+  G.validateStrictIfZero--;assert.ok(pad);
+  for(let i=0;i<3;i++){
+    const u=unitCreate(INDEX_INVALID,UNIT.COMBAT_DRONE,1,pad.o.position,0)!;initializeDrone(u,pad);
+    const p=u.drone!.guardPosition!;
+    assert.ok(p.x>=0&&p.x<16384&&p.y>=0&&p.y<16384,JSON.stringify(p));
+  }
+});
