@@ -15,6 +15,7 @@ import type { ScreenArt } from "../gfx/screen-art.ts";
 import type { Button } from "../input/pad.ts";
 import type { Sound } from "../sound/sound.ts";
 import { loadTileList } from "./tutorial.ts";
+import { SpaceScene } from '../gfx/space-scene.ts';
 
 export const FINALE_ROM = {
   font: 0x0feee2,
@@ -58,6 +59,11 @@ export class FinaleScreen {
   private scrollFraction = 0;
   private cram = new Uint16Array(64);
   private key = false;
+  private scene=new SpaceScene();
+  private sceneFrame=0;
+  private whiteFrame=-1;
+  private colorFrame=-1;
+  private house=0;
 
   constructor(
     private rom: DuneRom,
@@ -83,6 +89,7 @@ export class FinaleScreen {
 
   /** house — номер дома ROM (0 Харконнены, 1 Атрейдесы, 2 Ордосы). */
   open(house: number, done: () => void): void {
+    this.sceneFrame=0;this.whiteFrame=-1;this.colorFrame=-1;this.house=house;
     this.done = done;
     this.gen = this.run(house);
     this.key = false;
@@ -125,6 +132,7 @@ export class FinaleScreen {
   }
 
   private tick(): void {
+    this.sceneFrame++;
     if (this.gen?.next().done) {
       this.close();
       this.done?.();
@@ -183,7 +191,9 @@ export class FinaleScreen {
     this.sound?.playMusic(FINALE_ROM.music);
     yield* this.wait(150);
     this.sound?.play(0x18);
+    this.whiteFrame=this.sceneFrame;
     yield* this.fade((i) => readU16(b, FINALE_ROM.white + i * 2), 1, 9, 7);
+    this.colorFrame=this.sceneFrame;
     yield* this.fade((i) => readU16(b, FINALE_ROM.houseColors + house * 20 + i * 2), 1, 9, 7);
     // $01FE18: цвета текста — строка 2 жёлтая, строка 3 белая
     for (const [line, i, c] of [[2, 13, 0x0ee], [2, 14, 0x066], [2, 15, 0], [3, 13, 0xeee], [3, 14, 0x666], [3, 15, 0]]) this.cram[line * 16 + i] = c;
@@ -228,8 +238,11 @@ export class FinaleScreen {
       let light = 0;
       for (let i = 1; i < 10; i++) light = Math.max(light, this.cram[i] & 14, (this.cram[i] >> 4) & 14, (this.cram[i] >> 8) & 14);
       out.save(); out.globalAlpha = Math.min(1, light / 10);
-      this.art.background(out, "arrakis");
-      out.fillStyle = "#03060c88"; out.fillRect(-160, -100, 640, 424);
+      const palette=[[1,.09,.035],[.06,.3,1],[.07,.9,.26]][this.house]??[1,.7,.25];
+      const color=this.colorFrame<0?0:Math.min(1,(this.sceneFrame-this.colorFrame)/70);
+      const tint=palette.map(c=>1+(c-1)*color);
+      const amount=this.whiteFrame<0?0:Math.min(1,(this.sceneFrame-this.whiteFrame)/70);
+      if(!this.scene.draw(out,this.sceneFrame/60,1,tint,amount))this.art.background(out, "arrakis");
       const vignette=out.createRadialGradient(160,112,18,160,112,190);
       vignette.addColorStop(0,'#0000');vignette.addColorStop(1,'#000b');
       out.fillStyle=vignette;out.fillRect(-160,-100,640,424);

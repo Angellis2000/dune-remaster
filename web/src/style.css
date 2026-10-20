@@ -484,7 +484,7 @@ button[aria-pressed="true"] {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  padding: 14px 24px;
+  padding: 9px 18px;
   background: rgba(11, 12, 16, 0.9);
   border: 1px solid var(--accent);
   border-radius: var(--radius);
@@ -493,18 +493,24 @@ button[aria-pressed="true"] {
   pointer-events: none;
 }
 
-/* сообщения движка — строка внизу, как строка состояния оригинала */
+/* Central gameplay notifications remain readable on desktop and touch screens. */
 .message {
   position: absolute;
   left: 50%;
-  bottom: 56px;
+  bottom: max(18px, env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
-  max-width: min(720px, calc(100% - 32px));
-  padding: 8px 14px;
-  background: rgba(11, 12, 16, 0.86);
-  border: 1px solid var(--line);
+  width: max-content;
+  max-width: min(860px, calc(100% - 48px));
+  padding: 14px 24px;
+  background: linear-gradient(90deg, #101820dc, #101820f5, #101820dc);
+  border: 1px solid #bfa268;
   border-radius: var(--radius);
-  font-size: 14px;
+  color: #ffe4ae;
+  font-size: clamp(17px, 1.8vw, 24px);
+  font-weight: 650;
+  line-height: 1.3;
+  box-shadow: 0 5px 25px #0008;
+  text-shadow: 0 2px 4px #000;
   text-align: center;
   pointer-events: none;
 }
@@ -1003,3 +1009,23 @@ button[aria-pressed="true"] {
 /* отсчёт перед сетевым матчем (main.ts → countdown) */
 .net-countdown { position: absolute; z-index: 30; left: 50%; top: 42%; transform: translate(-50%, -50%); pointer-events: none;
   color: #f0cc83; font: 800 clamp(48px, 12vmin, 120px)/1 sans-serif; letter-spacing: .04em; text-shadow: 0 0 18px #000, 0 4px 0 #3b2a10; }
+
+.toolbar-toggle { position: fixed; top: max(4px,env(safe-area-inset-top,0px)); left: max(4px,env(safe-area-inset-left,0px)); z-index: 10000; width: 22px; height: 26px; padding: 0; border: 1px solid #b59a6040; border-radius: 5px; background: #07101770; color: #c9b787; font-size: 19px; line-height: 1; opacity: .35; transition: opacity .18s, background .18s; }
+.toolbar-toggle:hover,.toolbar-toggle:focus-visible,.toolbar-toggle[aria-expanded="true"] { opacity: 1; background: #101920ed; }
+.topbar { padding-left: 32px; }
+@media(pointer:coarse) { .toolbar-toggle { width: 36px; height: 36px; } }
+
+/* Generated titanium/brass frames; 9-slice preserves corner proportions. */
+.game:has(> .topbar[hidden]) { grid-template-rows: minmax(0,1fr); }
+.command { border: 9px solid transparent; border-image: url('./gfx/assets/frontend/frame-build-v1.png') 130 / 9px / 0 stretch; border-radius: 0; background: linear-gradient(145deg,#17212aee,#0b1219ed); box-shadow: 0 5px 18px #0008; }
+.command.focused { border-color: transparent; box-shadow: 0 0 12px #e1b56735,0 5px 18px #0009; }
+.command::before,.command::after { display: none; }
+.command > div { padding-top: 8px; }
+.minimap { border: 8px solid transparent; border-image: url('./gfx/assets/frontend/frame-radar-v1.png') 140 / 8px / 0 stretch; border-radius: 0; box-shadow: 0 5px 18px #0008; }
+.command { top: 140px; }
+.command-list,.command-list li { min-width: 0; }
+.command-list { overflow-x: hidden; }
+.command-list button { min-width: 0; box-sizing: border-box; grid-template-columns: auto minmax(0,1fr) auto; gap: 6px; }
+.command-list button span:not(.command-picture):not(.command-icon) { min-width: 0; overflow-wrap: anywhere; }
+.command-list button small { max-width: 68px; white-space: normal; overflow-wrap: anywhere; text-align: right; }
+.command-list button:not(:has(img)):not(:has(.command-icon)) { grid-template-columns: minmax(0,1fr) auto; }

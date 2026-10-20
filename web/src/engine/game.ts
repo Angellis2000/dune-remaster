@@ -8,7 +8,7 @@ import { animationInit, animationTick } from "./animation.ts";
 import {
   ACTION, G, HOUSE, HOUSE_INVALID, HOUSE_WEAPON, INDEX_INVALID, IT, MOVEMENT, SELECTION, STATE, STRUCTURE, UNIT, findAll, houseAllocate, houseFind, isHuman, isLocal, randomState,
   idiv, indexEncode, indexGetUnit, newScenario, packTile, packXY, poolsReset, randomLCGSeed, randomRange, randomSeed, s8, structureFind, unitAllocate,
-  tileCenter, unitFind, unitFree, unpackTile, type House, type Structure, type Unit,
+  tileCenter, unitFind, unitFree, unpackTile, teamVisionMask, type House, type Structure, type Unit,
 } from "./core.ts";
 import { explosionInit, explosionTick } from "./explosion.ts";
 import { gameLoopHouse, houseCalculatePowerAndCredit, houseResetTimers, houseUpdateCreditsStorage } from "./house.ts";
@@ -17,6 +17,7 @@ import { objectGetByPackedTile, objectScriptVariable4Clear } from "./object.ts";
 import { loadEmc, scriptLoad } from "./script.ts";
 import { scriptFunctionsStructure, scriptFunctionsTeam, scriptFunctionsUnit, structureDeployProducedUnit, unitsAssignAttackSpots } from "./scriptfns.ts";
 import { msg } from "./strings.ts";
+import { structureHasRally } from './rally.ts';
 import {initializeDrone,clampDronePoint,droneTargetAllowed,droneCanLaunch} from './advanced-units.ts';
 import {
   gameLoopStructure, setUnitCreateWrapper, structureCancelBuild, structureActivateSpecial, structureBuildObject, structureCreate, structureFree,
@@ -83,6 +84,7 @@ export type NetCommand =
   | { k: "repair"; s: number }
   | { k: "fix"; s: number }
   | { k: "upgrade"; s: number }
+  | { k: "rally"; s: number; p: number }
   | { k: "unqueue"; s: number; i: number }
   | { k: "unqueueB"; s: number; i: number }
   | { k: "unreadyB"; s: number; t: number }
@@ -133,6 +135,7 @@ export class Game {
   onEnd: (result: MissionEnd) => void = () => {};
   /** сеть: местный игрок разбит, но его команда ещё сражается (личное поражение) */
   onNetOut: () => void = () => {};
+  rallyTarget: Structure | null = null;
   private netOut = false;
   /** сеть: местный зритель — игрок (а не наблюдатель или просмотр записи) */
   private netLocalPlayer = false;
@@ -199,6 +202,7 @@ export class Game {
     this.mission = mission;
     this.ended = null;
     this.selectedStructure = null;
+    this.rallyTarget = null;
     this.missilePalace = null;
     this.levelEndTimer = 0;
 
@@ -669,6 +673,10 @@ export class Game {
 
   /** Цель выбрана: приказ активному юниту и (others) остальным выделенным — одной группой. */
   targetClick(packed: number, others: Unit[] = []): void {
+    if (this.rallyTarget) {
+      this.setRallyPoint(this.rallyTarget, packed); this.rallyTarget=null;
+      G.activeAction=0xffff; G.selectionType=SELECTION.STRUCTURE; return;
+    }
     if (this.missilePalace) {
       const s = this.missilePalace;
       this.missilePalace = null;
@@ -708,6 +716,7 @@ export class Game {
   }
 
   cancelTarget(): void {
+    this.rallyTarget = null;
     if (G.structureActiveType !== 0xffff) this.cancelPlace();
     if (this.missilePalace) {
       // $0284C4: отмена снимает прицел, ракета не создавалась
@@ -722,6 +731,18 @@ export class Game {
   }
 
   // ---- здания
+  canRally(s: Structure): boolean { return structureHasRally(s); }
+  beginRally(s: Structure): boolean {
+    if (s.o.houseID !== G.playerHouseID || !this.canRally(s)) return false;
+    this.rallyTarget = s;
+    G.unitActive = null; G.activeAction = ACTION.MOVE; G.selectionType = SELECTION.TARGET;
+    return true;
+  }
+  setRallyPoint(s: Structure, packed: number): boolean {
+    if (!this.canRally(s) || !Number.isInteger(packed) || (packed !== -1 && !mapIsValidPosition(packed))) return false;
+    s.rallyPoint = packed === -1 ? undefined : packed;
+    return true;
+  }
   /** Что можно заказать на заводе: тип и доступность (1 — да, −1 — после улучшения). */
   buildOptions(s: Structure): { type: number; available: number; cost: number; time: number }[] {
     if (G.net) return this.netQuiet(() => this.buildOptionsRaw(s).filter((o) => this.netAllowed(s, o.type)));
@@ -769,7 +790,7 @@ export class Game {
   /** Купить юнит в космопорте: деньги списываются сразу, доставка — фрегатом. */
   starportBuy(s: Structure, type: number, price: number): boolean {
     const h = G.houses[s.o.houseID];
-    if (G.starportAvailable[type] <= 0 || h.credits < price) return false;
+    if (G.starportAvailable[type] <= 0 || !this.canAfford(s,price)) return false;
     h.credits -= price;
     structureStarportBuy(s, [type]);
     return true;
@@ -777,6 +798,9 @@ export class Game {
 
   /** Начать производство (или купить в космопорте). */
   build(s: Structure, type: number): boolean {
+    const resuming=!structureCanQueueUnits(s)&&s.o.flags.onHold&&s.objectType===type&&s.o.linkedID!==0xff;
+    const cost=(s.o.type===STRUCTURE.CONSTRUCTION_YARD?structureInfo:unitInfo)[type]?.o.buildCredits;
+    if(!resuming&&cost!==undefined&&!this.canAfford(s,cost))return false;
     if(structureCanQueueUnits(s))return structureEnqueueUnit(s,type);
     if (s.o.type === STRUCTURE.STARPORT) return false;
     if (s.o.flags.onHold && s.objectType === type && s.o.linkedID !== 0xff) {
@@ -869,11 +893,24 @@ export class Game {
   }
 
   toggleRepair(s: Structure): void {
+    if(!s.o.flags.repairing&&!this.canAfford(s,this.repairCost(s)))return;
     structureSetRepairingState(s, -1);
   }
 
   upgrade(s: Structure): void {
+    if(!s.o.flags.upgrading&&!this.canAfford(s,idiv(structureInfo[s.o.type].o.buildCredits,40)))return;
     structureSetUpgradingState(s, -1);
+  }
+
+  /** Shared purchase feedback for mouse, console controls and network commands. */
+  canAfford(s:Structure,cost:number):boolean {
+    if(G.houses[s.o.houseID].credits>=cost)return true;
+    if(isLocal(s.o.houseID))G.onMessage('Недостаточно спайса',1);
+    return false;
+  }
+  repairCost(s:Structure):number {
+    const info=structureInfo[s.o.type].o;
+    return idiv(idiv(2*256,info.hitpoints)*info.buildCredits+128,256);
   }
 
   holdOrResume(s: Structure): void {
@@ -919,6 +956,7 @@ export class Game {
 
   /** РЕМОНТ окна здания MD ($02912C): только включает ремонт, и только у повреждённого здания. */
   startRepair(s: Structure): void {
+    if(!s.o.flags.repairing&&!this.canAfford(s,this.repairCost(s)))return;
     if (s.o.hitpoints < structureInfo[s.o.type].o.hitpoints && !s.o.flags.repairing) structureSetRepairingState(s, 1);
   }
 
@@ -936,7 +974,8 @@ export class Game {
   /** Можно ли улучшить здание (и сколько стоит). */
   upgradeInfo(s: Structure): { possible: boolean; cost: number } {
     const si = structureInfo[s.o.type];
-    return { possible: s.upgradeTimeLeft !== 0 && !!si.o.flags.factory, cost: idiv(si.o.buildCredits, 2) };
+    return { possible: !!si.o.flags.factory && s.o.type !== STRUCTURE.STARPORT &&
+      (s.o.flags.upgrading || (s.upgradeTimeLeft !== 0 && structureIsUpgradable(s))), cost: idiv(si.o.buildCredits, 2) };
   }
 
   /**
@@ -954,7 +993,7 @@ export class Game {
     if (s.o.type === STRUCTURE.CONSTRUCTION_YARD) return { unlocks: STRUCTURE.ROCKET_TURRET, cost };
     const unlocks = upgradeUnlocksUnit(s);
     // $00FC1E: только если этот юнит ещё не в списке
-    if (this.buildOptions(s).some((o) => o.type === unlocks)) return null;
+    if (this.buildOptions(s).some((o) => o.type === unlocks && o.available > 0)) return null;
     return { unlocks, cost };
   }
 
@@ -987,7 +1026,9 @@ export class Game {
     const team = new Array<number>(8).fill(-1);
     for (const p of setup.players) team[p.house] = p.team;
     // туман: наблюдатель (local < 0) видит всё, что раскрыли люди
-    G.net = { humans, team, view: setup.local >= 0 ? 1 << setup.local : humans };
+    G.net = { humans, team, view: this.netPlayersMask };
+    if(setup.local>=0)G.net.view=teamVisionMask(setup.local);
+    this.rallyTarget = null;
     configureNetworkPools(true);
     G.playerHouseID = setup.local >= 0 ? setup.local : (setup.players.find((p) => !p.ai) ?? setup.players[0]).house;
     G.infiniteSpice = true;
@@ -1236,9 +1277,10 @@ export class Game {
         const s = structure(c.s);
         if (!s) return;
         if (s.o.flags.repairing) s.o.flags.repairing = false;
-        if (this.upgradeEntry(s) && !s.o.flags.upgrading) Game.prototype.upgrade.call(this, s);
+        if (this.upgradeInfo(s).possible) Game.prototype.upgrade.call(this, s);
         return;
       }
+      case 'rally': { const s=structure(c.s); if(s)Game.prototype.setRallyPoint.call(this,s,c.p); return; }
       case "unqueue": { const s = structure(c.s); if (s) Game.prototype.cancelQueuedUnit.call(this, s, c.i); return; }
       case "unqueueB": { const s = structure(c.s); if (s) Game.prototype.cancelQueuedBuilding.call(this, s, c.i); return; }
       case "unreadyB": { const s = structure(c.s); if(s)Game.prototype.cancelReadyBuilding.call(this,s,c.t);return; }
@@ -1303,6 +1345,7 @@ export class Game {
     for (const u of G.units) {
       if (!u.o.flags.used) continue;
       mix(u.o.index); mix(u.o.type); mix(u.o.houseID); mix(u.o.position.x); mix(u.o.position.y); mix(u.o.hitpoints); mix(u.actionID); mix(u.targetAttack);
+      mix(u.rallyDestination??0xffff);
       if(u.blockedAttack){mix(u.blockedAttack.target);mix(u.blockedAttack.wall);}
       if(u.attackSpot){mix(u.attackSpot.target);mix(u.attackSpot.packed);}
       if(u.laser){const l=u.laser;mix(l.target);mix(l.chargeStart);mix(l.chargeUntil);mix(l.cooldownUntil);mix(l.firedAt);}
@@ -1316,6 +1359,7 @@ export class Game {
     for (const s of G.structures) {
       if (!s.o.flags.used) continue;
       mix(s.o.index); mix(s.o.type); mix(s.o.houseID); mix(s.o.hitpoints); mix(s.state); mix(s.countDown);
+      mix(s.rallyPoint??0xffff);
       for(const queue of [s.buildingQueue??[],s.unitQueue??[],s.readyBuildings??[]]){mix(queue.length);for(const item of queue){mix(item.type);mix(item.cost);}}
       mix(s.readyUnits?.length??0);for(const index of s.readyUnits??[])mix(index);
     }

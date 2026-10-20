@@ -42,8 +42,8 @@ const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const PASSWORD_LENGTH = 10;
 
 /** Строки пунктов (y на экране 320×224), как в оригинале; стрелка — x 12, на 4 выше строки. */
-const ROWS = [40, 56, 72, 88, 104, 136, 152, 168];
-const ITEM = { MUSIC: 0, SOUND: 1, RADAR: 2, TRACKS: 3, SFX: 4, PASSWORD: 5, RESTART: 6, HOUSE: 7 } as const;
+const ROWS = [36, 51, 66, 81, 96, 111, 126, 145, 160, 175];
+const ITEM = { MUSIC: 0, SOUND: 1, RADAR: 2, TRACKS: 3, SFX: 4, CONTROLS: 5, DIFFICULTY: 6, PASSWORD: 7, RESTART: 8, HOUSE: 9 } as const;
 const VALUE_X = 176;
 
 /** Сетка букв экрана пароля: 10 в ряд, в последнем ряду ◄ ► и ↵. */
@@ -64,6 +64,10 @@ const HOUSES: { code: HouseCode; id: number }[] = [
 ];
 
 export interface SettingsHost {
+  mouse?(): boolean;
+  setMouse?(on: boolean): void;
+  difficulty?():number;
+  setDifficulty?(level:number):void;
   music(): boolean;
   setMusic(on: boolean): void;
   sound(): boolean;
@@ -177,6 +181,8 @@ export class SettingsMenu {
       case ITEM.MUSIC: this.host.setMusic(!this.host.music()); break;
       case ITEM.SOUND: this.host.setSound(!this.host.sound()); break;
       case ITEM.RADAR: this.host.setRadar(!this.host.radar()); break;
+      case ITEM.CONTROLS: this.host.setMouse?.(!this.host.mouse?.()); break;
+      case ITEM.DIFFICULTY: this.host.setDifficulty?.(((this.host.difficulty?.()??2)+step+3)%3);break;
       case ITEM.TRACKS:
         if (!press) this.track = (this.track + step + this.tracks.length) % this.tracks.length;
         else if (this.tracks[this.track]) this.host.playTrack?.(this.tracks[this.track].id);
@@ -357,6 +363,8 @@ export class SettingsMenu {
     if (this.mode === "menu") {
       if (!hd) g.drawImage(this.gfx.background("settings"), 0, 0);
       else {
+        const shade=g.createLinearGradient(-80,0,400,0);shade.addColorStop(0,'#03070bc9');shade.addColorStop(1,'#03070b55');
+        g.fillStyle=shade;g.fillRect(-160,-100,640,424);
         menuText(g, russian ? "НАСТРОЙКИ" : "OPTIONS", 160, 16, { size: 10, align: "center" });
         const labels = russian ? ["МУЗЫКА", "ЗВУКИ", "РАДАР", "ФОНОТЕКА", "СПЕЦЭФФЕКТЫ"]
           : ["MUSIC", "SOUND", "RADAR", "MUSIC PLAYER", "SOUND PLAYER"];
@@ -374,6 +382,10 @@ export class SettingsMenu {
         this.sounds[this.sfx]?.name ?? "",
       ];
       values.forEach((v, i) => text(v, 2, VALUE_X, ROWS[i]));
+      text(russian?'УПРАВЛЕНИЕ':'CONTROLS',3,32,ROWS[ITEM.CONTROLS],140);
+      text(this.host.mouse?.()?(russian?'Мышь':'Mouse'):(russian?'Геймпад / клавиатура':'Gamepad / keyboard'),2,VALUE_X,ROWS[ITEM.CONTROLS]);
+      text(russian?'СЛОЖНОСТЬ':'DIFFICULTY',3,32,ROWS[ITEM.DIFFICULTY],140);
+      text((russian?['Легко','Нормально','Сложно']:['Easy','Normal','Hard'])[this.host.difficulty?.()??2],2,VALUE_X,ROWS[ITEM.DIFFICULTY]);
       text(str.restart, 3, 32, ROWS[ITEM.RESTART]);
       text(str.chooseHouse, 3, 32, ROWS[ITEM.HOUSE]);
       if (this.index === ITEM.HOUSE) text(str.houses[HOUSES[this.house].id], 2, VALUE_X + 8, ROWS[ITEM.HOUSE] + 12);

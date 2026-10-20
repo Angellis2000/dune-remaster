@@ -4,15 +4,17 @@
  * Прицеливание и «призрак» постановки здания остаются интерфейсными (G.selectionType и т. п. симуляция не читает).
  */
 import { ACTION, G, HOUSE_WEAPON, SELECTION, STRUCTURE, packTile, type Structure, type Unit } from "../engine/core.ts";
-import type { Game, NetCommand } from "../engine/game.ts";
+import { Game, type NetCommand } from "../engine/game.ts";
 import { structureIsValidBuildLocationFor, structurePlacementDetailFor } from "../engine/structure.ts";
-import { actionInfo, houseInfo, unitInfo } from "../engine/tables.ts";
+import { actionInfo, houseInfo, structureInfo, unitInfo } from "../engine/tables.ts";
 import { unitGetHouseID } from "../engine/unit.ts";
 
 const OVERRIDDEN = [
   "order", "orderGroup", "unitCommand", "activateSelf", "targetClick", "cancelTarget", "build", "starportBuy", "cancelQueuedUnit", "cancelQueuedBuilding", "cancelReadyBuilding",
   "placeIt", "canPlaceAt", "placementDetail", "place", "cancelPlace", "toggleRepair", "upgrade", "holdOrResume", "cancelBuild", "stopAll",
   "startRepair", "palaceSpecial",
+  "readyBuildings", "production", "execNet",
+  "setRallyPoint",
 ] as const;
 
 /** Подменить методы игры на время матча; вернуть функцию, которая всё вернёт обратно. */
@@ -21,9 +23,34 @@ export function installNetControls(game: Game, send: (c: NetCommand) => void, ho
   /** двор, чьё здание сейчас «в руках» у игрока, и дворец, чья ракета ждёт цели */
   let placingYard = -1;
   let missilePalace = -1;
+  // Local reservations last until the echoed command executes. Never mutate the
+  // lockstep inventory early: another client must consume it on the same tick.
+  const pendingPlaces: { yard: number; type: number; item?: object; linkedID: number }[] = [];
+  let placingItem: object | undefined;
+  const availableBuildings = (s: Structure) => (s.readyBuildings ?? []).filter(item =>
+    !pendingPlaces.some(p => p.yard === s.o.index && p.item === item));
+  const legacyPending = (s: Structure) => pendingPlaces.some(p =>
+    p.yard === s.o.index && !p.item && p.linkedID === s.o.linkedID);
   const own = (s: Structure) => s.o.houseID === house();
   const ownUnit = (u: Unit) => unitGetHouseID(u) === house();
   const local: Partial<Record<(typeof OVERRIDDEN)[number], unknown>> = {
+    readyBuildings: availableBuildings,
+    production(s: Structure) {
+      const prod = Game.prototype.production.call(game, s);
+      if (!prod?.ready || s.o.type !== STRUCTURE.CONSTRUCTION_YARD) return prod;
+      if (s.o.linkedID !== 0xff) return legacyPending(s) ? null : prod;
+      const first = availableBuildings(s)[0];
+      return first ? { ...prod, type: first.type } : null;
+    },
+    execNet(h: number, c: NetCommand) {
+      try { Game.prototype.execNet.call(game, h, c); }
+      finally {
+        if (h === house() && c.k === 'place') {
+          const index = pendingPlaces.findIndex(p => p.yard === c.s && (c.t === undefined || p.type === c.t));
+          if (index >= 0) pendingPlaces.splice(index, 1);
+        }
+      }
+    },
     order(u: Unit, action: number, packed: number) {
       if (ownUnit(u)) send({ k: "order", u: [u.o.index], a: action, p: packed });
     },
@@ -54,6 +81,10 @@ export function installNetControls(game: Game, send: (c: NetCommand) => void, ho
       return true;
     },
     targetClick(packed: number, others: Unit[] = []) {
+      if (game.rallyTarget) {
+        game.setRallyPoint(game.rallyTarget, packed); game.rallyTarget=null;
+        G.activeAction=0xffff; G.selectionType=SELECTION.STRUCTURE; return;
+      }
       if (missilePalace >= 0) {
         send({ k: "palace", s: missilePalace, p: packed });
         missilePalace = -1;
@@ -68,6 +99,7 @@ export function installNetControls(game: Game, send: (c: NetCommand) => void, ho
       if (u && ownUnit(u)) (g.orderGroup as (units: Unit[], a: number, p: number) => void)([u, ...others.filter((o) => o !== u)], action, packed);
     },
     cancelTarget() {
+      game.rallyTarget=null;
       if (G.structureActiveType !== 0xffff) (g.cancelPlace as () => void)();
       missilePalace = -1;
       if (!G.unitActive) {
@@ -80,11 +112,13 @@ export function installNetControls(game: Game, send: (c: NetCommand) => void, ho
     },
     build(s: Structure, type: number): boolean {
       if (!own(s)) return false;
+      const cost=(s.o.type===STRUCTURE.CONSTRUCTION_YARD?structureInfo:unitInfo)[type]?.o.buildCredits;
+      if(cost!==undefined&&!game.canAfford(s,cost))return false;
       send({ k: "build", s: s.o.index, t: type });
       return true;
     },
     starportBuy(s: Structure, type: number, price: number): boolean {
-      if (!own(s) || G.starportAvailable[type] <= 0 || G.houses[house()].credits < price) return false;
+      if (!own(s) || G.starportAvailable[type] <= 0 || !game.canAfford(s,price)) return false;
       send({ k: "starport", s: s.o.index, t: type });
       return true;
     },
@@ -104,9 +138,10 @@ export function installNetControls(game: Game, send: (c: NetCommand) => void, ho
     },
     placeIt(cy: Structure, _announce=true, type?:number): boolean {
       if (!own(cy) || cy.o.type !== STRUCTURE.CONSTRUCTION_YARD) return false;
-      const ready=game.readyBuildings(cy).find(item=>type===undefined||item.type===type);
-      if(!ready&&(cy.o.linkedID===0xff||cy.countDown!==0||(type!==undefined&&cy.objectType!==type)))return false;
+      const ready=availableBuildings(cy).find(item=>type===undefined||item.type===type);
+      if(!ready&&(cy.o.linkedID===0xff||cy.countDown!==0||legacyPending(cy)||(type!==undefined&&cy.objectType!==type)))return false;
       placingYard = cy.o.index;
+      placingItem = ready;
       G.structureActive = null;
       G.structureActiveType = ready?.type??cy.objectType;
       G.structureActivePosition = packTile(cy.o.position);
@@ -127,8 +162,10 @@ export function installNetControls(game: Game, send: (c: NetCommand) => void, ho
         G.onSound(47);
         return false;
       }
+      pendingPlaces.push({ yard: placingYard, type: G.structureActiveType, item: placingItem, linkedID: G.structures[placingYard].o.linkedID });
       send({ k: "place", s: placingYard, p: packed, t:G.structureActiveType });
       placingYard = -1;
+      placingItem = undefined;
       G.structureActiveType = 0xffff;
       G.structureActive = null;
       G.selectionType = SELECTION.STRUCTURE;
@@ -136,16 +173,21 @@ export function installNetControls(game: Game, send: (c: NetCommand) => void, ho
     },
     cancelPlace() {
       placingYard = -1;
+      placingItem = undefined;
       G.structureActiveType = 0xffff;
       G.structureActive = null;
       G.selectionType = SELECTION.STRUCTURE;
     },
-    toggleRepair(s: Structure) { if (own(s)) send({ k: "repair", s: s.o.index }); },
-    upgrade(s: Structure) { if (own(s)) send({ k: "upgrade", s: s.o.index }); },
+    toggleRepair(s: Structure) { if (own(s)&&(s.o.flags.repairing||game.canAfford(s,game.repairCost(s)))) send({ k: "repair", s: s.o.index }); },
+    setRallyPoint(s: Structure, p: number): boolean {
+      if(!own(s)||!game.canRally(s)||!Number.isInteger(p)||p < -1||p>=4096)return false;
+      send({k:'rally',s:s.o.index,p}); return true;
+    },
+    upgrade(s: Structure) { if (own(s)&&(s.o.flags.upgrading||game.canAfford(s,Math.floor(structureInfo[s.o.type].o.buildCredits/40)))) send({ k: "upgrade", s: s.o.index }); },
     holdOrResume(s: Structure) { if (own(s)) send({ k: "hold", s: s.o.index }); },
     cancelBuild(s: Structure) { if (own(s)) send({ k: "cancel", s: s.o.index }); },
     stopAll(s: Structure) { if (own(s)) send({ k: "stop", s: s.o.index }); },
-    startRepair(s: Structure) { if (own(s)) send({ k: "fix", s: s.o.index }); },
+    startRepair(s: Structure) { if (own(s)&&game.canAfford(s,game.repairCost(s))) send({ k: "fix", s: s.o.index }); },
     palaceSpecial(s: Structure) {
       if (!own(s) || s.o.type !== STRUCTURE.PALACE || s.countDown !== 0) return;
       if (houseInfo[s.o.houseID].specialWeapon === HOUSE_WEAPON.MISSILE) {

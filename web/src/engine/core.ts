@@ -158,6 +158,8 @@ export interface Dir24 {
 
 export interface Unit {
   o: GObject;
+  /** Factory rally order retained while a carryall transports this unit. */
+  rallyDestination?: number;
   carryallFlight?: {height:number; serviceKey:string; serviceSince:number; lastTick:number; settling?:boolean};
   /** ремейк: перевозчик сбросил харвестер, потому что у дома нет заводов очистки, и улетает за край карты */
   carryallLeaving?: boolean;
@@ -231,6 +233,7 @@ export interface Structure {
   buildingQueue?: {type:number;cost:number}[];
   readyBuildings?: {type:number;cost:number}[];
   readyUnits?: number[];
+  rallyPoint?: number;
   prepaidUnitCost?: number;
   prepaidBuildingCost?: number;
 }
@@ -297,7 +300,7 @@ function newObject(): GObject {
 
 export function newUnit(): Unit {
   return {
-    o: newObject(), currentDestination: { x: 0, y: 0 }, originEncoded: 0, repairTime: 0, actionID: 0, nextActionID: 0, fireDelay: 0,
+    o: newObject(), rallyDestination: undefined, currentDestination: { x: 0, y: 0 }, originEncoded: 0, repairTime: 0, actionID: 0, nextActionID: 0, fireDelay: 0,
     distanceToDestination: 0, targetAttack: 0, targetMove: 0, amount: 0, deviated: 0, deviatedHouse: 0,
     targetLast: { x: 0, y: 0 }, targetPreLast: { x: 0, y: 0 },
     orientation: [{ speed: 0, target: 0, current: 0 }, { speed: 0, target: 0, current: 0 }],
@@ -469,6 +472,11 @@ export interface NetGame {
   team: number[];
   /** Чей туман показывать на экране: местный игрок или, у наблюдателя, все люди. Симуляция это не читает. */
   view: number;
+}
+/** Active allies share exploration, including AI slots, independently of the viewer. */
+export function teamVisionMask(house: number): number {
+  if(!G.net || G.net.team[house] === undefined || G.net.team[house] < 0)return 1<<house;
+  return G.net.team.reduce((mask,team,h)=>team===G.net!.team[house]?mask|(1<<h):mask,0);
 }
 /** Дом под управлением человека: в кампании — игрок, в сети — любой человек. */
 export const isHuman = (h: number): boolean => (G.net ? ((G.net.humans >> h) & 1) === 1 : h === G.playerHouseID);
@@ -753,7 +761,7 @@ function resetUnit(u: Unit): void {
 }
 
 function resetStructure(s: Structure): void {
-  s.unitQueue=[];s.buildingQueue=[];s.readyBuildings=[];s.readyUnits=[];s.prepaidUnitCost=undefined;s.prepaidBuildingCost=undefined;
+  s.unitQueue=[];s.buildingQueue=[];s.readyBuildings=[];s.readyUnits=[];s.prepaidUnitCost=undefined;s.prepaidBuildingCost=undefined;s.rallyPoint=undefined;
   const n = newStructure();
   Object.assign(s.o, n.o);
   const { o: _o, ...rest } = n;

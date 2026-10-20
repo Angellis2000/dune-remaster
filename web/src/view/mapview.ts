@@ -30,7 +30,7 @@ import {NukeEffects} from '../gfx/nuke-effect.ts';
 import {drawMapBackdrop} from '../gfx/map-backdrop.ts';
 import {WorldAtmosphere,desertLight,drawDayClock,DAY_CLOCK_W} from '../gfx/world-atmosphere.ts';
 import {drawFactoryActivity} from '../gfx/factory-activity.ts';
-import {drawAdvancedWeapons,drawDroneRadius,drawDroneStatus} from '../gfx/advanced-unit-effects.ts';
+import {drawAdvancedWeapons,drawDroneRadius,drawDroneStatus,drawSelectedUnitStatus} from '../gfx/advanced-unit-effects.ts';
 import {FogOfWar} from '../gfx/fog-of-war.ts';
 import type { Pad } from "../input/pad.ts";
 import { CELL_PX, MAP_SIZE } from "../rom/dune.ts";
@@ -689,6 +689,15 @@ export class MapView {
     {const b=map.bounds;drawMapBackdrop(ctx,b.x*CELL_PX,b.y*CELL_PX,b.w*CELL_PX,b.h*CELL_PX,z,ox,oy,this.canvas.width,this.canvas.height);}
     this.nukes.drawFlash(ctx,G.timerGame,this.canvas.width,this.canvas.height,isVisible);
     drawDroneRadius(ctx,this.selectedStructure,this.selectedUnits,z,ox,oy);
+    const rally=this.selectedStructure;
+    if(rally?.house===G.playerHouseID&&rally.ref.rallyPoint!==undefined){
+      const p=rally.ref.rallyPoint,x=((p&63)+.5)*size-ox,y=((p>>6)+.5)*size-oy;
+      ctx.save();ctx.strokeStyle='#edc86f';ctx.fillStyle='#edc86f';ctx.lineWidth=Math.max(1,z*.65);
+      ctx.globalAlpha=.55;ctx.setLineDash([4*z,4*z]);ctx.beginPath();
+      ctx.moveTo((rally.x+rally.w/2)*size-ox,(rally.y+rally.h/2)*size-oy);ctx.lineTo(x,y);ctx.stroke();
+      ctx.setLineDash([]);ctx.globalAlpha=1;ctx.beginPath();ctx.ellipse(x,y,7*z,3*z,0,0,Math.PI*2);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x,y-15*z);ctx.lineTo(x+9*z,y-12*z);ctx.lineTo(x,y-8*z);ctx.fill();ctx.stroke();ctx.restore();
+    }
     if(this.world)drawDroneStatus(ctx,this.world.units,G.playerHouseID,z,ox,oy);
     // постановка здания: рамка на клетках под курсором
     if (this.placement) {
@@ -745,6 +754,7 @@ export class MapView {
       if (u === this.markedUnit) continue;
       this.drawCorners(u.x - 14, u.y - 14, 28, 28, ox, oy);
     }
+    drawSelectedUnitStatus(ctx,this.selectedUnits,z,ox,oy);
     if (this.markedUnit) {
       const u = this.markedUnit;
       drawCursor(ctx,'move',u.x*z-ox,u.y*z-oy,32*z,G.timerGame);

@@ -63,7 +63,7 @@ export async function loadImportedShip(spec: ImportedShipSpec): Promise<ShipMode
   const flame = hex(spec.flame);
   const nozzles = (spec.nozzles ?? findNozzles(data.positions)).map((n) => ({ ...n, color: flame }));
   return {
-    id: spec.id, name: spec.name, house: spec.house, parts: [], nozzles, lights: findLights(data.positions, hex(spec.paint)),
+    id: spec.id, name: spec.name, house: spec.house, parts: [], nozzles, lights: findLights(data.positions),
     mesh: { positions: new Float32Array(data.positions), uvs: new Float32Array(data.uvs), texture: image, paint: hex(spec.paint) },
   };
 }

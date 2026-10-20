@@ -15,12 +15,13 @@ import { WormArt } from "./gfx/worm-art.ts";
 import { ImpactParticles } from "./gfx/impact-particles.ts";
 import { InfantryArt } from "./gfx/infantry-art.ts";
 import {Portraits} from './gfx/portraits.ts';
+import {loadUnitPortraits} from './gfx/unit-portraits.ts';
 import { mapGetLandscapeType, mapIsUnveiledLocal } from "./engine/map.ts";
 import { buildPackZip, importPack, packCanvases } from "./gfx/pack.ts";
 import { Skins } from "./gfx/skins.ts";
 import { ScreenGfx } from "./gfx/screens.ts";
 import { SpriteSet } from "./gfx/sprites.ts";
-import { BUTTON_LABEL, Pad } from "./input/pad.ts";
+import { Pad } from "./input/pad.ts";
 import { CELL_PX, DuneRom, ROM, RomError } from "./rom/dune.ts";
 import { readU32 } from "./rom/md.ts";
 import { AssetViewer } from "./ui/assets.ts";
@@ -147,23 +148,20 @@ async function startGame(rom: DuneRom): Promise<void> {
   const [, terrain, mapEffects, vehicles, particles, infantry, , worm] = await Promise.all([
     skins.load(rom, icons), ContinuousTerrain.load(rom, icons), MapEffects.load(),
     VehicleArt.load(rom), ImpactParticles.load(),
-    InfantryArt.load(rom), screens.art.load(), WormArt.load(),
+    InfantryArt.load(rom), screens.art.load(), WormArt.load(), loadUnitPortraits(),
   ]);
   const sprites = new SpriteSet(rom);
   sprites.mapEffects = mapEffects;
   sprites.wormArt = worm;
   const canvas = el("canvas", { className: "view", tabIndex: 0 });
   canvas.setAttribute("aria-label", "Карта миссии");
-  const statusWhere = el("span");
-  const statusHelp = el("span", { className: "help" });
-  const status = el("div", { className: "status" }, statusWhere, statusHelp);
   // кредиты рисует HUD цифрами ROM; число здесь — для чтения с экрана и автотестов
   const credits = el("output", { className: "credits", id: "credits" });
   const info = el("div", { className: "selection-info" });
   info.hidden = true;
   const pausedBanner = el("div", { className: "paused" }, "Пауза · Start — продолжить");
   pausedBanner.hidden = true;
-  const stage = el("div", { className: "stage" }, canvas, status, credits, info, pausedBanner);
+  const stage = el("div", { className: "stage" }, canvas, credits, info, pausedBanner);
   const pad = new Pad();
   sprites.skins = skins;
   const cursors = buildCursors(rom);
@@ -208,7 +206,6 @@ async function startGame(rom: DuneRom): Promise<void> {
   }, portraits);
   stage.append(panel.root);
   let paused = false;
-  let lastButton = "";
   let frame = 0;
   const message = el("div", { className: "message", role: "status" });
   const endBanner = el("div", { className: "paused end" });
@@ -226,6 +223,8 @@ async function startGame(rom: DuneRom): Promise<void> {
   let networkReplaying = () => false;
   G.onMessage = (text: string) => {
     if (networkReplaying()) return;
+    // Periodic economy reminders must not immediately overwrite purchase feedback.
+    if(messageTimer>0&&message.textContent==='Недостаточно спайса'&&text==='Мало кредитов. Собирайте пряность.')return;
     message.textContent = text;
     message.hidden = false;
     messageTimer = 60 * 6;
@@ -390,7 +389,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   };
 
   // ---------------------------------------------------------------- Start: настройки
-  const prefs = { music: true, sound: true, radar: true, difficulty: 2 };
+  const prefs = { music: true, sound: true, radar: true, difficulty: 2, mouse: true };
   try {
     Object.assign(prefs, JSON.parse(localStorage.getItem("dune-prefs") ?? "{}"));
   } catch {
@@ -407,6 +406,10 @@ async function startGame(rom: DuneRom): Promise<void> {
   sound.musicOn = prefs.music;
   sound.soundOn = prefs.sound;
   const settings = new SettingsMenu(screens, {
+    mouse:()=>view.mouseMode,
+    setMouse:(on)=>setMouseMode(on),
+    difficulty:()=>prefs.difficulty,
+    setDifficulty:(level)=>{prefs.difficulty=level;if(!G.net)world.game.difficulty=level;savePrefs();},
     music: () => prefs.music,
     setMusic: (on) => {
       prefs.music = on;
@@ -493,11 +496,6 @@ async function startGame(rom: DuneRom): Promise<void> {
       optionsFromTitle = true;
       frontend.close();
       settings.open();
-    },
-    difficulty: () => prefs.difficulty,
-    difficultyChanged: (level) => {
-      prefs.difficulty = level;
-      savePrefs();
     },
     // $03067C: ролик обучения, по концу или Start — снова главное меню
     tutorial: () => {
@@ -928,14 +926,21 @@ async function startGame(rom: DuneRom): Promise<void> {
     updateHud();
   };
 
-  /** Правая кнопка: отменить выбор цели или постановку, иначе снять выделение, как в Red Alert. */
+  /** Правая кнопка: отмена прицеливания; у выбранного завода — точка сбора, иначе снять выделение. */
   view.onSecondary = () => {
     sound.sfx(0x26);
     if (G.selectionType === SELECTION.TARGET || G.selectionType === SELECTION.PLACE) {
       if (G.selectionType === SELECTION.PLACE) queuedPlacementYard = null;
       world.game.cancelTarget();
       view.placement = null;
-    } else clearSelection();
+    } else {
+      const s=view.selectedStructure;
+      if(s&&s.house===world.player&&world.game.canRally(s.ref)){
+        const packed=World.packAt(view.cursorX,view.cursorY);
+        const self=world.structureAtCell(packed&63,packed>>6)?.ref===s.ref;
+        world.game.setRallyPoint(s.ref,self?-1:packed);
+      }else clearSelection();
+    }
     updateHud();
   };
   /** Рамка: выбрать все свои юниты внутри. */
@@ -1135,19 +1140,21 @@ async function startGame(rom: DuneRom): Promise<void> {
 
   const mouseBtn = el("button", { type: "button", textContent: "Мышь", title: "Играть мышью, как в Red Alert (M)" });
   mouseBtn.setAttribute("aria-pressed", "false");
-  const toggleMouse = () => {
-    view.setMouseMode(!view.mouseMode);
+  const setMouseMode = (on:boolean) => {
+    view.setMouseMode(on);
+    prefs.mouse=on;savePrefs();
     mouseBtn.setAttribute("aria-pressed", String(view.mouseMode));
     canvas.classList.toggle("mouse", view.mouseMode);
     if (!view.mouseMode) panel.close();
   };
+  const toggleMouse = () => setMouseMode(!view.mouseMode);
+  setMouseMode(prefs.mouse);
   mouseBtn.addEventListener("click", toggleMouse);
 
   // кнопки геймпада
   pad.onPress((b) => {
     sound.unlockAudio();
     if (!assets.root.hidden) return;
-    lastButton = BUTTON_LABEL[b];
     if (ending) return;
     if (networkMenu.handlePad(b) || finale.handlePad(b) || tutorial.handlePad(b) || scoreScreen.handlePad(b) || endPicture.handlePad(b) || mentat.handlePad(b) || frontend.handlePad(b) || settings.handlePad(b) || factory.handlePad(b)) {
       updateHud();
@@ -1180,6 +1187,15 @@ async function startGame(rom: DuneRom): Promise<void> {
     el("span", { className: "spacer" }),
     romBtn,
   );
+  topbar.hidden=true;
+  const toolbarToggle=el('button',{className:'toolbar-toggle',type:'button',textContent:'⋮',title:'Показать / скрыть панель игры'});
+  toolbarToggle.setAttribute('aria-label','Показать панель игры');toolbarToggle.setAttribute('aria-expanded','false');
+  toolbarToggle.addEventListener('click',()=>{
+    topbar.hidden=!topbar.hidden;toolbarToggle.setAttribute('aria-expanded',String(!topbar.hidden));
+    toolbarToggle.setAttribute('aria-label',topbar.hidden?'Показать панель игры':'Скрыть панель игры');
+    view.invalidate();
+  });
+  stage.append(toolbarToggle);
   app.replaceChildren(el("div", { className: "game" }, topbar, stage));
 
   function updateHud(): void {
@@ -1189,13 +1205,6 @@ async function startGame(rom: DuneRom): Promise<void> {
     });
     zoomVal.value = `${view.zoom}×`;
     credits.value = String(world.houses.get(world.player)?.credits ?? 0);
-    const h = view.cursorCell();
-    const where = h ? `Клетка ${h.x}, ${h.y} · иконка ${h.icon}` : "";
-    const help = view.mouseMode
-      ? "Левая — выбрать или приказ · протянуть — рамка · правая — снять выбор · стрелки — карта · колесо — масштаб"
-      : "Стрелки — курсор · C+стрелки — быстро · 1 A · 2 B · 3 C · Enter — Start (меню)";
-    statusWhere.textContent = lastButton ? `${where} · ${lastButton}` : where;
-    statusHelp.textContent = help;
     renderSelectionInfo();
     minimap.draw();
   }

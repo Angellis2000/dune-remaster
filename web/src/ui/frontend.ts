@@ -11,9 +11,8 @@ import type { HouseCode } from "./settings.ts";
 import { Intro } from "./intro.ts";
 import { menuArrow, menuPoint, menuText, prepareMenu } from "../gfx/menu-canvas.ts";
 
-const MENU_ITEMS = 4;
+const MENU_ITEMS = 3;
 const ARROW = { x: 120, y: 160, step: 8 };
-const DIFFICULTY_LABELS = ["Легко", "Нормально", "Сложно"] as const;
 /** дома слева направо */
 const HOUSES: HouseCode[] = ["A", "O", "H"];
 const HOUSE_FRAME = { x: 32, step: 88, y: 136 };
@@ -36,8 +35,6 @@ export interface FrontEndHost {
   options(): void;
   network?():void;
   tutorial?(): void;
-  difficulty?(): number;
-  difficultyChanged?(level: number): void;
   frame?(): void;
 }
 
@@ -47,7 +44,6 @@ export class FrontEnd {
   private mode: "intro" | "title" | "house" = "title";
   private intro: Intro;
   private item = 0;
-  private difficulty = 2;
   private house = 0;
   /** сколько точек рамке ещё ехать до выбранного дома ($FFBF02), знак — направление */
   private slide = 0;
@@ -59,7 +55,6 @@ export class FrontEnd {
     private gfx: ScreenGfx,
     private host: FrontEndHost,
   ) {
-    this.difficulty = Math.max(0, Math.min(2, Math.round(host.difficulty?.() ?? 2)));
     this.root = document.createElement("section");
     this.root.className = "settings frontend hd-menu";
     this.root.setAttribute("role", "dialog");
@@ -74,7 +69,6 @@ export class FrontEnd {
       (seq) => this.host.introSound?.(seq),
       (seq) => this.host.introStop?.(seq),
       () => this.host.openingTime?.() ?? this.frame / 60,
-      () => this.difficultyText(),
     );
   }
 
@@ -143,10 +137,7 @@ export class FrontEnd {
       // $017A9E: стрелка — звук $0B, выбор — $0C
       if (b === "up") (this.item = (this.item + MENU_ITEMS - 1) % MENU_ITEMS), this.host.ui?.(0x0b);
       else if (b === "down") (this.item = (this.item + 1) % MENU_ITEMS), this.host.ui?.(0x0b);
-      else if ((b === "left" || b === "right") && this.item === 3) {
-        this.changeDifficulty(b === "right" ? 1 : -1);
-        this.host.ui?.(0x0b);
-      } else if (b === "a" || b === "c" || b === "start") (this.host.select?.(0x0c), this.chooseItem());
+      else if (b === "a" || b === "c" || b === "start") (this.host.select?.(0x0c), this.chooseItem());
     } else {
       // $004934: пока рамка едет, кнопки не действуют
       if (this.slide) return true;
@@ -164,16 +155,6 @@ export class FrontEnd {
     if (this.item === 0) this.openHouse();
     else if (this.item === 1) this.host.network?.();
     else if (this.item === 2) this.host.options();
-    else this.changeDifficulty(1);
-  }
-
-  private changeDifficulty(direction: number): void {
-    this.difficulty = (this.difficulty + direction + DIFFICULTY_LABELS.length) % DIFFICULTY_LABELS.length;
-    this.host.difficultyChanged?.(this.difficulty);
-  }
-
-  private difficultyText(): string {
-    return `Сложность: ${DIFFICULTY_LABELS[this.difficulty]}`;
   }
 
   private onClick(e: MouseEvent): void {
@@ -215,14 +196,20 @@ export class FrontEnd {
       this.intro.draw(g);
     } else if (this.mode === "title") {
       if (this.intro.drawBackdrop(g, this.frame)) this.gfx.drawTitleLettering(
-        g, (this.frame - this.titleStartFrame) / 60, this.host.openingTime?.() ?? this.frame / 60, this.difficultyText(),
+        g, (this.frame - this.titleStartFrame) / 60, this.host.openingTime?.() ?? this.frame / 60,
       );
       else g.drawImage(this.gfx.titleScreen(), 0, 0);
       menuArrow(g, ARROW.x, ARROW.y + this.item * ARROW.step, this.frame);
     } else {
       const image = this.gfx.art.get("houses");
       if (image) {
-        g.drawImage(image, 0, 0, SCREEN_W, SCREEN_H);
+        const backdrop=this.gfx.art.get('houseHall');
+        if(backdrop){
+          const m=g.getTransform(),w=this.canvas.width/m.a,h=this.canvas.height/m.d;
+          const size=Math.max(w/backdrop.width,h/backdrop.height),bw=backdrop.width*size,bh=backdrop.height*size;
+          g.drawImage(backdrop,160-bw/2,112-bh/2,bw,bh);
+        }
+        g.save();g.globalCompositeOperation='screen';g.drawImage(image,0,0,SCREEN_W,SCREEN_H);g.restore();
         const strings = this.gfx.menuStrings();
         const russian = /[А-Я]/.test(strings.houses.join(""));
         menuText(g, russian ? "ВЫБЕРИ СЕБЕ ДОМ" : "CHOOSE YOUR HOUSE", 160, 36,
@@ -231,7 +218,9 @@ export class FrontEnd {
           { size: 7.4, color: "#f5db9d", align: "center", maxWidth: 72, shadow: true }));
         g.strokeStyle = ["#fff1ad", "#e8b63c", "#a86d16", "#e8b63c"][(this.frame & 31) >> 3];
         g.lineWidth = 0.8;
-        g.strokeRect(HOUSE_FRAME.x + this.house * HOUSE_FRAME.step - this.slide, HOUSE_FRAME.y, 80, 16);
+        g.shadowColor='#ffd67c';g.shadowBlur=2;
+        g.strokeRect(HOUSE_FRAME.x + this.house * HOUSE_FRAME.step - this.slide, 134.5, 79.5, 16.2);
+        g.shadowBlur=0;
       } else {
         g.drawImage(this.gfx.houseScreen(), 0, 0);
         g.drawImage(this.gfx.houseFrame(((this.frame & 31) >> 3) + 1), HOUSE_FRAME.x + this.house * HOUSE_FRAME.step - this.slide, HOUSE_FRAME.y);

@@ -87,7 +87,8 @@ app.whenReady().then(() => {
   protocol.handle("app", serve);
   Menu.setApplicationMenu(null);
   const win = new BrowserWindow({
-    width: 1280, height: 800, minWidth: 800, minHeight: 600, backgroundColor: "#000000", title: "Dune Remaster (бета)",
+    width: 1280, height: 800, minWidth: 800, minHeight: 600, fullscreen:true,
+    icon:path.join(__dirname,'assets/dune-icon.ico'),backgroundColor: "#000000", title: "Dune Remaster (бета)",
     autoHideMenuBar: true, webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
   });
   // внешние ссылки — в обычном браузере, не в окне игры

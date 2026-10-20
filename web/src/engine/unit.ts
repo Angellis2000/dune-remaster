@@ -813,7 +813,7 @@ export function unitRemoveFog(unit: Unit | null): void {
   if (unit.o.flags.isNotOnMap) return;
   const p = unit.o.position;
   if ((p.x === 0xffff && p.y === 0xffff) || (p.x === 0 && p.y === 0)) return;
-  if (!houseAlliedToHuman(unitGetHouseID(unit))) return;
+  if (!G.net && !houseAlliedToHuman(unitGetHouseID(unit))) return;
   const r = unitInfo[unit.o.type].o.fogUncoverRadius;
   if (r === 0) return;
   tileRemoveFogInRadius(unit.o.position, r, G.net ? unitGetHouseID(unit) : G.playerHouseID);

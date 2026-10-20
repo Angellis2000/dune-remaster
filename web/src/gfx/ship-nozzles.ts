@@ -28,11 +28,11 @@ export type LightKind = "steady" | "beacon" | "strobe";
 export interface ShipLight { at: Vec3; color: Vec3; kind: LightKind; phase: number }
 
 /**
- * Огни корабля по крайним точкам модели (как на настоящих кораблях): ходовые на бортах — слева красный, справа
- * зелёный, ровные; маячки сверху и снизу — цвета дома, пульсируют; белые стробоскопы на носу и в кормовых углах —
- * короткие двойные вспышки. Каждый огонь чуть вынесен наружу, чтобы не тонуть в обшивке.
+ * Огни корабля по крайним точкам модели (цвета — по просьбе владельца): бортовые — красные, ровные; маячки сверху и
+ * снизу — синие, пульсируют; носовой — белый стробоскоп; в кормовых углах — белые стробоскопы (двойная вспышка).
+ * Каждый огонь чуть вынесен наружу, чтобы не тонуть в обшивке.
  */
-export function findLights(positions: ArrayLike<number>, house: Vec3): ShipLight[] {
+export function findLights(positions: ArrayLike<number>): ShipLight[] {
   const n = positions.length / 3;
   const v = (i: number): Vec3 => [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
   /** лучшая вершина по score (больше — лучше) */
@@ -50,12 +50,12 @@ export function findLights(positions: ArrayLike<number>, house: Vec3): ShipLight
   const nose = best((p) => p[2] - Math.abs(p[0]) * 0.3 - Math.abs(p[1]) * 0.3);
   const rearR = best((p) => (p[2] < minZ + 0.7 ? p[0] : -100));
   const rearL = best((p) => (p[2] < minZ + 0.7 ? -p[0] : -100));
-  const white: Vec3 = [1, 0.97, 0.9], red: Vec3 = [1, 0.12, 0.08], green: Vec3 = [0.15, 1, 0.3];
+  const white: Vec3 = [1, 0.97, 0.9], red: Vec3 = [1, 0.12, 0.08], blue: Vec3 = [0.2, 0.45, 1];
   return [
     { at: out(left, [-1, 0, 0]), color: red, kind: "steady", phase: 0 },
-    { at: out(right, [1, 0, 0]), color: green, kind: "steady", phase: 0.4 },
-    { at: out(top, [0, 1, 0]), color: house, kind: "beacon", phase: 0 },
-    { at: out(bottom, [0, -1, 0]), color: house, kind: "beacon", phase: 3.1 },
+    { at: out(right, [1, 0, 0]), color: red, kind: "steady", phase: 0.4 },
+    { at: out(top, [0, 1, 0]), color: blue, kind: "beacon", phase: 0 },
+    { at: out(bottom, [0, -1, 0]), color: blue, kind: "beacon", phase: 3.1 },
     { at: out(nose, [0, 0, 1]), color: white, kind: "strobe", phase: 0 },
     { at: out(rearL, [-0.5, 0, -1]), color: white, kind: "strobe", phase: 0.5 },
     { at: out(rearR, [0.5, 0, -1]), color: white, kind: "strobe", phase: 0.5 },

@@ -1,6 +1,6 @@
 /**
  * Линии до цели, как в Red Alert / OpenRA (DrawLineToTarget): от каждого юнита отдельно — к тому, во что он
- * будет стрелять (малиновая, как TargetLineColor DC143C) или куда едет (зелёная), с отметками на концах.
+ * будет стрелять (малиновая) или куда едет (приглушённая синяя), с отметками на концах.
  * Цель берётся из движка (targetAttack, targetMove), поэтому линия держится, пока у юнита есть эта цель,
  * и меняется только с новым приказом или когда цель уничтожена. Только чтение — в сети ничего не меняет.
  */
@@ -8,7 +8,7 @@ import { ACTION, IT, indexGetStructure, indexGetTile, indexGetType, indexGetUnit
 import { layoutSize, structureInfo } from "../engine/tables.ts";
 
 const ATTACK = "#dc143c";
-const MOVE = "#4fd44f";
+const MOVE = "#6598ce";
 
 /** Точка цели в мировых пикселях (клетка = 32) или null. */
 function targetPoint(encoded: number): { x: number; y: number } | null {
@@ -65,14 +65,14 @@ export function drawTargetLines(
     const x0 = u.x * z - ox, y0 = u.y * z - oy, x1 = t.x * z - ox, y1 = t.y * z - oy;
     if (Math.abs(x1 - x0) + Math.abs(y1 - y0) < 6 * z) continue;
     const color = t.attack ? ATTACK : MOVE;
-    ctx.globalAlpha = 0.85;
+    ctx.globalAlpha = t.attack ? 0.85 : 0.42;
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
     ctx.beginPath();
     ctx.moveTo(x0, y0);
     ctx.lineTo(x1, y1);
     ctx.stroke();
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = t.attack ? 1 : 0.6;
     ctx.fillStyle = color;
     for (const [x, y, r] of [[x0, y0, dot * 0.8], [x1, y1, dot * 1.4]] as const) {
       ctx.beginPath();

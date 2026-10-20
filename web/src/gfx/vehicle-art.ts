@@ -1,5 +1,6 @@
 import bodiesUrl from './assets/vehicles-hd/bodies.png?url';
 import mountsUrl from './assets/vehicles-hd/mounts.png?url';
+import sonicUrl from './assets/vehicles-hd/sonic-redesign-v1.png?url';
 import type {DuneRom} from '../rom/dune.ts';
 import type {Unit as EngineUnit} from '../engine/core.ts';
 import type {Unit} from '../game/world.ts';
@@ -41,6 +42,13 @@ export class VehicleArt {
   static async load(rom:DuneRom):Promise<VehicleArt|null> {
     try {
       const [bodies,mounts]=await Promise.all([loadSpriteCells(bodiesUrl),loadSpriteCells(mountsUrl)]);
+      const sonic=await createImageBitmap(await (await fetch(sonicUrl)).blob());
+      for(let i=0;i<2;i++){
+        const part=document.createElement('canvas');part.width=part.height=256;
+        part.getContext('2d')!.drawImage(sonic,i*sonic.width/2,0,sonic.width/2,sonic.height,0,0,256,256);
+        if(i===0)bodies[7]=part;else mounts[5]=part;
+      }
+      sonic.close();
       const result=new VehicleArt(mounts), palette=rom.gamePalette();
       const custom=await loadCustomVehicles().catch(error=>{console.warn('New vehicle art unavailable:',error);return [];});
       for(let house=0;house<6;house++) {
@@ -83,6 +91,7 @@ export class VehicleArt {
     }
     const d=this.defs.get(u.type);
     if(!d)return this.projectile(ctx,u);
+    const hullAngle=angleRadians(u.orientation)+(u.type===16?Math.PI:0);
     const house=Math.min(5,u.house), body=this.bodies[house][d.cell];
     const shot=this.shots.get(u.ref), age=shot ? (tick-shot.tick)/60 : 99;
     const firing=age>=0&&age<.16;
@@ -91,14 +100,15 @@ export class VehicleArt {
     ctx.save();ctx.imageSmoothingEnabled=true;ctx.translate(u.x,u.y);
     if(u.shadow){
       ctx.save();ctx.translate(4,10);ctx.globalAlpha=.26;ctx.filter='brightness(0) blur(0.8px)';
-      ctx.translate(0,-2);ctx.rotate(angleRadians(u.orientation));ctx.drawImage(body,-d.w/2,-d.h/2,d.w,d.h);ctx.restore();
+      ctx.translate(0,-2);ctx.rotate(hullAngle);ctx.drawImage(body,-d.w/2,-d.h/2,d.w,d.h);ctx.restore();
     }
     const height=u.type===0?(u.ref.carryallFlight?.height??12):0;
-    ctx.save();ctx.translate(0,-2-height);ctx.rotate(angleRadians(u.orientation));ctx.drawImage(body,-d.w/2,-d.h/2,d.w,d.h);ctx.restore();
+    ctx.save();ctx.translate(0,-2-height);ctx.rotate(hullAngle);ctx.drawImage(body,-d.w/2,-d.h/2,d.w,d.h);ctx.restore();
     if(d.mount!==undefined){
       ctx.save();ctx.translate(0,-4);ctx.rotate(angleRadians(aim));
       const muzzle=d.muzzle!, w=d.mw!;
-      ctx.drawImage(this.mounts[house][d.mount],-w/2,-muzzle+recoil,w,muzzle+5);
+      if(u.type===12)ctx.drawImage(this.mounts[house][d.mount],-w/2,-12+recoil,w,20);
+      else ctx.drawImage(this.mounts[house][d.mount],-w/2,-muzzle+recoil,w,muzzle+5);
       ctx.restore();
       if(firing&&shot&&shot.type===23){
         // The flash starts at the barrel tip; its centre line matches the bullet heading.
@@ -112,7 +122,7 @@ export class VehicleArt {
         ctx.restore();
       }
     }
-    if(u.highlighted){ctx.globalAlpha=.22;ctx.globalCompositeOperation='lighter';ctx.translate(0,-2);ctx.rotate(angleRadians(u.orientation));ctx.drawImage(body,-d.w/2,-d.h/2,d.w,d.h);}
+    if(u.highlighted){ctx.globalAlpha=.22;ctx.globalCompositeOperation='lighter';ctx.translate(0,-2);ctx.rotate(hullAngle);ctx.drawImage(body,-d.w/2,-d.h/2,d.w,d.h);}
     ctx.restore();return true;
   }
 

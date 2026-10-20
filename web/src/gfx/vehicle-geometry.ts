@@ -19,7 +19,7 @@ export const VEHICLES: readonly VehicleDef[] = [
   {type:9,cell:4,w:16,h:19,mount:0,mw:10,muzzle:16},
   {type:10,cell:5,w:22,h:21,mount:1,mw:13,muzzle:16},
   {type:11,cell:6,w:19,h:22,mount:4,mw:13,muzzle:16},
-  {type:12,cell:7,w:15,h:18,mount:5,mw:10,muzzle:12},
+  {type:12,cell:7,w:20,h:24,mount:5,mw:20,muzzle:12},
   {type:13,cell:8,w:13,h:15,mount:6,mw:6,muzzle:11},
   {type:14,cell:9,w:13,h:15,mount:7,mw:6,muzzle:11},
   {type:15,cell:10,w:14,h:14,mount:8,mw:8,muzzle:12},

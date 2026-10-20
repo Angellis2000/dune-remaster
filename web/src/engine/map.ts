@@ -9,7 +9,7 @@ import {
   structureFind, tile, tileAddDiff, tileGetDirectionPacked, tileGetDistance, tileMoveByDirection, tileGetDistancePacked, tileIsValid, tileMoveByRandom, unitFind, unpackTile,
   type Tile32, type Unit,
 } from "./core.ts";
-import { humanHouses, isHuman, isLocal } from "./core.ts";
+import { humanHouses, isHuman, isLocal, teamVisionMask } from "./core.ts";
 import { explosionStart } from "./explosion.ts";
 import { houseAlliedToHuman, houseAreAllied, houseGet } from "./house.ts";
 import { objectGetByPackedTile } from "./object.ts";
@@ -50,7 +50,7 @@ export function mapIsPositionUnveiled(position: number): boolean {
  */
 export function mapIsUnveiledFor(position: number, houseID: number): boolean {
   if (!G.net) return mapIsPositionUnveiled(position);
-  return ((G.map[position & 0xfff].unveiledHouses >> houseID) & 1) === 1;
+  return (G.map[position & 0xfff].unveiledHouses & teamVisionMask(houseID)) !== 0;
 }
 
 /** Раскрыта ли клетка хоть для одного человека (в кампании — для игрока). */
@@ -491,14 +491,13 @@ function mapUnveilTileNeighbour(packed: number): void {
 }
 
 export function mapUnveilTile(packed: number, houseID: number): boolean {
-  if (!isHuman(houseID)) return false;
+  if (!isHuman(houseID) && (!G.net || G.net.team[houseID] < 0)) return false;
   if (isOutOfMap(packed)) return false;
   const t = G.map[packed];
   if (G.net) {
-    // туман по домам: раскрываем только для этого дома; общий слой и иконки краёв не трогаем — края тумана
-    // местного игрока рисует экран по маске (World.sync)
-    const bit = 1 << houseID;
-    if ((t.unveiledHouses & bit) !== 0) return false;
+    // Exploration is shared by the team, independent of the local viewer.
+    const bit = teamVisionMask(houseID);
+    if ((t.unveiledHouses & bit) === bit) return false;
     t.unveiledHouses |= bit;
   } else {
     if (t.isUnveiled && tileIsUnveiled(t.overlayTileID)) return false;
@@ -508,7 +507,7 @@ export function mapUnveilTile(packed: number, houseID: number): boolean {
   if (u) unitHouseUnitCountAdd(u, houseID);
   const s = structureGetByPackedTile(packed);
   if (s) {
-    s.o.seenByHouses |= 1 << houseID;
+    s.o.seenByHouses |= G.net ? teamVisionMask(houseID) : 1 << houseID;
     if (houseID === 1) s.o.seenByHouses |= 1 << 3;
   }
   if (G.net) return true;

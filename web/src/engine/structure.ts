@@ -263,7 +263,7 @@ export function structureCreate(index: number, typeID: number, houseID: number, 
   s.o.flags.isNotOnMap = true;
   s.o.position = { x: 0, y: 0 };
   s.o.linkedID = 0xff;
-  s.unitQueue=[];s.buildingQueue=[];s.readyBuildings=[];s.readyUnits=[];s.prepaidUnitCost=undefined;s.prepaidBuildingCost=undefined;
+  s.unitQueue=[];s.buildingQueue=[];s.readyBuildings=[];s.readyUnits=[];s.prepaidUnitCost=undefined;s.prepaidBuildingCost=undefined;s.rallyPoint=undefined;
   s.state = STATE.JUSTBUILT;
   if (typeID === STRUCTURE.TURRET || typeID === STRUCTURE.ROCKET_TURRET) s.rotationSpriteDiff = G.iconGroups[si.iconGroup][1];
   s.o.hitpoints = si.o.hitpoints;
@@ -694,7 +694,7 @@ export function structureActivateSpecial(s: Structure | null): void {
 }
 
 export function structureRemoveFog(s: Structure | null): void {
-  if (!s || !isHuman(s.o.houseID)) return;
+  if (!s || (!isHuman(s.o.houseID) && !G.net)) return;
   tileRemoveFogInRadius(s.o.position, structureInfo[s.o.type].o.fogUncoverRadius, s.o.houseID);
 }
 

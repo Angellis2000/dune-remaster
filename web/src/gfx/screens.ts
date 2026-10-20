@@ -312,7 +312,7 @@ export class ScreenGfx {
   }
 
   /** Логотип и пункты меню — гладкие буквы с расположением оригинала, поверх HD-фона. */
-  drawTitleLettering(ctx: CanvasRenderingContext2D, elapsed = 0, musicTime = elapsed, difficultyText?: string): void {
+  drawTitleLettering(ctx: CanvasRenderingContext2D, elapsed = 0, musicTime = elapsed): void {
     ctx.save();
     ctx.font = '300 58px "Segoe UI Light", "Segoe UI", "Helvetica Neue", Arial, sans-serif';
     ctx.textBaseline = "middle";
@@ -379,24 +379,26 @@ export class ScreenGfx {
     const fullTitle = titleWords.join(" ");
     const fullWidth = ctx.measureText(fullTitle).width;
     let cursor = 160 - fullWidth / 2;
-    const beatPulse = (1 + Math.cos(musicTime * Math.PI * 4)) / 2;
     const titleClock = musicTime > 0 ? musicTime : elapsed;
     // Opening.mp3 vocal, word onsets measured from the track: “The Battle for Arrakis”.
     const wordCues = musicTime > 0 ? [31.7, 32.46, 32.78, 33.2] : [0, 0.48, 0.96, 1.44];
-    ctx.fillStyle = "#ffe7b2";
-    ctx.shadowColor = `rgba(255,164,66,${0.35 + beatPulse * 0.55})`;
-    ctx.shadowBlur = 1.5 + beatPulse * 3.5;
+    ctx.fillStyle = "#ff3430";
+    ctx.shadowColor = '#ff1b16';
+    ctx.shadowBlur = 2;
     titleWords.forEach((word, i) => {
       const start = wordCues[i];
-      const progress = Math.max(0, Math.min(1, (titleClock - start) / 0.24));
+      const age=titleClock-start;
+      const progress = Math.max(0, Math.min(1, (elapsed-.3) / .35));
       if (progress > 0) {
-        const voiceHit = Math.max(0, 1 - Math.abs(titleClock - start) / 0.2);
+        const voiceHit = age<0?0:Math.exp(-age/.48)*Math.min(1,age/.045);
         const width = ctx.measureText(word).width;
-        ctx.globalAlpha = progress;
-        ctx.shadowBlur = 1.5 + beatPulse * 2 + voiceHit * 7;
+        ctx.globalAlpha = progress*(age>=0?1:.75);
+        ctx.shadowBlur = 2 + voiceHit * 16;
+        ctx.fillStyle=voiceHit>.5?'#ffb3a4':'#ff3430';
         ctx.save();
         ctx.translate(cursor + width / 2, 126 - (1 - progress) * 3);
-        ctx.scale(0.92 + progress * 0.08, 0.92 + progress * 0.08);
+        const pop=.96+progress*.04+voiceHit*.045;
+        ctx.scale(pop,pop);
         ctx.fillText(word, -width / 2, 0);
         ctx.restore();
       }
@@ -404,7 +406,7 @@ export class ScreenGfx {
     });
     ctx.restore();
     const original=this.titleStrings();
-    const items=[original[0],'СЕТЕВАЯ ИГРА',original[1],difficultyText??'Сложность: Сложно'];
+    const items=[original[0],'СЕТЕВАЯ ИГРА',original[1]];
     items.forEach((text, i) => menuText(ctx, text, 128, 160 + i * 8, { size: 8, maxWidth: 164 }));
     menuText(ctx, "TALCO design studio · 2026",
       160, 204, { size: 4.6, align: "center", maxWidth: 280 });

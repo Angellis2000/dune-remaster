@@ -289,6 +289,9 @@ export class World {
     for (let i = 0; i < 4096; i++) unveiled[i] = (G.map[i].unveiledHouses & view) !== 0 ? 1 : 0;
     for (let i = 0; i < 4096; i++) {
       if (!unveiled[i]) {
+        // groundTileID also contains live ROM building/wall/animation tiles.
+        // Only the underlying landscape may show through translucent fog.
+        this.map.ground[i] = G.mapTileID[i] & 0x1ff;
         overlay[i] = G.veiledTileID;
         continue;
       }

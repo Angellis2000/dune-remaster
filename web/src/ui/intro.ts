@@ -65,6 +65,8 @@ export class Intro {
   private starStamps: { x: number; y: number; canvas: HTMLCanvasElement; size: number; phase: number }[] | null = null;
   private shipBounds = new Map<string, { x: number; y: number; w: number; h: number }>();
   private segaVideo: HTMLVideoElement | null = null;
+  private segaLogo:HTMLCanvasElement|null=null;
+  private segaLogoPixels:Uint8ClampedArray|null=null;
   private planet=new PlanetBackdrop();
 
   private getSegaVideo(): HTMLVideoElement | null {
@@ -88,6 +90,27 @@ export class Intro {
       this.segaVideo.currentTime = 0;
     }
   }
+
+  /** HD lettering with the original ROM's 21-step blue palette wave. */
+  private animatedSega(logo:ImageBitmap,time:number):HTMLCanvasElement {
+    if(!this.segaLogo){
+      const c=document.createElement('canvas');c.width=600;c.height=220;
+      const g=c.getContext('2d')!;
+      g.drawImage(logo,logo.width*.30,logo.height*.40,logo.width*.40,logo.height*.22,0,0,600,220);
+      this.segaLogo=c;this.segaLogoPixels=g.getImageData(0,0,600,220).data;
+    }
+    const c=this.segaLogo,g=c.getContext('2d')!,pixels=new Uint8ClampedArray(this.segaLogoPixels!);
+    const step=Math.floor(time*60/3)%21;
+    const colors=Array.from({length:21},(_,i)=>cramToRGBA(readU16(this.gfx.romBytes,this.sega.cycle+((i+step)%21)*2)));
+    for(let i=0;i<pixels.length;i+=4){
+      if(pixels[i+2]<=pixels[i]*1.3||pixels[i]>=180)continue;
+      const row=Math.floor(i/4/c.width),color=colors[Math.min(20,Math.floor(row/c.height*11))];
+      pixels[i]=(color&255)*.78;pixels[i+1]=((color>>>8)&255)*.78;pixels[i+2]=((color>>>16)&255)*.78;
+    }
+    // Keep the white contour subdued instead of blooming like a neon sign.
+    for(let i=0;i<pixels.length;i+=4)if(pixels[i]>=180){pixels[i]*=.67;pixels[i+1]*=.67;pixels[i+2]*=.67;}
+    g.putImageData(new ImageData(pixels,c.width,c.height),0,0);return c;
+  }
   pauseBackdrop():void {this.planet.pause();}
 
   constructor(
@@ -95,7 +118,6 @@ export class Intro {
     private play: (seq: number) => void = () => {},
     private stop: (seq: number) => void = () => {},
     private openingTime: () => number = () => this.animationFrame / 60,
-    private difficultyText: () => string = () => "Сложность: Сложно",
   ) {
     this.sega = gfx.segaData();
     this.title = gfx.titleData(false);
@@ -353,11 +375,7 @@ export class Intro {
   drawBackdrop(ctx: CanvasRenderingContext2D, frame: number, scroll = -704): boolean {
     const art = this.gfx.art;
     if (!art.get("arrakis")) return false;
-    if(this.braking||scroll===-704){
-      const settled=scroll===-704;
-      if(this.planet.alpha(frame,settled)<1)art.background(ctx,'arrakis',704+scroll);
-      if(this.planet.draw(ctx,frame,settled))return true;
-    }
+    if(this.planet.draw(ctx,frame,scroll===-704))return true;
     ctx.save();
     art.background(ctx, "arrakis", 704 + scroll);
     const image = art.get("arrakis");
@@ -440,15 +458,22 @@ export class Intro {
     if (this.mode === "black") return true;
     if (this.mode === "sega") {
       const v = this.getSegaVideo();
-      if (v && v.readyState >= 2) {
-        ctx.save();
-        const transform = ctx.getTransform();
-        const width = ctx.canvas.width / (transform.a || 1);
-        const x = (320 - width) / 2;
-        ctx.drawImage(v, x, 0, width, SCREEN_H);
-        ctx.restore();
-        return true;
+      const logo=art.get('sega'),t=v?.currentTime??0;
+      ctx.save();
+      const width=ctx.canvas.width/(ctx.getTransform().a||1),x=(320-width)/2;
+      ctx.fillStyle='#010204';ctx.fillRect(x,0,width,SCREEN_H);
+      const light=ctx.createRadialGradient(160,112,8,160,112,112);
+      light.addColorStop(0,'#071422');light.addColorStop(1,'#010204');
+      ctx.fillStyle=light;ctx.fillRect(x,0,width,SCREEN_H);
+      if(logo){
+        const opacity=Math.min(1,t/.35,Math.max(0,(3.65-t)/.4));
+        ctx.globalAlpha=opacity;ctx.globalCompositeOperation='screen';
+        ctx.shadowColor='#164fb0';ctx.shadowBlur=1.3;
+        const scale=1+.014*Math.sin(Math.min(1,t/3.65)*Math.PI);
+        ctx.translate(160,112);ctx.scale(scale,scale);
+        ctx.drawImage(this.animatedSega(logo,t),-83,-30,166,60);
       }
+      ctx.restore();
       return true;
     }
     if (!art.get("arrakis") || (this.showA && !this.menu && !art.get("publishers")) || (this.ship && !art.get("ships"))) return false;
@@ -464,7 +489,7 @@ export class Intro {
       }
       ctx.globalAlpha = Math.min(1, brightness / Math.max(1, full));
       if (this.menu) this.gfx.drawTitleLettering(
-        ctx, (this.animationFrame - this.menuStartFrame) / 60, this.openingTime(), this.difficultyText(),
+        ctx, (this.animationFrame - this.menuStartFrame) / 60, this.openingTime(),
       );
       else {
         const publishers = art.get("publishers");

@@ -52,13 +52,13 @@ export class InfantryArt {
   private model(type:number):number{return type===6?2:type===3||type===5?1:0;}
   private members(type:number):readonly number[][]{return type===2||type===3?[[-3,2],[3,2],[0,-3]]:[[0,0]];}
   private person(ctx:CanvasRenderingContext2D,model:number,house:number,phase:number,move:number,fire:boolean,age:number):void{
-    const cells=this.cells[Math.min(5,house)],stride=Math.sin(phase)*1.35*move;
+    const cells=this.cells[Math.min(5,house)],stride=Math.sin(phase)*.72*move;
     // Alternating planted feet. The torso centre does not sway sideways.
     for(let side=0;side<2;side++){
       const step=side?stride:-stride;
-      ctx.save();ctx.translate(side?1.15:-1.15,1.1+step);
+      ctx.save();ctx.translate(side?.92:-.92,.35+step);
       ctx.rotate((side?1:-1)*Math.sin(phase)*.07*move);
-      ctx.drawImage(cells[model*4+1+side],-.85,-1,1.7,3.8);ctx.restore();
+      ctx.drawImage(cells[model*4+1+side],-.78,-1,1.56,2.7);ctx.restore();
     }
     const recoil=fire?Math.sin(Math.PI*Math.min(1,age/.18))*.5:0;
     const torso=cells[fire?12+model:model*4];

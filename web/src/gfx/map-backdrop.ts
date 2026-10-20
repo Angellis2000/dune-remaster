@@ -3,11 +3,24 @@
  * песок с рябью дюн, редкие песчинки и слабая тактическая сетка; на границе поля — тень наружу и тонкая
  * золотистая рамка (#8B7650, как у панели «СПАЙС»). Узор привязан к миру и едет вместе с картой.
  */
+import desertUrl from './assets/map-hd/outside-desert-v1.png?url';
+const desert=new Image();desert.src=desertUrl;
 const TILE = 256;
 let pattern: HTMLCanvasElement | null = null;
+desert.onload=()=>{pattern=null;};
 
 function texture(): HTMLCanvasElement {
   if (pattern) return pattern;
+  if(desert.complete&&desert.naturalWidth){
+    const c=document.createElement('canvas');c.width=c.height=1024;
+    const g=c.getContext('2d')!;
+    // Mirrored neighbouring patches share exact edge texels, without hard tile seams.
+    for(let y=0;y<2;y++)for(let x=0;x<2;x++){
+      g.save();g.translate(x?1024:0,y?1024:0);g.scale(x?-1:1,y?-1:1);g.drawImage(desert,0,0,512,512);g.restore();
+    }
+    g.fillStyle='#17212c40';g.fillRect(0,0,1024,1024);
+    return pattern=c;
+  }
   const c = document.createElement('canvas'); c.width = c.height = TILE;
   const g = c.getContext('2d')!;
   g.fillStyle = '#1e1913'; g.fillRect(0, 0, TILE, TILE);
@@ -46,7 +59,8 @@ export function drawMapBackdrop(ctx: CanvasRenderingContext2D, bx: number, by: n
   ctx.save();
   ctx.beginPath(); ctx.rect(0, 0, width, height); ctx.rect(x, y, w, h); ctx.clip('evenodd');
   const p = ctx.createPattern(texture(), 'repeat')!;
-  p.setTransform(new DOMMatrix([z / 2, 0, 0, z / 2, -ox, -oy]));
+  const scale=desert.complete&&desert.naturalWidth?z*2:z/2;
+  p.setTransform(new DOMMatrix([scale, 0, 0, scale, -ox, -oy]));
   ctx.fillStyle = p; ctx.fillRect(0, 0, width, height);
   // тень от края поля наружу
   const d = 28 * z;

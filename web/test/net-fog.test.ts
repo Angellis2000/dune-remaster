@@ -44,7 +44,7 @@ test('network fog: each house unveils only its own surroundings, the simulation 
   world.loadNetwork({ map: 5, seed: 0x5eed1234, credits: 5000, players, local: 1 });
   for (const p of players) {
     assert.ok(seen(cyTile(p.house), p.house), `дом ${p.house} видит свой двор`);
-    for (const q of players) if (q.house !== p.house) assert.ok(!seen(cyTile(q.house), p.house), `дом ${p.house} не видит двор дома ${q.house}`);
+    for (const q of players) if (q.house !== p.house) assert.equal(seen(cyTile(q.house), p.house),p.team===q.team, `видимость двора дома ${q.house} для ${p.house} соответствует союзу`);
   }
   // общий слой движка открыт, как на этапе 1: стены, кратеры и черви от тумана не зависят
   assert.ok(G.map.every((t) => t.isUnveiled && t.overlayTileID !== G.veiledTileID));

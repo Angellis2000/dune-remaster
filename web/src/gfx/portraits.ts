@@ -8,6 +8,7 @@ import {layoutSize,structureInfo} from '../engine/tables.ts';
 import {drawWall} from './wall-art.ts';
 import type {WormArt} from './worm-art.ts';
 import type {BuildingPortraits} from './building-portraits.ts';
+import {unitPortraitSource} from './unit-portraits.ts';
 
 /** Original building portrait compositions and HD unit art, shared by all selection menus. */
 export class Portraits {
@@ -18,6 +19,23 @@ export class Portraits {
     private buildings?:BuildingPortraits){}
   image(kind:'unit'|'structure',type:number):HTMLCanvasElement{
     if(kind==='structure'&&type<19){const image=this.buildings?.image(type);if(image)return image;}
+    const portrait=kind==='unit'?unitPortraitSource(type):null;
+    if(portrait){
+      const key=`portrait-v3:${type}:${this.house()}`,cached=this.cache.get(key);if(cached)return cached;
+      const c=document.createElement('canvas');c.width=384;c.height=256;const g=c.getContext('2d')!;
+      const {image,x,y,w,h}=portrait;
+      g.drawImage(image,x*image.width,y*image.height,w*image.width,h*image.height,0,0,384,256);
+      if(this.house()!==1&&type!==25){
+        const colors=[[192,57,43],[40,119,195],[54,145,66],[147,92,167],[180,147,81],[82,150,163]],color=colors[this.house()]??colors[1];
+        const data=g.getImageData(0,0,384,256),p=data.data;
+        for(let i=0;i<p.length;i+=4)if(p[i+2]>p[i]*1.18&&p[i+2]>p[i+1]*1.22&&p[i+2]-p[i]>20){
+          const light=(p[i]+p[i+1]+p[i+2])/330;
+          p[i]=Math.min(255,color[0]*light);p[i+1]=Math.min(255,color[1]*light);p[i+2]=Math.min(255,color[2]*light);
+        }
+        g.putImageData(data,0,0);
+      }
+      this.cache.set(key,c);return c;
+    }
     const key=`${kind}:${type}:${this.house()}`;let c=this.cache.get(key);if(c)return c;
     c=document.createElement('canvas');c.width=384;c.height=256;const g=c.getContext('2d')!;
     const bg=g.createLinearGradient(0,0,0,256);bg.addColorStop(0,'#25323b');bg.addColorStop(1,'#10171c');
@@ -45,6 +63,11 @@ export class Portraits {
   /** Transparent, tightly framed HD thumbnail for the original console order slots. */
   icon(kind:'unit'|'structure',type:number):HTMLCanvasElement{
     if(kind==='structure'&&type<19){const image=this.buildings?.image(type,true);if(image)return image;}
+    if(kind==='unit'&&unitPortraitSource(type)){
+      const key=`portrait-icon-v3:${type}:${this.house()}`,cached=this.iconCache.get(key);if(cached)return cached;
+      const c=document.createElement('canvas');c.width=128;c.height=96;
+      c.getContext('2d')!.drawImage(this.image(kind,type),0,0,128,96);this.iconCache.set(key,c);return c;
+    }
     const key=`${kind}:${type}:${this.house()}`;let c=this.iconCache.get(key);if(c)return c;
     c=document.createElement('canvas');c.width=128;c.height=96;const g=c.getContext('2d')!;g.imageSmoothingEnabled=true;
     if(kind==='structure'){

@@ -325,6 +325,13 @@ export class CommandPanel {
     const game = this.world.game;
     const si = structureInfo[s.o.type];
     const h = G.houses[G.playerHouseID];
+    if(game.canRally(s)){
+      this.items.push({label:'Точка сбора',icon:ACTION_ICONS[ACTION.MOVE],active:s.rallyPoint!==undefined,run:()=>{
+        if(game.beginRally(s)){this.focused=false;this.host.targetMode('Укажите точку сбора (A / щелчок)');}
+        this.done();
+      }});
+      if(s.rallyPoint!==undefined)this.items.push({label:'Убрать точку сбора',run:()=>{game.setRallyPoint(s,-1);this.done();}});
+    }
 
     if (s.o.type === STRUCTURE.STARPORT) {
       if (this.starportOf !== s || !this.starportPrices) {
@@ -340,7 +347,7 @@ export class CommandPanel {
           label: UNIT_NAMES[t] ?? `Юнит ${t}`,
           note: count > 0 ? `${prices[t]} · есть ${count}` : "нет в наличии",
           picture: this.picture("unit", t),
-          disabled: count <= 0 || h.credits < prices[t],
+          disabled: count <= 0,
           run: () => {
             game.starportBuy(s, t, prices[t]);
             this.done();
@@ -382,7 +389,7 @@ export class CommandPanel {
           label: nameOf(opt.type),
           note: opt.available < 0&&!ready ? "после улучшения" : yardNote,
           picture: this.picture(isYard ? "structure" : "unit", opt.type),
-          disabled: opt.available < 0&&!ready||(!isYard&&h.credits<opt.cost&&quantity===0),
+          disabled: opt.available < 0&&!ready,
           active: building||ready>0,
           quantity:quantity||undefined,
           cancel:cancelQueued,

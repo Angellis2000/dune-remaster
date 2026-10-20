@@ -16,6 +16,7 @@ import { objectGetByPackedTile, objectGetDistanceToEncoded, pointGetDistanceToEn
 import { peek } from "./script.ts";
 import { scriptLoad, scriptReset } from "./script.ts";
 import { msg } from "./strings.ts";
+import { applyRally, structureHasRally } from './rally.ts';
 import {refineryExit} from './refinery-dock.ts';
 import {carryallReadyForService} from './carryall-flight.ts';
 import {fireLaser,initializeDrone} from './advanced-units.ts';
@@ -268,6 +269,7 @@ const unitTransportDeliver: ScriptFunction = (script) => {
       unitSetDestination(u2, indexEncode(field, IT.TILE));
     }
   }
+  applyRally(u2,u2.rallyDestination);
   if (u.o.type === UNIT.CARRYALL && u2.o.type === UNIT.HARVESTER && !houseHasRefinery(unitGetHouseID(u))) u.carryallLeaving = true;
   if (u.o.linkedID !== 0xff) return 1;
   u.o.flags.inTransport = false;
@@ -295,6 +297,7 @@ const unitPickup: ScriptFunction = (script) => {
       objectScriptVariable4Clear(u.o);
       u.targetMove = 0;
       const u2 = G.units[stored ? s.readyUnits!.shift()! : s.o.linkedID];
+      u2.rallyDestination=structureHasRally(s)?s.rallyPoint:undefined;
       u.o.linkedID = u2.o.index;
       if (!stored) s.o.linkedID = u2.o.linkedID;
       u2.o.linkedID = 0xff;
@@ -1349,6 +1352,7 @@ function structureGroundExit(s:Structure,u:Unit,checkForSpice:boolean):number{
 export function structureDeployProducedUnit(s: Structure, u: Unit, stored = true): number {
   if (unitInfo[u.o.type].movementType === MOVEMENT.WINGER && unitSetPosition(u, s.o.position)) {
     if(u.o.type===UNIT.COMBAT_DRONE)initializeDrone(u,s);
+    applyRally(u,s.rallyPoint);
     if (!stored) s.o.linkedID = u.o.linkedID;
     u.o.linkedID = 0xff;
     if (!stored && s.o.linkedID === 0xff) structureSetState(s, STATE.IDLE);
@@ -1385,6 +1389,7 @@ export function structureDeployProducedUnit(s: Structure, u: Unit, stored = true
   if (isLocal(u.o.houseID) && u.o.type === UNIT.HARVESTER) G.onMessage(msg.searchSpice, 1);
   if (!stored && s.o.linkedID === 0xff) structureSetState(s, STATE.IDLE);
   objectScriptVariable4Clear(s.o);
+  applyRally(u,s.rallyPoint);
   if (!isLocal(s.o.houseID)) return 1;
   if (s.o.type === STRUCTURE.REPAIR) return 1;
   // MD $0233c4: готовый юнит игрока — голос 1 ("Unit ready", GEMS seq 64)

@@ -1,4 +1,4 @@
-import {G,STRUCTURE} from '../engine/core.ts';
+import {G,STRUCTURE,UNIT} from '../engine/core.ts';
 import {unitInfo} from '../engine/tables.ts';
 import type {Unit,Structure} from '../game/world.ts';
 import {COMBAT_DRONE,DRONE_RADIUS,DRONE_RETURN_BATTERY} from '../engine/custom-unit-defs.ts';
@@ -59,6 +59,27 @@ export function drawDroneStatus(ctx:CanvasRenderingContext2D,units:Iterable<Unit
     const r=Math.max(1.2,z*.75),gap=r*2.25;let px=x+r;
     for(const m of live){for(let i=0;i<5;i++){ctx.fillStyle=i<m.grenades?'#f0d070':'#5a5030a0';ctx.beginPath();ctx.arc(px,y+h+r*2,r,0,Math.PI*2);ctx.fill();px+=gap;}px+=gap*.45;}
     if(!grenades){ctx.fillStyle='#e2412d';ctx.font=`bold ${Math.max(7,Math.round(4.5*z))}px sans-serif`;ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText('0',px,y+h+r*2);}
+  }
+  ctx.restore();
+}
+
+/** Same compact dark-backed indicators as the drone display, for selected units. */
+export function drawSelectedUnitStatus(ctx:CanvasRenderingContext2D,units:Iterable<Unit>,z:number,ox:number,oy:number):void{
+  ctx.save();
+  for(const u of units){
+    if(!u.ref.o.flags.used||u.ref.o.flags.isNotOnMap)continue;
+    const max=unitInfo[u.type]?.o.hitpoints??1,p=Math.max(0,Math.min(1,u.ref.o.hitpoints/Math.max(1,max)));
+    const w=Math.max(28,Math.round(26*z)),h=Math.max(3,Math.round(3*z)),x=Math.round(u.x*z-ox-w/2);
+    // A selected drone keeps its battery/grenade display below; health sits above.
+    const y=Math.round((u.y+(u.ref.drone?-18:16))*z-oy);
+    const bar=(row:number,value:number,color:string)=>{
+      ctx.fillStyle='#000000b0';ctx.fillRect(x-1,row-1,w+2,h+2);
+      ctx.fillStyle='#24303bd9';ctx.fillRect(x,row,w,h);
+      ctx.fillStyle=color;ctx.fillRect(x,row,Math.round(w*value),h);
+      ctx.fillStyle='#ffffff35';ctx.fillRect(x,row,Math.round(w*value),Math.max(1,z*.5));
+    };
+    bar(y,p,p>.5?'#58d64a':p>.25?'#e8a92a':'#e2412d');
+    if(u.type===UNIT.HARVESTER)bar(y+h+3,Math.max(0,Math.min(1,u.ref.amount/100)),'#e4a047');
   }
   ctx.restore();
 }

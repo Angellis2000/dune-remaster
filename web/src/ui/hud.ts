@@ -16,6 +16,7 @@ import type { DuneRom } from "../rom/dune.ts";
 import type {Portraits} from '../gfx/portraits.ts';
 import {drawConsoleSymbol} from '../gfx/console-symbols.ts';
 import {dayPhase,desertLight} from '../gfx/world-atmosphere.ts';
+import {drawSpiceFrame} from '../gfx/panel-frames.ts';
 
 export const HUD_ROM = {
   /** таблица кадров: 8 байт — указатель на сырые тайлы, байт +4: FE — строка палитры 1, FF — строка 3 */
@@ -346,12 +347,12 @@ export class Hud {
     this.warning.setAttribute("aria-hidden", "true");
     const w=this.warning.getContext('2d')!;
     w.scale(4,4);w.fillStyle='#151a20ed';w.fillRect(0,0,176,16);w.strokeStyle='#bd9453';w.strokeRect(.5,.5,175,15);
-    w.font='600 9px "Segoe UI", sans-serif';w.fillStyle='#ffe0a0';w.textAlign='center';w.textBaseline='middle';w.fillText('НЕДОСТАТОЧНО КРЕДИТОВ',88,8);
+    w.font='600 9px "Segoe UI", sans-serif';w.fillStyle='#ffe0a0';w.textAlign='center';w.textBaseline='middle';w.fillText('НЕДОСТАТОЧНО СПАЙСА',88,8);
     for(const [kind,table,count] of [['structure',HUD_ROM.structureInfo,19],['unit',HUD_ROM.unitInfo,27]] as const){
       for(let type=0;type<count;type++){
         const info=readU32(rom.bytes,table+type*4),frame=readU16(rom.bytes,info+0x14);
         if(!this.pictures.has(frame)){
-          let crop={x:112,y:68,w:160,h:120};
+          let crop={x:0,y:0,w:384,h:256};
           if(kind==='structure'){
             crop={x:0,y:0,w:128,h:96};
           }
@@ -359,10 +360,10 @@ export class Hud {
         }
       }
     }
-    this.pictures.set(HUD_ROM.fremenFrame,{image:()=>portraits.image('unit',4),crop:{x:112,y:68,w:160,h:120}});
+    this.pictures.set(HUD_ROM.fremenFrame,{image:()=>portraits.image('unit',4),crop:{x:0,y:0,w:384,h:256}});
     this.pictures.set(customStructureHudFrame(STRUCTURE.DRONE_PAD),{image:()=>portraits.icon('structure',STRUCTURE.DRONE_PAD),crop:{x:0,y:0,w:128,h:96}});
-    for(const type of [UNIT.LASER_TANK,UNIT.COMBAT_DRONE])this.pictures.set(customHudFrame(type),{image:()=>portraits.image('unit',type),crop:{x:80,y:32,w:224,h:168}});
-    this.pictures.set(HUD_ROM.fremenTroopersFrame,{image:()=>portraits.image('unit',5),crop:{x:112,y:68,w:160,h:120}});
+    for(const type of [UNIT.LASER_TANK,UNIT.COMBAT_DRONE])this.pictures.set(customHudFrame(type),{image:()=>portraits.image('unit',type),crop:{x:0,y:0,w:384,h:256}});
+    this.pictures.set(HUD_ROM.fremenTroopersFrame,{image:()=>portraits.image('unit',5),crop:{x:0,y:0,w:384,h:256}});
     this.warning.hidden = true;
   }
 
@@ -376,7 +377,7 @@ export class Hud {
     this.key = key;
     const g=this.g;g.clearRect(0,0,504,512);g.save();g.scale(4,4);g.imageSmoothingEnabled=true;
     // панель «СПАЙС»; с часами суток — на строку выше, всё ниже сдвигается на OFF
-    const H=day?56:46,OFF=H-46;
+    const H=day?60:46,OFF=H-46;
     g.fillStyle='#101820ed';g.fillRect(0,0,126,H);g.strokeStyle='#8b7650';g.lineWidth=.5;g.strokeRect(.5,.5,125,H-1);
     g.textAlign='left';g.font='700 7px "Segoe UI", sans-serif';g.fillStyle='#c3b89e';g.fillText('СПАЙС',7,11);
     g.textAlign='right';g.font=`700 ${G.net?Math.min(16,110/(text.trim().length*.62)):16}px "IBM Plex Mono", monospace`;g.fillStyle='#ffe4aa';
@@ -388,6 +389,7 @@ export class Hud {
     g.fillText(`${String(stats.buildings).padStart(2,'0')}  −${String(stats.buildingsLost).padStart(2,'0')}`,119,35);
     g.fillText(`${String(stats.units).padStart(2,'0')}  −${String(stats.unitsLost).padStart(2,'0')}`,119,44);
     if(day)this.dayRow(day);
+    drawSpiceFrame(g,126,H);
     if (state) {
       if (state.portrait !== null) this.frame(state.portrait, 48+OFF);
       if (state.hp) {

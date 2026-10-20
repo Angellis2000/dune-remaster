@@ -1,9 +1,9 @@
 import type { MentatGfx } from './mentat.ts';
 import type { ScreenArt } from './screen-art.ts';
-import {menuText} from './menu-canvas.ts';
+import {smoothRegionOutline} from './region-outline.ts';
 
 // ROM ownership codes are fixed: neutral, Harkonnen, Atreides, Ordos.
-export const TERRITORY_COLORS = ['#c49a56', '#df4432', '#2465ed', '#2aa34b'] as const;
+export const TERRITORY_COLORS = ['#ca8e39', '#cc4431', '#286cbd', '#278f53'] as const;
 
 interface RegionArt { image: HTMLCanvasElement; depth:HTMLCanvasElement; x: number; y: number; w: number; h: number; mapDx: number; mapDy: number }
 
@@ -21,17 +21,18 @@ export class StrategicMapArt {
     const source=this.art!.get('strategicSurface')!,c=document.createElement('canvas');
     c.width=source.width;c.height=source.height;
     const g=c.getContext('2d',{willReadFrequently:true})!;g.drawImage(source,0,0);
+    if(owner===0){this.surfaces.set(owner,c);return c;}
     const im=g.getImageData(0,0,c.width,c.height),p=im.data;
     const hex=TERRITORY_COLORS[owner]??TERRITORY_COLORS[0];
     const base=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));
     for(let i=0;i<p.length;i+=4){
       const light=(p[i]*.2126+p[i+1]*.7152+p[i+2]*.0722)/255;
-      const q=Math.max(0,Math.min(1,(light-.12)/.70));
-      const shade=.20+1.10*Math.pow(q,.65);
-      const glint=Math.max(0,(q-.68)/.32)*.15;
-      p[i]=Math.min(255,base[0]*shade+255*glint);
-      p[i+1]=Math.min(255,base[1]*shade+242*glint);
-      p[i+2]=Math.min(255,base[2]*shade+215*glint);
+      const q=Math.max(0,Math.min(1,(light-.06)/.85));
+      const shade=.16+1.2*Math.pow(q,1.05);
+      const glint=Math.max(0,(q-.78)/.22)*.07;
+      p[i]=Math.min(255,base[0]*shade*.83+p[i]*.17+255*glint);
+      p[i+1]=Math.min(255,base[1]*shade*.83+p[i+1]*.17+242*glint);
+      p[i+2]=Math.min(255,base[2]*shade*.83+p[i+2]*.17+215*glint);
     }
     g.putImageData(im,0,0);this.surfaces.set(owner,c);return c;
   }
@@ -66,24 +67,17 @@ export class StrategicMapArt {
     for (let x = 0; x < w; x++) { visit(x, 0); visit(x, h - 1); }
     for (let y = 0; y < h; y++) { visit(0, y); visit(w - 1, y); }
     for (let i = 0; i < queue.length; i++) { const x = queue[i] % w, y = Math.floor(queue[i] / w); visit(x - 1, y); visit(x + 1, y); visit(x, y - 1); visit(x, y + 1); }
-    const mask = document.createElement('canvas'); mask.width = w; mask.height = h;
-    const mg = mask.getContext('2d')!, im = mg.createImageData(w, h);
-    for (let p = 0; p < outside.length; p++) if (!outside[p]) { im.data[p * 4] = im.data[p * 4 + 1] = im.data[p * 4 + 2] = im.data[p * 4 + 3] = 255; }
-    mg.putImageData(im, 0, 0);
+    const outline=smoothRegionOutline(outside,w,h);
+    const mask = document.createElement('canvas'); mask.width = w*5; mask.height = h*5;
+    const mg = mask.getContext('2d')!;mg.scale(5,5);mg.fillStyle='#fff';mg.fill(outline);
     const image = document.createElement('canvas'); image.width = w * 5; image.height = h * 5;
     const g = image.getContext('2d')!; g.scale(5, 5); g.imageSmoothingEnabled = true;
     const owner=this.gfx.regionColor(house,level,region);
     g.drawImage(this.relief(owner), -box.x, -box.y, 320, 224);
-    g.globalCompositeOperation = 'destination-in'; g.drawImage(mask, 0, 0);
+    g.globalCompositeOperation = 'destination-in'; g.drawImage(mask, 0, 0,w,h);
     g.globalCompositeOperation = 'source-over';
-    g.strokeStyle = '#070d16'; g.lineWidth = .8; g.lineCap = 'round'; g.lineJoin='round';g.beginPath();
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (!outside[y * w + x]) {
-      if (!y || outside[(y - 1) * w + x]) { g.moveTo(x, y); g.lineTo(x + 1, y); }
-      if (y === h - 1 || outside[(y + 1) * w + x]) { g.moveTo(x, y + 1); g.lineTo(x + 1, y + 1); }
-      if (!x || outside[y * w + x - 1]) { g.moveTo(x, y); g.lineTo(x, y + 1); }
-      if (x === w - 1 || outside[y * w + x + 1]) { g.moveTo(x + 1, y); g.lineTo(x + 1, y + 1); }
-    }
-    g.stroke();g.strokeStyle='#dde9f3aa';g.lineWidth=.18;g.stroke();
+    g.strokeStyle = '#070d16'; g.lineWidth = .8; g.lineCap = 'round'; g.lineJoin='round';
+    g.stroke(outline);g.strokeStyle='#dde9f388';g.lineWidth=.15;g.stroke(outline);
     // The original regions have a solid lower edge, especially visible while falling.
     // Build that edge from the exact silhouette; never expand or move the top surface.
     const depth=document.createElement('canvas');depth.width=(w+2)*5;depth.height=(h+4)*5;
@@ -93,7 +87,7 @@ export class StrategicMapArt {
     const hex=TERRITORY_COLORS[owner]??TERRITORY_COLORS[0];
     const rgb=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));
     for(let y=3.5;y>=.5;y-=.5){
-      sg.clearRect(0,0,w,h);sg.globalCompositeOperation='source-over';sg.drawImage(mask,0,0);
+      sg.clearRect(0,0,w,h);sg.globalCompositeOperation='source-over';sg.drawImage(mask,0,0,w,h);
       sg.globalCompositeOperation='source-in';
       const shade=.18+(3.5-y)*.035;
       sg.fillStyle=`rgb(${rgb.map(c=>Math.round(c*shade)).join(',')})`;sg.fillRect(0,0,w,h);
@@ -111,10 +105,14 @@ export class StrategicMapArt {
     for(let x=32;x<320;x+=16){ctx.beginPath();ctx.moveTo(x,24);ctx.lineTo(x,194);ctx.stroke();}
     for(let y=24;y<194;y+=16){ctx.beginPath();ctx.moveTo(24,y);ctx.lineTo(312,y);ctx.stroke();}
     if(full){
-      menuText(ctx,'АРРАКИС  /  КАРТА КАМПАНИИ',160,10,{size:5,align:'center',color:'#b9bdad',weight:'500'});
+      ctx.textBaseline='top';ctx.textAlign='center';ctx.letterSpacing='.7px';
+      ctx.font='600 7.5px Bahnschrift, "Segoe UI", sans-serif';ctx.fillStyle='#f1d59d';ctx.fillText('АРРАКИС',160,6);
+      ctx.font='500 3.4px Bahnschrift, "Segoe UI", sans-serif';ctx.fillStyle='#a0b4c0';ctx.letterSpacing='.5px';ctx.fillText('КАРТА КАМПАНИИ',160,17);
+      ctx.strokeStyle='#bb975f55';ctx.lineWidth=.3;ctx.beginPath();ctx.moveTo(24,16);ctx.lineTo(114,16);ctx.moveTo(206,16);ctx.lineTo(312,16);ctx.stroke();
       const names=['НЕЙТРАЛЬНО','ХАРКОННЕНЫ','АТРЕЙДЕСЫ','ОРДОСЫ'];
-      names.forEach((name,i)=>{const x=27+i*72;ctx.fillStyle=TERRITORY_COLORS[i];ctx.fillRect(x,205,2,2);
-        menuText(ctx,name,x+5,204.5,{size:3.5,color:'#bdc9d0',weight:'500'});});
+      ctx.textAlign='left';ctx.font='600 3.7px Bahnschrift, "Segoe UI", sans-serif';ctx.letterSpacing='.22px';
+      names.forEach((name,i)=>{const x=27+i*72;ctx.fillStyle=TERRITORY_COLORS[i];ctx.fillRect(x,204,1.1,4.5);
+        ctx.fillStyle='#c8d5dc';ctx.fillText(name,x+5,204.5);});
     }
     ctx.restore();
   }
