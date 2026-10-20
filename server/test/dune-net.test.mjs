@@ -31,7 +31,7 @@ function connect(port) {
 }
 
 test("комната, пароль, старт, ходы с командами, сверка и наблюдатель", async () => {
-  const server = await startServer({ port: 0, log: () => {}, turnMs: 30 });
+  const server = await startServer({ countdownMs: 0, port: 0, log: () => {}, turnMs: 30 });
   try {
     const a = connect(server.port);
     const b = connect(server.port);
@@ -97,7 +97,7 @@ test("комната, пароль, старт, ходы с командами, 
 });
 
 test('обрыв сохраняет место; токен возвращает игрока и наблюдателя с пропущенными ходами', async () => {
-  const server = await startServer({ port: 0, log: () => {}, turnMs: 15, reconnectMs: 1000 });
+  const server = await startServer({ countdownMs: 0, port: 0, log: () => {}, turnMs: 15, reconnectMs: 1000 });
   try {
     const a=connect(server.port), b=connect(server.port);
     await Promise.all([a.opened,b.opened]);
@@ -144,7 +144,7 @@ test('обрыв сохраняет место; токен возвращает 
 });
 
 test('комната переживает общий обрыв, но истёкший возврат и добровольный выход отзывают токен', async () => {
-  const server=await startServer({port:0,log:()=>{},turnMs:15,reconnectMs:120});
+  const server=await startServer({countdownMs: 0, port:0,log:()=>{},turnMs:15,reconnectMs:120});
   try {
     const a=connect(server.port);await a.opened;
     a.send({t:'create',config:{map:5,teamSize:1,credits:5000},house:'A'});
@@ -165,7 +165,7 @@ test('комната переживает общий обрыв, но истёк
 });
 
 test('хозяин ставит компьютеры: место и дом заняты, матч с одним человеком, компьютеры в составе старта', async () => {
-  const server = await startServer({ port: 0, log: () => {}, turnMs: 20 });
+  const server = await startServer({ countdownMs: 0, port: 0, log: () => {}, turnMs: 20 });
   try {
     const a = connect(server.port), b = connect(server.port);
     await Promise.all([a.opened, b.opened]);
@@ -192,8 +192,16 @@ test('хозяин ставит компьютеры: место и дом за�
     a.send({ t: 'bot', op: 'remove', slot: joined.room.members.find((x) => x.ai && x.team === 0).slot });
     const after = await a.next((m) => m.t === 'room' && m.room.members.filter((x) => x.ai).length === 1);
     assert.ok(after.room.members.some((x) => x.slot === bot.slot), 'компьютер, которого пытался убрать гость, на месте');
+    // точка высадки: своя — да, занятая другим — нет
+    a.send({ t: 'set', spawn: 3 });
+    await a.next((m) => m.t === 'room' && m.room.members.some((x) => x.spawn === 3));
+    b.send({ t: 'set', spawn: 3 });
+    b.send({ t: 'set', spawn: 5 });
+    const spawns = await a.next((m) => m.t === 'room' && m.room.members.some((x) => x.spawn === 5));
+    assert.equal(spawns.room.members.filter((x) => x.spawn === 3).length, 1, 'занятую точку второй не взял');
     a.send({ t: 'start' });
     const start = await a.next((m) => m.t === 'start');
+    assert.deepEqual(start.players.filter((p) => !p.ai).map((p) => p.spawn).sort(), [3, 5], 'точки доходят до старта');
     const ai = start.players.filter((p) => p.ai);
     assert.equal(ai.length, 1);
     assert.equal(ai[0].house, 2);

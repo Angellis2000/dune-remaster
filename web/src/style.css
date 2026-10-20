@@ -999,3 +999,7 @@ button[aria-pressed="true"] {
 .replay-bar button { min-width: 34px; padding: 4px 8px; border: 1px solid #6d6046; background: #1d252c; color: #e8e2cf; cursor: pointer; }
 .replay-bar button[aria-pressed="true"] { background: #a98c54; color: #10151a; }
 .replay-time { min-width: 120px; text-align: center; color: #e8e2cf; font-variant-numeric: tabular-nums; }
+
+/* отсчёт перед сетевым матчем (main.ts → countdown) */
+.net-countdown { position: absolute; z-index: 30; left: 50%; top: 42%; transform: translate(-50%, -50%); pointer-events: none;
+  color: #f0cc83; font: 800 clamp(48px, 12vmin, 120px)/1 sans-serif; letter-spacing: .04em; text-shadow: 0 0 18px #000, 0 4px 0 #3b2a10; }

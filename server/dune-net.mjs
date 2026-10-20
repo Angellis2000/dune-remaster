@@ -10,9 +10,13 @@ export const TURN_MS = 100;
 /** кадров движка (60 Гц) в одном ходе */
 export const FRAMES_PER_TURN = 6;
 export const RECONNECT_MS = 120000;
+/** отсчёт перед первым ходом матча: клиенты показывают 3, 2, 1, ходы начинаются после */
+export const COUNTDOWN_MS = 3000;
 /** дома движка: буква → номер (0 Харконнены, 1 Атрейдесы, 2 Ордосы, 3 Фримены, 4 Сардаукары, 5 Наёмники) */
 export const HOUSES = { H: 0, A: 1, O: 2, F: 3, S: 4, M: 5 };
 const MAX_ROOMS = 64;
+/** точек высадки на карте (web/src/engine/net-spawns.ts → NET_SPAWN_POINTS) */
+const SPAWN_POINTS = 8;
 const MAX_COMMANDS_PER_TURN = 24;
 const MAX_MESSAGE = 16 * 1024;
 const MAX_MESSAGES_PER_SECOND = 80;
@@ -20,7 +24,7 @@ const MAX_MESSAGES_PER_SECOND = 80;
 const clean = (s, max) => String(s ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max);
 const hashPassword = (password, salt) => scryptSync(password, salt, 32);
 
-export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, turnMs = TURN_MS, reconnectMs = RECONNECT_MS } = {}) {
+export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, turnMs = TURN_MS, reconnectMs = RECONNECT_MS, countdownMs = COUNTDOWN_MS } = {}) {
   const rooms = new Map();
   const clients = new Set();
   let closing = false;
@@ -55,7 +59,7 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
     config: room.config,
     observers: room.observers.size,
     members: [
-      ...[...room.players.values()].map((p) => ({ slot: p.slot, name: p.name, house: p.house, team: p.team, connected: p.connected })),
+      ...[...room.players.values()].map((p) => ({ slot: p.slot, name: p.name, house: p.house, team: p.team, connected: p.connected, spawn: p.spawn ?? null })),
       ...room.bots.map((b) => ({ slot: b.slot, name: b.name, house: b.house, team: b.team, connected: true, ai: true, difficulty: b.difficulty })),
     ],
   });
@@ -149,6 +153,7 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
   function closeRoom(room) {
     if (!rooms.delete(room.id)) return;
     clearInterval(room.timer);
+    clearTimeout(room.timer);
     for (const session of room.sessions.values()) clearTimeout(session.timer);
     room.sessions.clear();
     for (const o of room.observers) {
@@ -177,7 +182,7 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
     const slot = freeSlot(room, wantedTeam);
     const house = freeHouse(room, wantedHouse);
     if (slot === null || house === null) return send(client, { t: "error", code: "full", text: "В комнате нет мест" });
-    const player = { slot, name: client.name, house, team: Math.floor(slot / room.config.teamSize), connected: true, client };
+    const player = { slot, name: client.name, house, team: Math.floor(slot / room.config.teamSize), connected: true, client, spawn: null };
     room.players.set(client.id, player);
     client.room = room;
     saveSession(client, room, player);
@@ -199,18 +204,21 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
       seed: room.seed,
       config: room.config,
       players: [...room.players.values(), ...room.bots.map((b) => ({ ...b, ai: true }))].sort((a, b) => a.slot - b.slot)
-        .map((p) => ({ slot: p.slot, name: p.name, house: HOUSES[p.house], team: p.team, ...(p.ai ? { ai: true, difficulty: p.difficulty } : {}) })),
+        .map((p) => ({ slot: p.slot, name: p.name, house: HOUSES[p.house], team: p.team, ...(p.ai ? { ai: true, difficulty: p.difficulty } : {}), ...(Number.isInteger(p.spawn) ? { spawn: p.spawn } : {}) })),
       turnMs,
       framesPerTurn: FRAMES_PER_TURN,
+      countdownMs,
     };
     for (const p of room.players.values()) send(p.client, { ...room.start, you: p.slot });
-    room.timer = setInterval(() => {
+    const tick = () => {
       const cmds = room.pending;
       room.pending = [];
       const n = room.turn++;
       if (cmds.length) room.log.push([n, cmds]);
       toAll(room, { t: "turn", n, c: cmds });
-    }, turnMs);
+    };
+    // ходы — после отсчёта (у всех клиентов игра стоит одинаково, догонять нечего)
+    room.timer = setTimeout(() => { if (rooms.has(room.id)) room.timer = setInterval(tick, turnMs); }, countdownMs);
     log(`комната ${room.id}: матч начат, игроков ${room.players.size}, компьютеров ${room.bots.length}, зерно ${room.seed}`);
     broadcastRoom(room);
   }
@@ -318,6 +326,9 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
         const p = room?.players.get(client.id);
         if (!room || !p || room.state !== "waiting") return;
         if (msg.house in HOUSES && msg.house !== p.house && freeHouse(room, msg.house) === msg.house) p.house = msg.house;
+        // точка высадки (номер в netSpawnPoints клиента, 0..7); −1 / null — снять выбор; занятую другим — нельзя
+        if (msg.spawn === -1 || msg.spawn === null) p.spawn = null;
+        else if (Number.isInteger(msg.spawn) && msg.spawn >= 0 && msg.spawn < SPAWN_POINTS && ![...room.players.values()].some((x) => x !== p && x.spawn === msg.spawn)) p.spawn = msg.spawn;
         if ((msg.team === 0 || msg.team === 1) && msg.team !== p.team) {
           const slot = freeSlot(room, msg.team);
           if (slot !== null) {
@@ -344,6 +355,7 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
         // номера мест зависят от размера команды
         for (const x of [...room.players.values(), ...room.bots]) x.slot = x.team * config.teamSize + (x.slot % room.config.teamSize);
         room.hostSlot = [...room.players.values()].find((x) => x.client === client)?.slot ?? room.hostSlot;
+        if (config.map !== room.config.map) for (const x of room.players.values()) x.spawn = null;
         room.config = config;
         return broadcastRoom(room);
       }

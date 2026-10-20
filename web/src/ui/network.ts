@@ -3,13 +3,14 @@ import crestsUrl from '../gfx/assets/frontend/house-crests-modern.png?url';
 import type {Button} from '../input/pad.ts';
 let nextChoicePopupId=0;
 
-interface NetworkMap {id:string;name:string;description:string;width:number;height:number;teamSize:number;capacity:number;preview:string;data:string}
+interface NetworkMap {id:string;name:string;description:string;width:number;height:number;teamSize:number;capacity:number;preview:string;data:string;spawns?:{x:number;y:number}[]}
 export interface NetworkRoom {id:string;name:string;map:string;players:number;capacity:number;state:'waiting'|'playing'|'finished';passwordRequired?:boolean}
 /** Комната и состав с сервера (net/session.ts). */
 export interface ServerRoomInfo {id:string;name:string;map:number;teamSize:number;players:number;capacity:number;state:'waiting'|'playing'|'finished';passwordRequired:boolean}
-export interface ServerRoomState extends ServerRoomInfo {host:number;config:{map:number;teamSize:number;credits:number};observers:number;members:{slot:number;name:string;house:string;team:number;connected:boolean;ai?:boolean;difficulty?:number}[]}
+export interface ServerRoomState extends ServerRoomInfo {host:number;config:{map:number;teamSize:number;credits:number};observers:number;members:{slot:number;name:string;house:string;team:number;connected:boolean;ai?:boolean;difficulty?:number;spawn?:number|null}[]}
 /** Карта для лобби: каталог сетевых карт или карты ROM (id «rom-N»). */
-export type LobbyMap={id:string;name:string;description:string;width:number;height:number;teamSize:number;capacity:number;preview:string;data:string};
+const HOUSE_NAMES_LOBBY:Record<string,string>={A:'Атрейдесы',H:'Харконнены',O:'Ордосы',F:'Фримены',S:'Сардаукары',M:'Наёмники'};
+export type LobbyMap={id:string;name:string;description:string;width:number;height:number;teamSize:number;capacity:number;preview:string;data:string;spawns?:{x:number;y:number}[]};
 const HOUSE_OPTIONS=[['A','Атрейдесы'],['H','Харконнены'],['O','Ордосы'],['F','Фримены'],['S','Сардаукары'],['M','Наёмники']] as const;
 export interface NetworkLobbyConfig {
   version:1;server:string;name:string;roomName:string;password:string;teamSize:number;map:string;randomStarts:boolean;seed:number;resources:number;speed:string;friendlyFire:false;infiniteSpice:true;role:'player'|'observer';
@@ -62,7 +63,7 @@ export class NetworkMenu {
   private server=false;private serverReady=false;private you:number|null=null;private room:ServerRoomState|null=null;
   constructor(private host:{back():void;ui?(sequence?:number):void;endpoint?:string;refreshRooms?():void;joinRoom?(id:string,role:'player'|'observer',password?:string):void;leaveObservation?():void;
     romMaps?():LobbyMap[];connect?(name:string):Promise<void>;createRoom?(c:{roomName:string;password:string;map:number;teamSize:number;credits:number;house:string}):void;
-    leaveRoom?():void;setOwn?(c:{house?:string;team?:number}):void;setConfig?(c:{map:number;teamSize:number;credits:number}):void;startMatch?():void;
+    leaveRoom?():void;setOwn?(c:{house?:string;team?:number;spawn?:number}):void;setConfig?(c:{map:number;teamSize:number;credits:number}):void;startMatch?():void;
     bot?(c:{op:'add';team:number;house?:string;difficulty?:number}|{op:'remove';slot:number}|{op:'set';slot:number;house?:string;difficulty?:number}):void;openReplays?():void}){
     this.root.hidden=true;this.root.setAttribute('role','dialog');this.root.setAttribute('aria-modal','true');this.root.setAttribute('aria-label','Сетевая игра');
     this.dialog.style.setProperty('--network-console',`url("${consoleUrl}")`);
@@ -215,6 +216,7 @@ export class NetworkMenu {
     this.viewerZoom=1;this.viewer.hidden=false;this.dialog.inert=true;
     this.fitMap();this.viewerViewport.scrollTop=this.viewerViewport.scrollLeft=0;
     this.host.ui?.(0x28);this.focusable()[0]?.focus();
+    if(this.server&&this.room&&map.spawns){this.drawServerSpawns();return;}
     if(!map.data){this.spawnMessage.textContent='Стартовые позиции выбираются автоматически: команды как можно дальше друг от друга.';return;}
     try{const response=await fetch(map.data,{cache:'no-store'});if(!response.ok)throw Error('map');const data=await response.json();if(this.viewer.hidden||this.map.value!==map.id)return;if(this.spawnMap!==map.id){this.spawnMap=map.id;this.spawnAssignments.clear();}this.spawnPoints=data.spawns;this.drawSpawns();}catch{this.spawnMessage.textContent='Не удалось загрузить точки высадки.';}
   }
@@ -245,6 +247,32 @@ export class NetworkMenu {
       });this.markers.append(button);
     }
     this.spawnMessage.textContent=this.role==='observer'?'Наблюдение: точки высадки выбирают игроки.':`Выберите свою свободную точку на синей стороне. Красные точки — противники. Занято: ${this.spawnAssignments.size} / ${Number(this.format.value)*2}.`;
+    this.fitMap();
+  }
+  /** Точки высадки комнаты на сервере: свою — щелчком занять или снять, занятые другими показаны с именем и домом. */
+  private drawServerSpawns(){
+    const map=this.mapList.find(item=>item.id===this.map.value),room=this.room;if(!map?.spawns||!room)return;
+    this.markers.replaceChildren();
+    const me=room.members.find(m=>m.slot===this.you),waiting=room.state==='waiting';
+    map.spawns.slice(0,6).forEach((point,i)=>{
+      const occupant=room.members.find(m=>!m.ai&&m.spawn===i),own=!!occupant&&occupant.slot===this.you,enemy=!!occupant&&!!me&&occupant.team!==me.team;
+      const button=node('button',`network-spawn-point${occupant?` occupied spawn-team-${enemy?1:0}`:''}${own?' spawn-self':''}`);
+      button.type='button';button.style.left=`${(point.x+1)/map.width*100}%`;button.style.top=`${(point.y+1)/map.height*100}%`;
+      button.disabled=this.you===null||!waiting;button.dataset.point=String(i);button.append(node('span','',String(i+1)));
+      const houseName=occupant?(HOUSE_NAMES_LOBBY[occupant.house]??'Дом'):'';
+      button.setAttribute('aria-label',occupant?`Точка ${i+1}: ${occupant.name}, ${houseName}${own?', ваша':''}`:`Точка ${i+1}: свободна`);
+      if(occupant){
+        const flag=node('span',`network-house-flag flag-house-${occupant.house}`);flag.setAttribute('aria-hidden','true');flag.append(node('span',`network-house-crest crest-${occupant.house}`));
+        button.append(flag,node('strong','network-spawn-owner',`${occupant.name} · ${houseName}${own?' · Вы':enemy?' · враг':' · союзник'}`));
+      }
+      button.addEventListener('click',()=>{
+        if(occupant&&!own){this.spawnMessage.textContent=`Точка ${i+1} занята: ${occupant.name}.`;this.host.ui?.(0x1a);return;}
+        this.host.setOwn?.({spawn:own?-1:i});this.host.ui?.(0x28);
+      });
+      this.markers.append(button);
+    });
+    this.spawnMessage.textContent=this.you===null?'Наблюдение: точки высадки выбирают игроки.':!waiting?'Матч уже идёт.':
+      me?.spawn!=null?`Ваша точка высадки — ${me.spawn+1}. Нажмите её ещё раз, чтобы отменить.`:'Нажмите свободную точку, чтобы высадиться там. Без выбора точку назначит игра — команды подальше друг от друга.';
     this.fitMap();
   }
   private closeMap(){this.viewer.hidden=true;this.dialog.inert=false;this.preview.focus();this.host.ui?.(0x28);}
@@ -431,7 +459,9 @@ export class NetworkMenu {
     const teams=new Set(room.members.map(m=>m.team));
     if(start){start.disabled=!host||room.members.length<2||teams.size<2;start.hidden=you===null;}
     if(team){team.disabled=you===null||room.state!=='waiting';team.hidden=you===null;}
-    const who=you===null?'Вы наблюдатель':host?'Вы хозяин комнаты — когда все соберутся, нажмите «Начать матч»':'Ждём, пока хозяин начнёт матч';
+    if(!this.viewer.hidden)this.drawServerSpawns();
+    const mine=room.members.find(m=>m.slot===you)?.spawn,spot=mine!=null?` · ваша точка ${mine+1}`:' · точка: нажмите на карту';
+    const who=(you===null?'Вы наблюдатель':host?'Вы хозяин комнаты — когда все соберутся, нажмите «Начать матч»':'Ждём, пока хозяин начнёт матч')+(you===null?'':spot);
     this.status.textContent=room.state==='waiting'?`«${room.name}» · игроков ${room.members.length} из ${room.capacity} · ${who}`:`«${room.name}» · матч идёт`;
   }
   snapshot():NetworkLobbyConfig{const size=Number(this.format.value);return{version:1,server:this.host.endpoint??'',name:this.name.value.trim(),roomName:this.roomName.value.trim(),password:this.roomPassword.value,teamSize:size,map:this.map.value,randomStarts:this.random.checked,seed:this.seed,resources:Number(this.resources.value),speed:this.speed.value,friendlyFire:false,infiniteSpice:true,role:this.role,slots:this.slots.flatMap((slot,id)=>id%4>=size?[]:[{id:Math.floor(id/4)*size+id%4,team:Math.floor(id/4),controller:slot.active?slot.controller.value:'closed',house:slot.house.value,difficulty:slot.difficulty.value,spawn:[...this.spawnAssignments].find(([,player])=>player===id)?.[0]??null}])};}

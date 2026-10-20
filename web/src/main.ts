@@ -32,6 +32,7 @@ import { FrontEnd } from "./ui/frontend.ts";
 import {NetworkMenu,type LobbyMap} from './ui/network.ts';
 import { NetSession, defaultEndpoint, type MatchStart } from './net/session.ts';
 import { saveRecording } from './net/replay.ts';
+import { netSpawnPoints } from './engine/net-spawns.ts';
 import { ReplayBar, ReplayList } from './ui/replays.ts';
 import { installNetControls } from './net/controls.ts';
 import { HOUSE_INDEX, MentatScreen } from "./ui/mentat.ts";
@@ -212,7 +213,10 @@ async function startGame(rom: DuneRom): Promise<void> {
   const message = el("div", { className: "message", role: "status" });
   const endBanner = el("div", { className: "paused end" });
   endBanner.hidden = true;
-  stage.append(message, endBanner);
+  // отсчёт перед сетевым матчем: 3, 2, 1, «В БОЙ!»
+  const countdown = el("div", { className: "net-countdown" });
+  countdown.hidden = true;
+  stage.append(message, endBanner, countdown);
   let messageTimer = 0;
   let lastDayPhase = '', lastDayElapsed = 0;
   const DAY_MESSAGES: Record<string, string> = {
@@ -519,7 +523,10 @@ async function startGame(rom: DuneRom): Promise<void> {
   });
   stage.append(frontend.root);
   // ---------------------------------------------------------------- сетевая игра (net/session.ts, server/dune-net.mjs)
-  /** Карты ROM для лобби: превью — средний цвет иконок клеток (как радар), подпись — миссии, где карта встречается. */
+  /**
+   * Карты ROM для лобби: превью — настоящие клетки местности (по 12 точек на клетку 64×64), на нём номера точек
+   * высадки (engine/net-spawns.ts — тот же список у движка); подпись — миссии, где карта встречается.
+   */
   let romMapCache: LobbyMap[] | null = null;
   const romMapList = (): LobbyMap[] => {
     if (romMapCache) return romMapCache;
@@ -539,20 +546,33 @@ async function startGame(rom: DuneRom): Promise<void> {
     for (let n = 1; n <= 27; n++) {
       const map = rom.missionMap(n);
       const b = map.bounds;
-      const k = Math.max(4, Math.floor(256 / b.w));
+      const k = Math.round(768 / b.w);
       const c = document.createElement("canvas");
       c.width = b.w * k;
       c.height = b.h * k;
       const g = c.getContext("2d")!;
+      g.imageSmoothingEnabled = true;
+      g.imageSmoothingQuality = "high";
       for (let y = 0; y < b.h; y++) for (let x = 0; x < b.w; x++) {
-        g.fillStyle = icons.averageColor[map.ground[((y + b.y) << 6) | (x + b.x)]] ?? "#000";
-        g.fillRect(x * k, y * k, k, k);
+        const s = icons.source(map.ground[((y + b.y) << 6) | (x + b.x)]);
+        g.drawImage(s.image, s.sx, s.sy, s.sw, s.sh, x * k, y * k, k, k);
       }
-      const preview = c.toDataURL();
+      const spawns = netSpawnPoints(map.ground, b.w === 64 ? 0 : 1).map((p) => ({ x: p.x - b.x, y: p.y - b.y }));
+      // номера точек высадки — кружки по центру двора 2×2
+      g.font = `bold ${Math.round(k * 1.5)}px sans-serif`;
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      spawns.slice(0, 6).forEach((p, i) => {
+        const cx = (p.x + 1) * k, cy = (p.y + 1) * k, r = k * 1.25;
+        g.fillStyle = "#0b1116d0"; g.strokeStyle = "#f0cc83"; g.lineWidth = Math.max(2, k / 5);
+        g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill(); g.stroke();
+        g.fillStyle = "#f0cc83"; g.fillText(String(i + 1), cx, cy + 1);
+      });
+      const preview = c.toDataURL("image/jpeg", 0.9);
       const where = usedIn.get(n);
       for (let teamSize = 1; teamSize <= 3; teamSize++) {
         list.push({
-          id: `rom-${n}`, name: `Карта ${n} · ${b.w}×${b.h}`, width: b.w, height: b.h, teamSize, capacity: teamSize * 2, preview, data: "",
+          id: `rom-${n}`, name: `Карта ${n} · ${b.w}×${b.h}`, width: b.w, height: b.h, teamSize, capacity: teamSize * 2, preview, data: "", spawns,
           description: where ? `Карта кампании: ${where.join(", ")}` : "Карта кампании",
         });
       }
@@ -563,6 +583,7 @@ async function startGame(rom: DuneRom): Promise<void> {
   networkReplaying = () => net.replaying;
   let netRestore: (() => void) | null = null;
   let netClock = 0;
+  let countdownShownAt = 0;
   const networkMenu=new NetworkMenu({
     back:()=>{net.close();frontend.openTitle();},
     ui:sequence=>sound.menuUi(sequence??0x28),
@@ -646,6 +667,13 @@ async function startGame(rom: DuneRom): Promise<void> {
     G.onMessage(net.playback ? "Запись матча" : start.you === null ? "Вы наблюдаете за матчем" : `Матч начался · игроков: ${start.players.length}`, 0);
   };
   net.onStart = (start) => startNetMatch(start);
+  // свой дом разбит, союзники ещё сражаются: надпись, дальше можно смотреть бой до конца
+  world.game.onNetOut = () => {
+    if (net.replaying) return;
+    endBanner.textContent = "ВЫ ПРОИГРАЛИ · ваша база разбита · союзники ещё сражаются — можно смотреть бой";
+    endBanner.hidden = false;
+    G.onMessage("Ваша база разбита. Союзники продолжают бой.", 0);
+  };
   /** Свой результат: победа или поражение; у остальных игра продолжается, поэтому симуляция не останавливается. */
   const onNetEnd = (result: "won" | "lost"): void => {
     net.reportOver(result);
@@ -655,7 +683,9 @@ async function startGame(rom: DuneRom): Promise<void> {
       endBanner.hidden = false;
       return;
     }
-    endBanner.textContent = result === "won" ? "ПОБЕДА · Start → «Начать сначала» — выйти в лобби" : "ПОРАЖЕНИЕ · Start → «Начать сначала» — выйти в лобби";
+    endBanner.textContent = result === "won"
+      ? "ПОБЕДА КОМАНДЫ · Start → «Начать сначала» — выйти в лобби"
+      : "ПОРАЖЕНИЕ КОМАНДЫ · все союзники разбиты · Start → «Начать сначала» — выйти в лобби";
     endBanner.hidden = false;
     if (!net.replaying) sound.playMusic((result === "won" ? MUSIC.WIN : MUSIC.LOSE)[world.player] ?? 0);
   };
@@ -958,6 +988,15 @@ async function startGame(rom: DuneRom): Promise<void> {
       net.advance(Math.min(250, now - netClock));
       netClock = now;
       if (net.playback) replayBar.update(net.frame, net.playbackFrames);
+      const left = net.countdownMs;
+      if (left > 0) {
+        countdown.hidden = false;
+        countdown.textContent = String(Math.ceil(left / 1000));
+        countdownShownAt = now;
+      } else if (!countdown.hidden) {
+        countdown.textContent = "В БОЙ!";
+        if (now - countdownShownAt > 900) countdown.hidden = true;
+      }
     }
     if (!paused || netActive) {
       if (!netActive) world.step();

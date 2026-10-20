@@ -16,6 +16,7 @@ import {tickCarryallFlight,carryallMovementScale,carryallDestination} from './ca
 import {tickDrone,tickLaser,tickDroneGrenades} from './advanced-units.ts';
 import {COMBAT_SFX} from '../sound/combat-sfx.ts';
 import {blockingWall} from './combat-obstacles.ts';
+import { netAIPeace } from "./net-ai.ts";
 import {
   mapBloomExplodeSpice, mapDeviateArea, mapFillCircleWithSpice, mapFindLocationTile, mapGetLandscapeType, mapIsPositionInViewport,
   mapIsPositionUnveiled, mapIsUnveiledByAnyHuman, mapIsUnveiledFor, mapIsValidPosition, mapMakeExplosion, mapSearchSpice, mapUnveilTile, mapUpdateAround, tileRemoveFogInRadius,
@@ -303,6 +304,15 @@ export function gameLoopUnit(): void {
   }
 }
 
+/**
+ * Приказ новой машины компьютера: из ROM (actionAI, у боевых — HUNT). В сети в «мирное время» (engine/net-ai.ts)
+ * охота и диверсия заменяются охраной базы (AREA_GUARD), чтобы компьютер не нападал с первых минут.
+ */
+function unitAIAction(type: number, houseID: number): number {
+  const a = unitInfo[type].actionAI;
+  return (a === ACTION.HUNT || a === ACTION.SABOTAGE) && netAIPeace(houseID) ? ACTION.AREA_GUARD : a;
+}
+
 export function unitCreate(index: number, typeID: number, houseID: number, position: Tile32, orientation: number): Unit | null {
   if (houseID >= 6) return null;
   if (typeID >= UNIT.MAX) return null;
@@ -355,7 +365,7 @@ export function unitCreate(index: number, typeID: number, houseID: number, posit
     return u;
   }
   unitUpdateMap(1, u);
-  unitSetAction(u, isHuman(houseID) ? ui.o.actionsPlayer[3] : ui.actionAI);
+  unitSetAction(u, isHuman(houseID) ? ui.o.actionsPlayer[3] : unitAIAction(u.o.type, houseID));
   return u;
 }
 
@@ -544,7 +554,7 @@ export function unitGetTargetUnitPriority(unit: Unit | null, target: Unit | null
   if (!unit || !target) return 0;
   if (unit === target) return 0;
   if (!target.o.flags.allocated) return 0;
-  if ((target.o.seenByHouses & (1 << unitGetHouseID(unit))) === 0) return 0;
+  if ((target.o.seenByHouses & (1 << unitGetHouseID(unit))) === 0 && !aiKnowsAll(unit)) return 0;
   if (houseAreAllied(unitGetHouseID(unit), unitGetHouseID(target))) return 0;
   const ui = unitInfo[unit.o.type];
   const ti = unitInfo[target.o.type];
@@ -620,7 +630,7 @@ export function unitSetPosition(u: Unit | null, position: Tile32): boolean {
     u.o.seenByHouses &= ~(1 << u.o.houseID);
     for (const hid of humanHouses()) unitHouseUnitCountAdd(u, hid);
   }
-  if (!isHuman(u.o.houseID) || u.o.type === UNIT.HARVESTER || u.o.type === UNIT.SABOTEUR) unitSetAction(u, ui.actionAI);
+  if (!isHuman(u.o.houseID) || u.o.type === UNIT.HARVESTER || u.o.type === UNIT.SABOTEUR) unitSetAction(u, isHuman(u.o.houseID) ? ui.actionAI : unitAIAction(u.o.type, u.o.houseID));
   else unitSetAction(u, ui.o.actionsPlayer[3]);
   u.spriteOffset = 0;
   unitUpdateMap(1, u);
@@ -1458,7 +1468,7 @@ export function unitAddToTileFn(unit: Unit, packed: number): void {
 export function unitGetTargetStructurePriority(unit: Unit | null, target: Structure | null): number {
   if (!unit || !target) return 0;
   if (houseAreAllied(unitGetHouseID(unit), target.o.houseID)) return 0;
-  if ((target.o.seenByHouses & (1 << unitGetHouseID(unit))) === 0) return 0;
+  if ((target.o.seenByHouses & (1 << unitGetHouseID(unit))) === 0 && !aiKnowsAll(unit)) return 0;
   const si = structureInfo[target.o.type];
   let priority = u16(si.o.priorityBuild + si.o.priorityTarget);
   const distance = tileGetDistanceRoundedUp(unit.o.position, target.o.position);
@@ -1594,15 +1604,33 @@ export { structureFree, indexGetPackedTile, structureHouseUnderAttack };
 
 /**
  * Переменная 3 скрипта юнита — дом игрока (g_playerHouseID). В сети у юнита человека — его дом, у юнита ИИ —
- * первый человек-противник: так скрипты различают «свой игрок» и «противник» одинаково у всех клиентов.
+ * ближайший противник матча (человек или компьютер, по ближайшему его зданию), а не всегда первый человек:
+ * иначе все компьютеры шли на одного игрока, не замечая его союзника-компьютера. Одинаково у всех клиентов.
  */
 function scriptPlayerHouse(u: Unit): number {
   if (!G.net) return G.playerHouseID;
   const own = unitGetHouseID(u);
   if (isHuman(own)) return own;
+  let best = -1, bestDistance = Infinity;
+  for (const s of G.structureFind) {
+    const h = s.o.houseID;
+    if (!s.o.flags.used || s.o.flags.isNotOnMap || (G.net.team[h] ?? -1) < 0 || houseAreAllied(h, own)) continue;
+    const d = tileGetDistance(u.o.position, s.o.position);
+    if (d < bestDistance) { bestDistance = d; best = h; }
+  }
+  if (best >= 0) return best;
   const mask = humanMask();
   for (let h = 0; h < 8; h++) if ((mask >> h) & 1 && !houseAreAllied(h, own)) return h;
   return own;
+}
+
+/**
+ * Сеть: компьютер при выборе цели знает всех противников матча. В MD объекты игрока сразу видны всем домам ИИ
+ * (seenByHouses = 0xFF), а объекты другого компьютера — никогда (туман для ИИ не ведётся), поэтому вражеские
+ * компьютеры замечали только людей и шли мимо союзника-компьютера. Видимость для людей не меняется.
+ */
+function aiKnowsAll(unit: Unit): boolean {
+  return !!G.net && !isHuman(unitGetHouseID(unit));
 }
 
 /** Перевозчик улетает к ближайшему краю карты и исчезает там (см. Unit.carryallLeaving). */

@@ -32,6 +32,8 @@ export interface RoomMember {
   ai?: boolean;
   /** сложность компьютера 0..2 */
   difficulty?: number;
+  /** выбранная точка высадки (номер в netSpawnPoints) или null */
+  spawn?: number | null;
 }
 export interface RoomState extends RoomInfo {
   host: number;
@@ -44,7 +46,7 @@ export interface MatchStart {
   seed: number;
   config: RoomConfig;
   /** house — номер дома движка */
-  players: { slot: number; name: string; house: number; team: number; ai?: boolean; difficulty?: number }[];
+  players: { slot: number; name: string; house: number; team: number; ai?: boolean; difficulty?: number; spawn?: number }[];
   turnMs: number;
   framesPerTurn: number;
   /** своё место или null — наблюдатель */
@@ -105,6 +107,10 @@ export class NetSession {
   speed = 1;
   /** просмотр на паузе */
   paused = false;
+  /** отсчёт, если сервер его не прислал (старый сервер без countdownMs) — только для показа; 0 — сразу */
+  startDelayMs = 0;
+  /** до какого времени (performance.now) идёт отсчёт: ходы копятся, игра стоит у всех одинаково с кадра 0 */
+  private holdUntil = 0;
 
   get connected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
@@ -117,6 +123,8 @@ export class NetSession {
   }
   /** Historical ticks must not play their old sounds or accept new orders. */
   get replaying(): boolean { return this.awaitingCatchup || this.frame < this.catchupTarget || (this.playback && this.speed > 2); }
+  /** сколько мс осталось до начала матча (отсчёт), 0 — идёт */
+  get countdownMs(): number { return this.start && !this.playback ? Math.max(0, this.holdUntil - performance.now()) : 0; }
   /** длина просмотра в кадрах (0 — не просмотр) */
   get playbackFrames(): number { return this.playback && this.start ? (this.lastTurn + 1) * this.start.framesPerTurn : 0; }
 
@@ -288,7 +296,7 @@ export class NetSession {
     this.saveTicket(null);
     this.endMatch();
   }
-  setOwn(change: { house?: string; team?: number }): void {
+  setOwn(change: { house?: string; team?: number; spawn?: number }): void {
     this.send({ t: "set", ...change });
   }
   setConfig(config: RoomConfig): void {
@@ -356,6 +364,7 @@ export class NetSession {
         this.start = msg as MatchStart;
         this.recordLog.clear();
         this.awaitingCatchup = !!msg.catchup;
+        this.holdUntil = msg.catchup ? 0 : performance.now() + (Number(msg.countdownMs) || this.startDelayMs);
         this.catchupTarget = 0;
         this.turns.clear();
         this.lastTurn = -1;
@@ -417,6 +426,7 @@ export class NetSession {
   advance(dtMs: number): number {
     const start = this.start;
     if (!start || this.awaitingCatchup || (this.playback && this.paused)) return 0;
+    if (this.holdUntil && performance.now() < this.holdUntil) return 0;
     const fpt = start.framesPerTurn;
     const available = this.buffered;
     const speed = this.playback ? this.speed : 1;

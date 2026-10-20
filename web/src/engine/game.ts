@@ -6,7 +6,7 @@ import type { DuneRom } from "../rom/dune.ts";
 import type { Scenario } from "../rom/scenario.ts";
 import { animationInit, animationTick } from "./animation.ts";
 import {
-  ACTION, G, HOUSE, HOUSE_INVALID, HOUSE_WEAPON, INDEX_INVALID, IT, MAP_INFOS, MOVEMENT, SELECTION, STATE, STRUCTURE, UNIT, findAll, houseAllocate, houseFind, isHuman, isLocal, randomState,
+  ACTION, G, HOUSE, HOUSE_INVALID, HOUSE_WEAPON, INDEX_INVALID, IT, MOVEMENT, SELECTION, STATE, STRUCTURE, UNIT, findAll, houseAllocate, houseFind, isHuman, isLocal, randomState,
   idiv, indexEncode, indexGetUnit, newScenario, packTile, packXY, poolsReset, randomLCGSeed, randomRange, randomSeed, s8, structureFind, unitAllocate,
   tileCenter, unitFind, unitFree, unpackTile, type House, type Structure, type Unit,
 } from "./core.ts";
@@ -24,10 +24,11 @@ import {
   structureRemoveFog, structureResetTimers, structureSetRepairingState, structureSetState, structureSetUpgradingState,
   structureStarportBuy,structureCanQueueUnits,structureEnqueueUnit,structureCancelQueuedUnit,structureEnqueueBuilding,structureCancelQueuedBuilding,structureStartNextBuilding,setStructureReleaseUnit,
 } from "./structure.ts";
-import { actionInfo, applyRomTables, houseInfo, landscapeInfo, structureInfo, unitInfo } from "./tables.ts";
+import { actionInfo, applyRomTables, houseInfo, structureInfo, unitInfo } from "./tables.ts";
 import { gameLoopTeam, teamCreate, teamResetTimers } from "./team.ts";
 import {configureNetworkPools} from './core.ts';
 import {NETWORK_UNIT_LIMIT} from './network-rules.ts';
+import { netSpawnPoints } from "./net-spawns.ts";
 import { aiBuilderTick, netCreateAITeams, netHandOver, netSetupAIHouse } from "./net-ai.ts";
 import {
   gameLoopUnit, unitCreate, unitCreateWrapper, unitDeviationDecrease, unitFindTargetAround, unitGetByPackedTile, unitGetHouseID, unitGetTileEnterScore,
@@ -55,6 +56,8 @@ export interface NetPlayer {
   ai?: boolean;
   /** сложность компьютера: 0 — лёгкий, 1 — обычный, 2 — тяжёлый */
   difficulty?: number;
+  /** точка высадки, выбранная в лобби: номер в netSpawnPoints (нет — назначит движок) */
+  spawn?: number;
 }
 /** Всё, что нужно, чтобы у всех клиентов матч начался одинаково. */
 export interface NetSetup {
@@ -128,6 +131,11 @@ export class Game {
   /** кадров, которые игра ещё идёт после конца миссии (пролёт орнитоптеров, $026984) */
   afterEnd = 0;
   onEnd: (result: MissionEnd) => void = () => {};
+  /** сеть: местный игрок разбит, но его команда ещё сражается (личное поражение) */
+  onNetOut: () => void = () => {};
+  private netOut = false;
+  /** сеть: местный зритель — игрок (а не наблюдатель или просмотр записи) */
+  private netLocalPlayer = false;
   /** выбранное здание (клетка g_selectionPosition) */
   selectedStructure: Structure | null = null;
   private levelEndTimer = 0;
@@ -996,6 +1004,8 @@ export class Game {
     this.missilePalace = null;
     this.levelEndTimer = 0;
     this.netAlive = this.netPlayersMask;
+    this.netOut = false;
+    this.netLocalPlayer = setup.local >= 0;
 
     poolsReset();
     animationInit();
@@ -1081,55 +1091,27 @@ export class Game {
   }
 
   /**
-   * Стартовые точки: клетки, где помещается двор 2×2 на скале и вокруг есть место под базу. Первая — ближняя к
-   * углу по зерну, дальше каждый раз самая дальняя от уже выбранных. Команды получают точки по очереди.
+   * Стартовые точки (engine/net-spawns.ts — тот же список видит лобби). Сначала — точки, выбранные игроками в лобби
+   * (NetPlayer.spawn); остальным — свободные точки по порядку списка, команды по кругу (с какой команды начать —
+   * по зерну), так что команды без выбора оказываются как можно дальше друг от друга.
    */
   private netSpawns(setup: NetSetup): Map<number, number> {
-    const mi = MAP_INFOS[G.mapScale];
-    const rock = (x: number, y: number) =>
-      x >= mi.minX && y >= mi.minY && x < mi.minX + mi.sizeX && y < mi.minY + mi.sizeY &&
-      landscapeInfo[mapGetLandscapeType(packXY(x, y))].isValidForStructure !== 0;
-    const pick = (need: number) => {
-      const out: { x: number; y: number }[] = [];
-      for (let y = mi.minY + 2; y < mi.minY + mi.sizeY - 4; y++) {
-        for (let x = mi.minX + 2; x < mi.minX + mi.sizeX - 4; x++) {
-          if (!rock(x, y) || !rock(x + 1, y) || !rock(x, y + 1) || !rock(x + 1, y + 1)) continue;
-          let room = 0;
-          for (let j = -2; j <= 4; j++) for (let i = -2; i <= 4; i++) if (rock(x + i, y + j)) room++;
-          if (room >= need) out.push({ x, y });
-        }
-      }
-      return out;
-    };
-    let cands = pick(28);
-    if (cands.length < setup.players.length) cands = pick(10);
-    if (cands.length < setup.players.length) cands = pick(4);
-    const corner = [[mi.minX, mi.minY], [mi.minX + mi.sizeX, mi.minY + mi.sizeY], [mi.minX + mi.sizeX, mi.minY], [mi.minX, mi.minY + mi.sizeY]][this.netSeed % 4];
-    const d2 = (a: { x: number; y: number }, b: { x: number; y: number }) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
-    const chosen: { x: number; y: number }[] = [];
-    if (cands.length) {
-      let first = cands[0];
-      for (const c of cands) if (d2(c, { x: corner[0], y: corner[1] }) < d2(first, { x: corner[0], y: corner[1] })) first = c;
-      chosen.push(first);
-    }
-    while (chosen.length < setup.players.length && chosen.length < cands.length) {
-      let best = cands[0];
-      let bestDistance = -1;
-      for (const c of cands) {
-        let nearest = Infinity;
-        for (const s of chosen) nearest = Math.min(nearest, d2(c, s));
-        if (nearest > bestDistance) {
-          bestDistance = nearest;
-          best = c;
-        }
-      }
-      chosen.push(best);
-    }
-    // команды по кругу: первая точка — команде 0, вторая (самая дальняя) — команде 1 и т. д.
-    const teams = [...new Set(setup.players.map((p) => p.team))].sort((a, b) => a - b);
-    const queue = new Map(teams.map((t) => [t, setup.players.filter((p) => p.team === t).sort((a, b) => a.slot - b.slot)]));
+    const ground = G.map.map((t) => t.groundTileID);
+    const points = netSpawnPoints(ground, G.mapScale);
     const out = new Map<number, number>();
-    let ti = 0;
+    const taken = new Set<number>();
+    for (const p of [...setup.players].sort((a, b) => a.slot - b.slot)) {
+      const i = p.spawn;
+      if (i === undefined || !Number.isInteger(i) || i < 0 || i >= points.length || taken.has(i)) continue;
+      taken.add(i);
+      out.set(p.house, packXY(points[i].x, points[i].y));
+    }
+    const chosen = points.filter((_, i) => !taken.has(i));
+    const free = setup.players.filter((p) => !out.has(p.house));
+    // команды по кругу: первая свободная точка — одной команде, следующая (самая дальняя) — другой и т. д.
+    const teams = [...new Set(free.map((p) => p.team))].sort((a, b) => a - b);
+    const queue = new Map(teams.map((t) => [t, free.filter((p) => p.team === t).sort((a, b) => a.slot - b.slot)]));
+    let ti = teams.length ? this.netSeed % teams.length : 0;
     for (const c of chosen) {
       for (let k = 0; k < teams.length; k++) {
         const q = queue.get(teams[(ti + k) % teams.length])!;
@@ -1163,6 +1145,12 @@ export class Game {
     const teamsAlive = new Set<number>();
     for (let h = 0; h < 8; h++) if ((this.netAlive >> h) & 1) teamsAlive.add(team[h]);
     const own = team[G.playerHouseID];
+    // свой дом разбит, а союзники ещё сражаются — личное поражение (только сообщение местному игроку, не симуляция)
+    if (!this.netOut && this.netLocalPlayer && !((this.netAlive >> G.playerHouseID) & 1) && teamsAlive.has(own) && teamsAlive.size > 1) {
+      this.netOut = true;
+      G.onFeedback(41);
+      this.onNetOut();
+    }
     let result: MissionEnd | null = null;
     if (!teamsAlive.has(own)) result = "lost";
     else if (teamsAlive.size === 1) result = "won";

@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { DuneRom } from "../../web/src/rom/dune.ts";
 import { Game, type NetPlayer } from "../../web/src/engine/game.ts";
-import { G, INDEX_INVALID, STRUCTURE, UNIT, packXY, tileCenter, unpackTile } from "../../web/src/engine/core.ts";
+import { ACTION, G, INDEX_INVALID, STRUCTURE, UNIT, packXY, tileCenter, unpackTile } from "../../web/src/engine/core.ts";
 import { structureCreate, structurePlace } from "../../web/src/engine/structure.ts";
 import { unitCreate } from "../../web/src/engine/unit.ts";
 
@@ -43,8 +43,11 @@ const vsAI: NetPlayer[] = [
 ];
 const growth: string[] = [];
 const atStart = { hard: 0, easy: 0 };
+let huntingInPeace = 0;
 const a = run(vsAI, 1, 18000, undefined, (f) => {
   if (f === 1) { atStart.hard = buildings(0); atStart.easy = buildings(2); }
+  // «мирное время» тяжёлого — 4 минуты (14400 кадров): ни одна машина компьютера не на охоте
+  if (f < 14400 && f % 300 === 0) huntingInPeace += G.units.filter((u) => u.o.flags.used && (u.o.houseID === 0 || u.o.houseID === 2) && u.actionID === ACTION.HUNT).length;
   if (f % 3600 === 0) growth.push(`${f / 3600} мин: тяжёлый ${buildings(0)} зд/${army(0)} тех/${G.units.filter((u)=>u.o.flags.used&&u.o.houseID===0&&u.o.type===UNIT.HARVESTER).length} харв/${G.houses[0].credits} кр, лёгкий ${buildings(2)} зд/${army(2)} тех/${G.units.filter((u)=>u.o.flags.used&&u.o.houseID===2&&u.o.type===UNIT.HARVESTER).length} харв/${G.houses[2].credits} кр`);
 });
 const final = { hard: buildings(0), easy: buildings(2) };
@@ -52,6 +55,7 @@ console.log("1)", growth.join("; "), `; конец: ${a.game.ended}`);
 const b = run(vsAI, -1, 18000);
 assert.equal(a.hashes, b.hashes, "хеши у игрока и наблюдателя разошлись");
 assert.equal(atStart.hard, 1, "компьютер начинает только с двора");
+assert.equal(huntingInPeace, 0, "в мирное время машины компьютера не должны охотиться");
 assert.ok(final.hard >= 8, `тяжёлый мало построил: ${final.hard}`);
 assert.ok(final.easy >= 4, `лёгкий не строится: ${final.easy}`);
 assert.ok(final.hard > final.easy, "тяжёлый должен развиваться быстрее лёгкого");

@@ -3,6 +3,7 @@
  */
 import { G, INDEX_INVALID, findAll, random256, teamAllocate, teamFind, type Team } from "./core.ts";
 import { scriptIsLoaded, scriptLoad, scriptReset, scriptRun } from "./script.ts";
+import { netAIPeace } from "./net-ai.ts";
 
 const ticks = { team: 0 };
 
@@ -28,6 +29,8 @@ export function gameLoopTeam(): void {
     const h = G.houses[t.houseID];
     G.scriptCurrentTeam = t;
     if (!h.flags.isAIActive) continue;
+    // сеть: в «мирное время» компьютер копит силы, команды атаки не собираются (engine/net-ai.ts)
+    if (netAIPeace(t.houseID)) continue;
     if (t.script.delay !== 0) {
       t.script.delay--;
       continue;
