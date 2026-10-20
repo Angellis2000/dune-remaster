@@ -711,7 +711,7 @@ export class Game {
       : null;
     for (const u of units) Game.prototype.order.call(this, u, action, spread?.get(u) ?? packed, house);
     if (action !== ACTION.ATTACK || units.length < 2) return;
-    const attackers = units.filter((u) => unitGetHouseID(u) === house && u.actionID === ACTION.ATTACK && u.targetAttack !== 0);
+    const attackers = units.filter((u) => unitGetHouseID(u) === house && (u.actionID === ACTION.ATTACK || u.nextActionID === ACTION.ATTACK) && u.targetAttack !== 0);
     const target = attackers[0]?.targetAttack ?? 0;
     unitsAssignAttackSpots(attackers.filter((u) => u.targetAttack === target), target);
   }

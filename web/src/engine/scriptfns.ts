@@ -513,7 +513,7 @@ function findAttackSpot(unit: Unit, target: number, taken: Set<number>): number 
       if (other && other !== unit.o) continue;
       if (unitGetTileEnterScore(unit, packed, 0) >= 256) continue;
       const point = tileCenter(unpackTile(packed));
-      if (pointGetDistanceToEncoded(point, target) >= range) continue;
+      if (pointGetDistanceToEncoded(point, target) > range) continue;
       if (friendlyStructureOnRay(point, targetPosition, unitGetHouseID(unit), target)) continue;
       const distance = tileGetDistance(unit.o.position, point);
       if (distance < bestDistance) {
@@ -538,7 +538,7 @@ export function unitsAssignAttackSpots(units: Unit[], target: number): void {
   for (const u of order) {
     u.attackSpot = undefined;
     if (unitInfo[u.o.type].movementType === MOVEMENT.WINGER || u.targetAttack !== target) continue;
-    if (objectGetDistanceToEncoded(u.o, target) < unitInfo[u.o.type].fireDistance << 8) continue;
+    if (objectGetDistanceToEncoded(u.o, target) <= unitInfo[u.o.type].fireDistance << 8) continue;
     const packed = findAttackSpot(u, target, taken);
     if (packed === 0) continue;
     taken.add(packed);
@@ -958,6 +958,15 @@ const unitCalculateRoute: ScriptFunction = (script) => {
   const u = cur();
   let encoded = P(script, 1);
   if (u.currentDestination.x !== 0 || u.currentDestination.y !== 0 || !indexIsValid(encoded)) return 1;
+  // The ROM route loop uses a strict range comparison, while firing accepts the
+  // boundary. Never walk toward a target that can already be shot from here.
+  if (u.actionID === ACTION.ATTACK && encoded === u.targetAttack &&
+      objectGetDistanceToEncoded(u.o,encoded) <= unitInfo[u.o.type].fireDistance * 256 &&
+      !friendlyStructureOnRay(u.o.position,indexGetTile(encoded),unitGetHouseID(u),encoded)) {
+    u.route[0]=0xff;u.targetMove=0;u.attackSpot=undefined;unitSetSpeed(u,0);
+    unitSetOrientation(u,tileGetDirection(u.o.position,indexGetTile(encoded)),false,unitInfo[u.o.type].o.flags.hasTurret?1:0);
+    return 0;
+  }
   // групповая атака: вместо клетки цели — своя клетка на дальности огня (unitsAssignAttackSpots)
   const spot = u.attackSpot && encoded === u.targetAttack ? attackSpotFor(u) : 0;
   if (spot !== 0) encoded = indexEncode(spot, IT.TILE);

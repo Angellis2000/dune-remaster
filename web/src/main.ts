@@ -462,10 +462,9 @@ async function startGame(rom: DuneRom): Promise<void> {
     toggled: (open) => {
       if (!open) sound.endPreview();
       paused = open || frontend.isOpen || mentat.isOpen || endPicture.isOpen || scoreScreen.isOpen || finale.isOpen;
-      // $020EF4: меню в игре — мелодия стоп и звук 6; по выходу — та же или новая боевая
+      // Pause the simulation, keep its music playing while options are open.
       if (inMission && !optionsFromTitle) {
         if (open) {
-          sound.stopMusic();
           sound.sfx(6);
         } else if (sound.battleLeft < 0) sound.battleMusic();
         else sound.resumeMusic();
@@ -497,6 +496,7 @@ async function startGame(rom: DuneRom): Promise<void> {
     network:()=>{frontend.close();paused=true;inMission=false;sound.useBank('game');sound.playMusic(MUSIC.HOUSE_SELECT);void networkMenu.open();},
     options: () => {
       sound.useBank("game");
+      sound.playMusic(MUSIC.MENTAT[world.player] ?? MUSIC.MENTAT[1]);
       optionsFromTitle = true;
       frontend.close();
       settings.open();

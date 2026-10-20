@@ -280,7 +280,9 @@ export function gameLoopUnit(): void {
       continue;
     }
 
-    if (tickScript) {
+    // An explicit attack waits only for the current movement cell. The previous
+    // MOVE/GUARD/HUNT script must not overwrite its newly chosen target meanwhile.
+    if (tickScript && u.nextActionID !== ACTION.ATTACK) {
       if (u.patrolActive) unitPatrolTick(u);
       if (u.o.script.delay === 0) {
         if (scriptIsLoaded(u.o.script)) {
