@@ -6,32 +6,38 @@
   <title>Корабли заставки</title>
   <style>
     :root { color-scheme: dark; }
-    body { margin: 0; min-height: 100vh; background: radial-gradient(ellipse at 30% 20%, #10213a 0%, #05070d 60%, #020306 100%); color: #e8e2cf; font: 14px/1.4 system-ui, sans-serif; }
-    header { padding: 18px 24px 4px; }
-    h1 { margin: 0; font-size: 20px; letter-spacing: .08em; color: #f0cc83; }
-    p { margin: 6px 0 0; color: #b9b4a2; }
-    main { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; padding: 16px 24px 24px; }
-    figure { margin: 0; border: 1px solid #3b3426; background: #070b12cc; border-radius: 6px; overflow: hidden; }
-    canvas { display: block; width: 100%; aspect-ratio: 16 / 9; }
-    figcaption { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 10px 12px; border-top: 1px solid #2a2418; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(ellipse at 30% 10%, #10213a 0%, #05070d 60%, #020306 100%); color: #e8e2cf; font: 14px/1.4 system-ui, sans-serif; }
+    header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; justify-content: space-between; padding: 14px 20px; position: sticky; top: 0; background: #05070de6; border-bottom: 1px solid #2a2418; z-index: 2; }
+    h1 { margin: 0; font-size: 18px; letter-spacing: .08em; color: #f0cc83; }
+    .controls { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; color: #b9b4a2; }
+    .tabs { display: flex; gap: 6px; }
+    button { padding: 6px 12px; border: 1px solid #6d6046; background: #1d252c; color: #e8e2cf; border-radius: 4px; cursor: pointer; font: inherit; }
+    button[aria-pressed="true"] { background: #a98c54; color: #10151a; border-color: #a98c54; }
+    main { padding: 16px 20px 24px; }
+    figure { margin: 0; border: 1px solid #3b3426; background: #070b12; border-radius: 6px; overflow: hidden; }
+    canvas { display: block; width: 100%; height: min(72vh, 56.25vw); cursor: grab; touch-action: none; }
+    canvas:active { cursor: grabbing; }
+    figcaption { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 14px; border-top: 1px solid #2a2418; color: #b9b4a2; }
     figcaption strong { color: #f0cc83; }
-    button { padding: 5px 10px; border: 1px solid #6d6046; background: #1d252c; color: #e8e2cf; border-radius: 4px; cursor: pointer; }
-    .controls { display: flex; gap: 12px; align-items: center; padding: 0 24px; flex-wrap: wrap; }
-    label { color: #b9b4a2; }
   </style>
 </head>
 <body>
   <header>
-    <h1>КОРАБЛИ ЗАСТАВКИ · 3D</h1>
-    <p>Три дизайна по домам: gfx/ship-models.ts, рендер gfx/ship-renderer.ts. Мышью по холсту — повернуть.</p>
+    <h1>КОРАБЛИ-МАТКИ ЗАСТАВКИ</h1>
+    <div class="tabs" id="tabs"></div>
+    <div class="controls">
+      <label><input type="checkbox" id="spin" checked /> вращать</label>
+      <label>тяга <input type="range" id="thrust" min="0" max="100" value="100" /></label>
+      <button type="button" id="reset">Сбросить вид</button>
+    </div>
   </header>
-  <div class="controls">
-    <label><input type="checkbox" id="spin" checked /> вращать</label>
-    <label>тангаж <input type="range" id="pitch" min="-60" max="60" value="-12" /></label>
-    <label>крен <input type="range" id="roll" min="-60" max="60" value="8" /></label>
-    <label>тяга <input type="range" id="thrust" min="0" max="100" value="100" /></label>
-  </div>
-  <main id="ships"></main>
+  <main>
+    <figure>
+      <canvas id="view"></canvas>
+      <figcaption><strong id="title"></strong><span>Мышь — вращать в любую сторону · колесо — приблизить · двойной щелчок — сбросить</span></figcaption>
+    </figure>
+  </main>
   <script type="module" src="/src/gfx/ship-preview.ts"></script>
 </body>
 </html>

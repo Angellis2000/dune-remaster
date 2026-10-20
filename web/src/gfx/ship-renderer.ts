@@ -28,6 +28,8 @@ export interface ShipPose {
   thrust?: number;
   /** время, с — для дрожания пламени (по умолчанию часы страницы) */
   time?: number;
+  /** приближение (1 — корабль целиком в кадре) */
+  zoom?: number;
 }
 
 /** длина пламени в радиусах сопла при полной тяге (факел; ядро — 0,5, ореол — 0,7 от него) */
@@ -245,7 +247,8 @@ export class ShipRenderer {
           }
         }
       }
-      radius = Math.max(radius, Math.hypot(n.at[0], n.at[1], n.at[2] - n.radius * FLAME_LENGTH * 0.8));
+      // пламя может выходить за кадр: в рамку берём только его начало
+      radius = Math.max(radius, Math.hypot(n.at[0], n.at[1], n.at[2] - n.radius * FLAME_LENGTH * 0.3));
     });
     const bodyBuffer = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, bodyBuffer);
@@ -288,8 +291,8 @@ export class ShipRenderer {
     const r = mul(ry, mul(rx, rz));
     const rotation = new Float32Array([r[0], r[1], r[2], 0, r[3], r[4], r[5], 0, r[6], r[7], r[8], 0, 0, 0, 0, 1]);
     const fov = 0.5, aspect = w / h, f = 1 / Math.tan(fov / 2);
-    const distance = (b.radius * 1.02) / Math.sin(fov / 2) / Math.min(1, aspect);
-    const near = Math.max(0.1, distance - b.radius * 2), far = distance + b.radius * 2;
+    const distance = (b.radius * 1.02) / Math.sin(fov / 2) / Math.min(1, aspect) / Math.max(0.2, pose.zoom ?? 1);
+    const near = Math.max(0.05, distance - b.radius * 2.5), far = distance + b.radius * 3;
     const projection = new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, (2 * far * near) / (near - far), 0]);
     // базис света: смотрит вдоль −KEY (dir — к свету: больше — ближе к солнцу, глубина карты обратная)
     const dir = [-KEY[0], -KEY[1], -KEY[2]];
