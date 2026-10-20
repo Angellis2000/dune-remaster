@@ -272,11 +272,15 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
       case "hello":
         client.name = clean(msg.name, 24) || "Командир";
         client.protocol = Number(msg.protocol) || 1;
+        // отпечаток симуляции клиента (web/src/net/build.ts): разные сборки в одном матче разойдутся
+        client.build = clean(msg.build, 32);
         return send(client, { t: "welcome", id: client.id, protocol: PROTOCOL });
       case "resume": {
         const r = rooms.get(String(msg.id)), session = r?.sessions.get(String(msg.token));
         if (!r || !session || (!session.player && r.state !== "playing"))
           return send(client, { t: "error", code: "resume", text: "Время возврата истекло или матч завершён" });
+        if ((r.build ?? "") !== (client.build ?? ""))
+          return send(client, { t: "error", code: "version", text: "Другая версия игры: вернуться в этот матч можно только той же сборкой." });
         if (session.client === client) return broadcastRoom(r);
         if (room) leaveRoom(client);
         clearTimeout(session.timer);
@@ -319,6 +323,8 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
           players: new Map(),
           observers: new Set(),
           sessions: new Map(),
+          // сборка создателя: войти можно только с той же (аудит 2026-10-20 — разные беты расходились молча)
+          build: client.build ?? "",
           hostSlot: -1,
           bots: [],
           pending: [],
@@ -335,6 +341,8 @@ export function startServer({ port = 8787, host = "0.0.0.0", log = console.log, 
           const given = hashPassword(String(msg.password ?? "").slice(0, 64), r.salt);
           if (!timingSafeEqual(given, r.passHash)) return send(client, { t: "error", code: "password", text: "Неверный пароль" });
         }
+        if ((r.build ?? "") !== (client.build ?? ""))
+          return send(client, { t: "error", code: "version", text: "Другая версия игры: у создателя комнаты другая сборка. Обновите игру у всех игроков." });
         if (room) leaveRoom(client);
         if (msg.role === "observer") {
           if (r.state !== "playing") return send(client, { t: "error", code: "state", text: "Наблюдать можно только идущий матч" });

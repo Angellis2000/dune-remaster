@@ -5,6 +5,7 @@
  */
 import type { NetCommand } from "../engine/game.ts";
 import type { MatchRecording } from "./replay.ts";
+import { SIM_BUILD } from "./build.ts";
 
 export interface RoomConfig {
   map: number;
@@ -230,7 +231,7 @@ export class NetSession {
         // пинг держит соединение живым на прокси и NAT во время долгого матча
         clearInterval(this.keepAlive);
         this.keepAlive = window.setInterval(() => this.send({ t: "ping", at: Date.now() }), 15000);
-        this.send({ t: "hello", name: this.playerName, protocol: 2 });
+        this.send({ t: "hello", name: this.playerName, protocol: 2, build: SIM_BUILD });
         if (this.ticket) {
           this.awaitingCatchup = true;
           this.send({ t: 'resume', ...this.ticket, matchId: this.start?.matchId, from: Math.ceil(this.frame / (this.start?.framesPerTurn ?? 6)) });
@@ -357,7 +358,8 @@ export class NetSession {
         this.cancelRetry();
         return;
       case "error":
-        if (msg.code === 'resume') {
+        // другая сборка при возврате — не повторять попытки (сервер сверяет SIM_BUILD)
+        if (msg.code === 'resume' || msg.code === 'version') {
           this.cancelRetry(); this.saveTicket(null);
           this.onStatus(String(msg.text));
           this.onClosed();

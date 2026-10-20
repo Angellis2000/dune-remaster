@@ -210,3 +210,26 @@ test('хозяин ставит компьютеры: место и дом за�
     for (const c of [a, b]) c.ws.close();
   } finally { await server.close(); }
 });
+
+test("другая сборка не входит в комнату; та же — входит", async () => {
+  const server = await startServer({ countdownMs: 0, port: 0, log: () => {}, turnMs: 30 });
+  try {
+    const [a, b, c] = [connect(server.port), connect(server.port), connect(server.port)];
+    await Promise.all([a.opened, b.opened, c.opened]);
+    a.send({ t: "hello", name: "А", protocol: 2, build: "aaaa" });
+    b.send({ t: "hello", name: "Б", protocol: 2, build: "bbbb" });
+    c.send({ t: "hello", name: "В", protocol: 2, build: "aaaa" });
+    for (const x of [a, b, c]) await x.next((m) => m.t === "welcome");
+    a.send({ t: "create", name: "Версии", password: "", config: { map: 5, teamSize: 1, credits: 5000 }, house: "A" });
+    const room = await a.next((m) => m.t === "room");
+    b.send({ t: "join", id: room.room.id, password: "", role: "player", house: "H" });
+    const refused = await b.next((m) => m.t === "error");
+    assert.equal(refused.code, "version");
+    c.send({ t: "join", id: room.room.id, password: "", role: "player", house: "H" });
+    const joined = await c.next((m) => m.t === "room" && m.room.members.length === 2);
+    assert.equal(joined.room.members.length, 2);
+    for (const x of [a, b, c]) x.ws.close();
+  } finally {
+    await server.close();
+  }
+});
