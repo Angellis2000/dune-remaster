@@ -32,7 +32,7 @@ export interface ShipPose {
   zoom?: number;
 }
 
-/** длина пламени в радиусах сопла при полной тяге (факел; ядро — 0,5, ореол — 0,7 от него) */
+/** длина пламени в полуразмерах сопла при полной тяге (факел; ядро — 0,45 от него) */
 const FLAME_LENGTH = 9;
 const SHADOW_SIZE = 2048;
 /** ключевой свет («солнце») и заполняющий — в пространстве камеры */
@@ -112,35 +112,56 @@ void main(){
   c=aces(c*1.15);
   gl_FragColor=vec4(pow(c,vec3(1./2.2)),1.);
 }`;
-// пламя: center — сопло, ring — направление от оси (единичное), t — 0 у сопла … 1 у конца,
-// flame = [радиус, фаза, слой: 0 — факел, 1 — ядро, 2 — ореол]
+// пламя: center — срез сопла, ring — (cos, sin) угла по сечению, t — 0 в глубине сопла … 1 у конца,
+// dims — [полуширина, полувысота, квадратность 0…1], info — [фаза, слой: 0 — факел, 1 — ядро, 2 — светящееся дно сопла]
 const FLAME_VERTEX = `
-attribute vec3 center;attribute vec2 ring;attribute float t;attribute vec3 flame;attribute vec3 color;
+attribute vec3 center;attribute vec2 ring;attribute float t;attribute vec3 dims;attribute vec2 info;attribute vec3 color;
 uniform mat4 rotation;uniform mat4 projection;uniform float distance,time;uniform mediump float thrust;
-varying float vT;varying float vLayer;varying vec3 vColor;varying float vFacing;
+varying float vT;varying float vLayer;varying vec3 vColor;varying float vFacing;varying float vPhase;varying float vAxial;varying float vRim;
 void main(){
-  float r=flame.x,phase=flame.y,layer=flame.z;
-  float flick=.84+.1*sin(time*23.+phase)+.06*sin(time*57.+phase*2.3)+.05*sin(time*91.+phase*4.1);
-  float lenK=layer>1.5?.7:layer>.5?.5:1.,widK=layer>1.5?1.9:layer>.5?.6:1.12;
-  float len=r*${FLAME_LENGTH.toFixed(1)}*thrust*flick*lenK;
-  float width=r*widK*(1.-pow(t,layer>1.5?.8:1.35))*(1.+.1*sin(time*41.+phase+t*11.));
-  vec3 local=center+vec3(ring*width,-t*len);
+  float hw=dims.x,hh=dims.y,square=dims.z,phase=info.x,layer=info.y,r=min(hw,hh);
+  float flick=.86+.08*sin(time*23.+phase)+.05*sin(time*57.+phase*2.3)+.04*sin(time*91.+phase*4.1);
+  float core=step(.5,layer);
+  float len=sqrt(hw*hh)*${FLAME_LENGTH.toFixed(1)}*thrust*flick*mix(1.,.45,core);
+  // сечение — суперэллипс: у прямоугольного сопла прямоугольное, к концу струи округляется
+  float n=mix(mix(2.,12.,square),2.,smoothstep(.12,.75,t));
+  vec2 c=sign(ring)*pow(abs(ring),vec2(2./n));
+  float body=(1.-pow(t,mix(1.5,.95,core)))*(1.+.06*sin(t*3.14159));
+  float wobble=1.+.06*sin(time*41.+phase+t*13.);
+  vec2 xy=c*vec2(hw,hh)*body*wobble*mix(.97,.55,core);
+  // основание — в глубине сопла: корпус его закрывает, пламя выходит из среза
+  float inset=r*.9+.12;
+  vec3 local=center+vec3(xy,inset-t*(len+inset));
+  // слой 2 — светящееся дно сопла (веер из центра): в глубине, по форме среза
+  if(layer>1.5){local=center+vec3(c*vec2(hw,hh)*.98,inset*.55);}
+  vRim=length(c);
+  vAxial=abs(dot(normalize((rotation*vec4(0.,0.,1.,0.)).xyz),normalize(-(rotation*vec4(local,1.)).xyz+vec3(0.,0.,distance))));
   vec4 p=rotation*vec4(local,1.);vec3 view=p.xyz-vec3(0.,0.,distance);
-  vec3 side=(rotation*vec4(ring,0.,0.)).xyz;
+  vec3 side=(rotation*vec4(normalize(c+1e-5),0.,0.)).xyz;
   vFacing=1.-abs(dot(normalize(side),normalize(-view)));
-  vT=t;vLayer=layer;vColor=color;
+  vT=t;vLayer=layer;vColor=color;vPhase=phase;
   gl_Position=projection*vec4(view,1.);
 }`;
 const FLAME_FRAGMENT = `
 precision mediump float;
-varying float vT;varying float vLayer;varying vec3 vColor;varying float vFacing;
-uniform float thrust;
+varying float vT;varying float vLayer;varying vec3 vColor;varying float vFacing;varying float vPhase;varying float vAxial;varying float vRim;
+uniform float thrust;uniform highp float time;
 void main(){
-  float edge=pow(vFacing,1.4);
+  float edge=pow(vFacing,1.3);
+  // ударные кольца вдоль струи
+  float bands=1.+.18*sin(vT*42.-time*34.+vPhase)*(1.-vT);
   vec3 c;float a;
-  if(vLayer>1.5){c=vColor;a=pow(1.-vT,2.)*.22*edge;}
-  else if(vLayer>.5){c=mix(vec3(1.,1.,.97),vColor*1.3+.2,smoothstep(.05,.9,vT));a=pow(1.-vT,1.3)*(.35+.65*edge);}
-  else{c=mix(vColor*1.6+.15,vColor*.9,vT);a=pow(1.-vT,1.6)*.75*(.25+.75*edge);}
+  if(vLayer>1.5){
+    // дно сопла: горячий белый центр, к краю — цвет дома
+    float k=clamp(vRim,0.,1.);
+    gl_FragColor=vec4(mix(vec3(1.,1.,.96),vColor*1.2,smoothstep(.15,1.,k)),(1.-k*k*.55)*.95*clamp(thrust*1.4,0.,1.));
+    return;
+  }
+  if(vLayer>.5){c=mix(vec3(1.,1.,.97),vColor*1.25+.25,smoothstep(.05,.85,vT));a=pow(1.-vT,1.15)*(.45+.55*edge);}
+  else{c=mix(vColor*1.5+.18,vColor*.85,vT);a=pow(1.-vT,1.55)*.62*(.3+.7*edge)*bands;}
+  a*=smoothstep(.0,.12,vT+.04);
+  // вдоль оси (вид с кормы) стенки струи прозрачнее — видно светящееся дно, а не сплошную плашку
+  a*=1.-.8*pow(vAxial,3.);
   gl_FragColor=vec4(c,a*clamp(thrust*1.4,0.,1.));
 }`;
 
@@ -230,15 +251,21 @@ export class ShipRenderer {
         face(p, i, part.color, part.emissive, part.gloss, null);
       }
     }
-    // конусы пламени: 16 граней × 8 колец, три слоя (факел, ядро, ореол)
+    // струи пламени: 20 точек по сечению × 10 колец по длине, два слоя (факел, ядро); 14 чисел на вершину
     const flame: number[] = [];
-    const SEG = 16, RINGS = 8;
+    const SEG = 20, RINGS = 10;
     model.nozzles.forEach((n, ni) => {
       const phase = ni * 1.7 + 0.3;
-      for (const layer of [2, 0, 1]) {
+      const [hw, hh] = n.size ?? [n.radius, n.radius];
+      // дно сопла: веер «центр — край среза»
+      for (let i = 0; i < SEG; i++) {
+        const rim = (j: number) => { const a = (j / SEG) * Math.PI * 2 + Math.PI / SEG; return [Math.cos(a), Math.sin(a)]; };
+        for (const [cx, cy] of [[0, 0], rim(i), rim(i + 1)]) flame.push(n.at[0], n.at[1], n.at[2], cx, cy, 0, hw, hh, n.square ?? 0, phase, 2, ...n.color);
+      }
+      for (const layer of [0, 1]) {
         const vert = (i: number, k: number) => {
-          const a = (i / SEG) * Math.PI * 2;
-          flame.push(n.at[0], n.at[1], n.at[2], Math.cos(a), Math.sin(a), k / RINGS, n.radius, phase, layer, ...n.color);
+          const a = (i / SEG) * Math.PI * 2 + Math.PI / SEG;
+          flame.push(n.at[0], n.at[1], n.at[2], Math.cos(a), Math.sin(a), k / RINGS, hw, hh, n.square ?? 0, phase, layer, ...n.color);
         };
         for (let k = 0; k < RINGS; k++) {
           for (let i = 0; i < SEG; i++) {
@@ -248,7 +275,7 @@ export class ShipRenderer {
         }
       }
       // пламя может выходить за кадр: в рамку берём только его начало
-      radius = Math.max(radius, Math.hypot(n.at[0], n.at[1], n.at[2] - n.radius * FLAME_LENGTH * 0.3));
+      radius = Math.max(radius, Math.hypot(n.at[0], n.at[1], n.at[2] - Math.sqrt(hw * hh) * FLAME_LENGTH * 0.3));
     });
     const bodyBuffer = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, bodyBuffer);
@@ -270,7 +297,7 @@ export class ShipRenderer {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     }
-    const b = { body: bodyBuffer, bodyCount: body.length / 14, flame: flameBuffer, flameCount: flame.length / 12, radius, texture };
+    const b = { body: bodyBuffer, bodyCount: body.length / 14, flame: flameBuffer, flameCount: flame.length / 14, radius, texture };
     this.cache.set(model, b);
     return b;
   }
@@ -364,7 +391,7 @@ export class ShipRenderer {
     if (thrust > 0.01 && b.flameCount) {
       gl.useProgram(flameProgram);
       gl.bindBuffer(gl.ARRAY_BUFFER, b.flame);
-      attrs(flameProgram, 12, [["center", 3], ["ring", 2], ["t", 1], ["flame", 3], ["color", 3]]);
+      attrs(flameProgram, 14, [["center", 3], ["ring", 2], ["t", 1], ["dims", 3], ["info", 2], ["color", 3]]);
       uniforms(flameProgram);
       gl.enable(gl.BLEND);
       gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE, gl.ONE, gl.ONE);
@@ -372,7 +399,7 @@ export class ShipRenderer {
       gl.drawArrays(gl.TRIANGLES, 0, b.flameCount);
       gl.depthMask(true);
       gl.disable(gl.BLEND);
-      off(flameProgram, ["center", "ring", "t", "flame", "color"]);
+      off(flameProgram, ["center", "ring", "t", "dims", "info", "color"]);
     }
     return this.canvas;
   }

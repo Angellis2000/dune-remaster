@@ -26,7 +26,7 @@ export interface ImportedShipSpec {
   /** цвет пламени */
   flame: string;
   /** сопла вручную (иначе — найдутся по задней кромке модели) */
-  nozzles?: { at: Vec3; radius: number }[];
+  nozzles?: { at: Vec3; radius: number; size?: [number, number]; square?: number }[];
 }
 
 /**
@@ -36,11 +36,17 @@ export interface ImportedShipSpec {
  */
 export const MOTHERSHIPS: ImportedShipSpec[] = [
   { id: "mothership-atreides", data: atreidesData, texture: atreidesTexture, name: "Атрейдесы — крейсер-матка", house: 1, paint: "#2f6fe0", flame: "#7fdcff",
-    nozzles: [{ at: [0.8, -0.2, -5.5], radius: 0.45 }, { at: [-0.8, -0.2, -5.5], radius: 0.45 }, { at: [2.15, -0.35, -5.05], radius: 0.35 }, { at: [-2.15, -0.35, -5.05], radius: 0.35 }] },
+    // два прямоугольных отсека по бокам центральной стойки (ниша x 0,16…1,40, y −0,73…0,26) и круглые сопла гондол
+    nozzles: [{ at: [0.78, -0.235, -5.3], radius: 0.45, size: [0.57, 0.46], square: 1 }, { at: [-0.78, -0.235, -5.3], radius: 0.45, size: [0.57, 0.46], square: 1 },
+      { at: [2.33, -0.36, -5.05], radius: 0.3 }, { at: [-2.33, -0.36, -5.05], radius: 0.3 }] },
   { id: "mothership-harkonnen", data: harkonnenData, texture: harkonnenTexture, name: "Харконнены — авианосец", house: 0, paint: "#c01818", flame: "#ff5a1f",
-    nozzles: [{ at: [1.85, -0.2, -5.55], radius: 0.5 }, { at: [-1.85, -0.2, -5.55], radius: 0.5 }, { at: [0.75, -0.25, -5.05], radius: 0.3 }, { at: [-0.75, -0.25, -5.05], radius: 0.3 }] },
+    // высокие прямоугольные сопла бортовых блоков (ниша x 1,61…2,10, y −0,93…0,50) и широкое центральное (x ±0,79, y −0,86…0,40)
+    nozzles: [{ at: [1.855, -0.215, -5.3], radius: 0.24, size: [0.23, 0.68], square: 1 }, { at: [-1.855, -0.215, -5.3], radius: 0.24, size: [0.23, 0.68], square: 1 },
+      { at: [0, -0.23, -5.15], radius: 0.6, size: [0.76, 0.6], square: 1 }] },
   { id: "mothership-ordos", data: ordosData, texture: ordosTexture, name: "Ордосы — дисковая матка", house: 2, paint: "#2fa04e", flame: "#c8ff5a",
-    nozzles: [{ at: [0, -0.45, -4.35], radius: 0.3 }, { at: [0, 0.5, -3.85], radius: 0.3 }, { at: [0.65, 0.15, -3.6], radius: 0.28 }, { at: [-0.65, 0.15, -3.6], radius: 0.28 }] },
+    // широкие прямоугольные сопла в кормовой кромке диска (ниша x 0,46…2,49, y −0,35…0,73) и узкие бортовые (x 2,77…4,09)
+    nozzles: [{ at: [1.47, 0.19, -2.65], radius: 0.5, size: [0.97, 0.5], square: 1 }, { at: [-1.47, 0.19, -2.65], radius: 0.5, size: [0.97, 0.5], square: 1 },
+      { at: [3.43, 0.15, -3.05], radius: 0.25, size: [0.63, 0.25], square: 1 }, { at: [-3.43, 0.15, -3.05], radius: 0.25, size: [0.63, 0.25], square: 1 }] },
 ];
 
 /** Все три матки, по домам (Атрейдесы, Харконнены, Ордосы). */
