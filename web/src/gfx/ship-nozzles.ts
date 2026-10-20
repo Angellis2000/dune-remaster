@@ -51,7 +51,15 @@ export function findLights(positions: ArrayLike<number>): ShipLight[] {
   const rearR = best((p) => (p[2] < minZ + 0.7 ? p[0] : -100));
   const rearL = best((p) => (p[2] < minZ + 0.7 ? -p[0] : -100));
   const white: Vec3 = [1, 0.97, 0.9], red: Vec3 = [1, 0.12, 0.08], blue: Vec3 = [0.2, 0.45, 1];
+  /** есть ли у модели деталь в точке p (вершина ближе 0,25) — для парных огней на симметричных антеннах */
+  const has = (p: Vec3) => { for (let i = 0; i < n; i++) { const q = v(i); if (Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) < 0.25) return true; } return false; };
+  const pair: ShipLight[] = [];
+  for (const [p, up, phase] of [[top, 1, 0], [bottom, -1, 3.1]] as const) {
+    const m: Vec3 = [-p[0], p[1], p[2]];
+    if (Math.abs(p[0]) > 0.25 && has(m)) pair.push({ at: out(m, [0, up, 0]), color: blue, kind: "beacon", phase });
+  }
   return [
+    ...pair,
     { at: out(left, [-1, 0, 0]), color: red, kind: "steady", phase: 0 },
     { at: out(right, [1, 0, 0]), color: red, kind: "steady", phase: 0.4 },
     { at: out(top, [0, 1, 0]), color: blue, kind: "beacon", phase: 0 },
